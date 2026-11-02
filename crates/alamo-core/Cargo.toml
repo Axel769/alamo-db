@@ -1,0 +1,18 @@
+[package]
+name = "alamo-core"
+description = "Modello dati colonnare, schema, errori e trait Dialect di Alamo."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+# NON-NEGOTIABLE CONSTRAINT (ARCHITECTURE.md §2): `core` does not depend on Tauri.
+# It has no external dependencies at all: std only. This makes it possible to run
+# spikes and integration tests from the CLI, without a webview.
+#
+# CI has a job that fails if `cargo tree -p alamo-core` names tauri.
+[dependencies]
+
+[dev-dependencies]

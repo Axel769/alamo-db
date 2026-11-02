@@ -1,0 +1,18 @@
+# Workspace separate from the root one (see `exclude` in the root Cargo.toml):
+# testcontainers brings a heavy dependency tree that must not get into the
+# app build nor into the mac/windows CI jobs.
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+testcontainers = { version = "0.27", features = ["blocking"] }
+
+[workspace]
+
+# As in the root workspace: no debug info for dependencies in debug.
+[profile.dev.package."*"]
+debug = false

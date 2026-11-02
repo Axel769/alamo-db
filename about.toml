@@ -1,0 +1,25 @@
+# cargo-about — generates the dependency attribution to be distributed (§13).
+# `cargo about generate about.hbs > docs/third-party-licenses.html`
+#
+# WARNING: cargo-about covers the Rust crates, NOT the assets. The app uses
+# system fonts today; a bundled font (e.g. OFL, §9.6.2) must be attributed
+# by hand — a documented mistake that gets discovered late.
+
+# The workspace crates (Apache-2.0, publish = false) are not "third-party":
+# excluded from the generated attribution.
+private = { ignore = true }
+
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "OFL-1.1",
+]
+
+workarounds = ["ring"]

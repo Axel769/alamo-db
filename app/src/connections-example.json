@@ -1,0 +1,39 @@
+{
+  "format": "alamo-connections",
+  "version": 1,
+  "ssh_profiles": [
+    {
+      "ref": "s1",
+      "name": "Bastion",
+      "host": "bastion.example.com",
+      "port": 22,
+      "username": "deploy",
+      "auth": "key",
+      "key_path": "~/.ssh/id_ed25519"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "Production",
+      "dialect": "postgres",
+      "host": "db.internal",
+      "port": 5432,
+      "database": "app",
+      "username": "app",
+      "sslmode": "verify-full",
+      "color": "#d73a49",
+      "is_production": true,
+      "read_only": true,
+      "ssh": "s1"
+    },
+    {
+      "name": "Local MySQL",
+      "dialect": "mysql",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "database": "",
+      "username": "root",
+      "sslmode": "prefer"
+    }
+  ]
+}

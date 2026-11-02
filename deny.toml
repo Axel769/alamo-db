@@ -1,0 +1,80 @@
+# cargo-deny — active from day one (ARCHITECTURE.md §13).
+#
+# The goal is not to check today's dependencies (they are all permissive and
+# already verified): it is to block the *transitive* dependency that enters in
+# six months without anyone noticing.
+
+[graph]
+all-features = true
+
+[licenses]
+version = 2
+# Whitelist: anything not in here fails the CI.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "OpenSSL",
+    # Weak copyleft, at file level: it only requires publishing the changes to
+    # the MPL files, not the project. Comes in with the Tauri stack (cssparser,
+    # selectors, option-ext). It is not GPL: those stay out.
+    "MPL-2.0",
+    # Boost: permissive, no attribution obligation in binaries. Comes in with
+    # tauri-plugin-clipboard-manager on Windows (clipboard-win, error-code).
+    "BSL-1.0",
+    # License of the DATA of the Mozilla roots in webpki-roots (mysql_async):
+    # permissive, designed precisely for datasets like this one.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.93
+# The workspace crates (Apache-2.0, publish = false) must be ignored here:
+# the whitelist above is only for registry dependencies.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The `path` dependencies internal to the workspace have no version by choice:
+# the deny on wildcards is for registry crates, not for these.
+allow-wildcard-paths = true
+deny = [
+    # The official MySQL C client is GPL, MariaDB Connector/C is LGPL
+    # (ARCHITECTURE.md §13). mysql_async is pure Rust and does not touch them:
+    # these bans exist so that nobody reintroduces them via a "convenient" binding.
+    { name = "mysqlclient-sys" },
+    { name = "libmysqlclient-sys" },
+    { name = "mariadb-sys" },
+    # OpenSSL: the stack uses rustls (§1). An entry of openssl-sys must be
+    # discussed, not suffered.
+    { name = "openssl-sys" },
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+# Only the *direct* dependencies of the workspace: the "unmaintained" advisories
+# on transitive ones (the gtk3 stack Tauri uses on Linux, proc-macro-error, unic-*)
+# are not actionable from here and would bury the real signal. The
+# *vulnerabilities* stay blocked everywhere, transitive ones included.
+unmaintained = "workspace"
+ignore = [
+    # Marvin (rsa, no fixed version). Needed by russh for the user's RSA SSH
+    # keys (the AWS .pem files). The client signs once per connection, and
+    # only after the server has passed known_hosts: too few timing samples
+    # for the attack. Never RSA decryptions. To be removed when a fixed rsa
+    # is released.
+    { id = "RUSTSEC-2023-0071", reason = "client-side SSH RSA signature, one per connection, server already verified" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

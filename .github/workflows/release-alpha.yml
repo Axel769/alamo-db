@@ -1,0 +1,161 @@
+name: Release (alpha)
+
+# Windows and macOS builds and publishing to Axel769/alamo-db-releases, a
+# public repo with binaries only: the app's updater reads latest.json from there.
+# Manual: first bump "version" in app/src-tauri/tauri.conf.json and in
+# CHANGELOG.md "Unreleased" becomes "[<version>] - <date>", then
+# Actions → "Release (alpha)" → Run workflow. On a successful build the commit
+# receives the tag v<version> on this repo.
+on:
+  workflow_dispatch:
+
+jobs:
+  # Version and notes first of all: without a section in the CHANGELOG, or with
+  # an already released version (existing tag), nothing gets built.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      notes: ${{ steps.v.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          version="$(jq -r .version app/src-tauri/tauri.conf.json)"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version already exists: bump \"version\" in tauri.conf.json" >&2
+            exit 1
+          fi
+          notes="$(.github/scripts/release-notes.sh "$version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          delim="NOTE_$(openssl rand -hex 8)"
+          {
+            echo "notes<<$delim"
+            echo "What's new in this version:"
+            echo "$notes"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+  # Security advisories come out every day: the ones seen by the PR's CI may
+  # be stale at release time. If a new one has come out, the release does
+  # not start.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources advisories
+
+  release:
+    needs: [prepare, deny]
+    strategy:
+      fail-fast: false
+      # One at a time: the two jobs update the same latest.json of the
+      # release, and in parallel one can overwrite the other's
+      # platform.
+      max-parallel: 1
+      matrix:
+        include:
+          - os: windows-latest
+            args: --bundles nsis
+          # Universal: a single .app for Apple Silicon and Intel. Without an
+          # Apple identity the CLI signs ad-hoc (no notarization).
+          - os: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      # macOS signing with our own "Alamo DB" certificate (self-signed, no
+      # Apple account): Keychain ties "Always Allow" to the signature, and
+      # with a fixed certificate the permission survives updates.
+      # Without a signature the identity changes at every build and the
+      # permission is requested every time. It does not remove the Gatekeeper
+      # warning (Developer ID needed). The certificate lacks the Apple
+      # prefixes: that is why it does not go through the CLI's APPLE_CERTIFICATE,
+      # which demands them; it is imported here and the CLI finds it by name
+      # (APPLE_SIGNING_IDENTITY).
+      - if: runner.os == 'macOS'
+        env:
+          P12: ${{ secrets.MACOS_SIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/firma.keychain-db"
+          kp="$(openssl rand -hex 16)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/firma.p12"
+          security create-keychain -p "$kp" "$kc"
+          security set-keychain-settings -t 3600 -u "$kc"
+          security unlock-keychain -p "$kp" "$kc"
+          security import "$RUNNER_TEMP/firma.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kp" "$kc"
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/firma.p12"
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          # Token with Contents: read and write ONLY on alamo-db-releases.
+          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          # Updater signature (not the code signature): without it, the
+          # installed app refuses the update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && 'Alamo DB' || '' }}
+        with:
+          projectPath: app
+          tauriScript: pnpm tauri
+          # createUpdaterArtifacts only here: locally `cargo xtask bundle`
+          # has no key and would fail. Also there: hardenedRuntime off,
+          # it only serves notarization and with a certificate without a team
+          # library validation might refuse to launch.
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          owner: Axel769
+          repo: alamo-db-releases
+          # The commit of this repo does not exist in the releases one.
+          releaseCommitish: main
+          tagName: v__VERSION__
+          releaseName: Alamo DB __VERSION__
+          # The notes end up in latest.json, hence in the app's update
+          # window (plain text, line breaks preserved).
+          # They come from the version's section in CHANGELOG.md: fixing
+          # the release afterwards does not change them for the updater.
+          releaseBody: ${{ needs.prepare.outputs.notes }}
+          # Not a prerelease: releases/latest (the updater endpoint) skips those.
+          prerelease: false
+      # The release is already published, but a build without the expected
+      # signature must not go unnoticed.
+      - if: runner.os == 'macOS'
+        run: |
+          app="target/universal-apple-darwin/release/bundle/macos/Alamo DB.app"
+          codesign -v --strict "$app"
+          codesign -dr - "$app" 2>&1 | tee /dev/stderr | grep -q 'identifier "io.github.axel769.alamo" and certificate root'
+
+  # The commit the build came from receives the version tag, the same
+  # name as the release on alamo-db-releases. Only if both platforms
+  # came out.
+  tag:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ needs.prepare.outputs.version }}" -m "Alamo DB ${{ needs.prepare.outputs.version }}" "$GITHUB_SHA"
+          git push origin "v${{ needs.prepare.outputs.version }}"

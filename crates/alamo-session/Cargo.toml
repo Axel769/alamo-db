@@ -1,0 +1,23 @@
+[package]
+name = "alamo-session"
+description = "Alamo sessions: result set registry, streaming execution, cancellation, memory budget."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+alamo-core.workspace = true
+alamo-driver-postgres.workspace = true
+alamo-driver-mysql.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+tokio-postgres = { workspace = true }
+futures-util = { workspace = true, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

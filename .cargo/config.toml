@@ -1,0 +1,13 @@
+[alias]
+# `cargo xtask test-matrix` — DB matrix of §15.1 (separate workspace in xtask/).
+xtask = "run --manifest-path xtask/Cargo.toml --"
+
+[env]
+# This machine's environment exports MACOSX_DEPLOYMENT_TARGET=10.8, which is
+# below the minimum rustc supports (10.12) and produces a warning on every
+# build. We force it to a sensible value for the project, so the warnings
+# that remain are ours.
+#
+# 11.0 (Big Sur) is also the minimum on which Tauri 2's WKWebView runs without
+# surprises: when the `app` crate arrives, this value is already the right one.
+MACOSX_DEPLOYMENT_TARGET = { value = "11.0", force = true }

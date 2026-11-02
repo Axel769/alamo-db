@@ -1,0 +1,62 @@
+[package]
+name = "alamo-app"
+description = "Minimal Tauri shell for M0 phase 2 (§15): Glide grid scrolling over the canonical dataset."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Distinct from the binary's name, Tauri's convention: the same name collides
+# on Windows.
+[lib]
+name = "alamo_app_lib"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "time"] }
+alamo-core = { workspace = true }
+alamo-driver-postgres = { workspace = true }
+alamo-session = { workspace = true }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+tauri-plugin-dialog = "2.0.0-rc.8"
+tauri-plugin-clipboard-manager = "2.1.0-beta.7"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native"] }
+alamo-tunnel = { version = "0.0.0", path = "../../crates/alamo-tunnel" }
+# Without the `zip` feature (default): it only serves the v1-format .zip
+# updates, we publish the direct .exe installer (createUpdaterArtifacts
+# = true). The `zip` 4.x crate brings RUSTSEC-2026-0367/0368/0369.
+tauri-plugin-updater = { version = "2.12.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
+# Passwords in the connections export file (`transfer` module):
+# Argon2id + AES-256-GCM. Versions already in the graph (ssh-key, ssh-cipher,
+# mysql_common): no new crates in the build.
+aes-gcm = "0.11"
+argon2 = "0.6"
+base64 = "0.22"
+getrandom = "0.3"
+zeroize = "1"
+tauri-plugin-window-state = "~2.4"
+
+# Attribute search in the keychain (`secrets::exists`): already in the graph
+# through keyring, here its direct API is needed.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+# Text substitutions off (`disable_text_substitutions`): already in the graph
+# through tauri/wry.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSDictionary", "NSObject", "NSString", "NSUserDefaults", "NSValue"] }
+
+[features]
+# Enabled by default: the release binary serves the embedded assets even with
+# a plain `cargo build`, without going through the tauri CLI.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+# Remote control for the end-to-end tests (`e2e` module): never in normal
+# builds. `cargo xtask e2e` turns it on.
+e2e = []

@@ -1,0 +1,20 @@
+[package]
+name = "alamo-driver-mysql"
+description = "Alamo MySQL/MariaDB driver: decoding from the protocol to the columnar layout."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+alamo-core.workspace = true
+# Pure Rust reimplementation of the protocol: no GPL constraint from
+# libmysqlclient (§1, §13).
+mysql_async = { version = "0.37", default-features = false, features = ["minimal", "rustls-tls", "ring", "tls12"] }
+tokio = { workspace = true, features = ["rt", "net", "time", "sync", "macros"] }
+futures-util = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

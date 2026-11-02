@@ -1,0 +1,22 @@
+[package]
+name = "alamo-tunnel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
+tokio = { workspace = true, features = ["net", "io-util", "rt", "sync", "time", "macros"] }
+# Hashed hosts in known_hosts (HashKnownHosts): HMAC-SHA1 with the line's salt.
+# Same versions that russh already pulls in.
+hmac = "0.13"
+sha1 = "0.11"
+
+[dev-dependencies]
+rand = "0.10"
+# Only to write a test key in PEM PKCS#1: it is the same one russh pulls in.
+rsa = { version = "0.10.0-rc.18", default-features = false, features = ["encoding"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time", "sync"] }

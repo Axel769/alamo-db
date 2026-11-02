@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/alamo-core",
+    "crates/alamo-driver-postgres",
+    "crates/alamo-session",
+    "crates/alamo-bench",
+    "crates/alamo-driver-mysql",
+    "app/src-tauri", "crates/alamo-tunnel",
+]
+# xtask is a separate workspace: it pulls in testcontainers (a heavy dependency
+# tree, only for the §15.1 matrix) and must not enter the app build.
+exclude = ["xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Axel769/alamo-db"
+rust-version = "1.75"
+
+[workspace.dependencies]
+alamo-core = { path = "crates/alamo-core" }
+alamo-driver-postgres = { path = "crates/alamo-driver-postgres" }
+alamo-driver-mysql = { path = "crates/alamo-driver-mysql" }
+alamo-session = { path = "crates/alamo-session" }
+
+tokio = { version = "1", default-features = false }
+tokio-postgres = "0.7"
+futures-util = { version = "0.3", default-features = false }
+clap = { version = "4", features = ["derive", "env"] }
+libc = "0.2"
+
+# Release profile used for every M0 measurement (§15: "release build with LTO").
+# Measuring in debug produces meaningless numbers.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 1
+
+# Profile dedicated to the bench: like release but with unwind, because the
+# integration tests and the benchmarks that catch panics do not work with panic=abort.
+[profile.bench-release]
+inherits = "release"
+panic = "unwind"
+
+# In debug the dependencies are compiled without debug info: that is the part
+# that bloats target/debug/deps. The workspace code stays debuggable.
+[profile.dev.package."*"]
+debug = false
+
+# Argon2 (passwords in the connections export) without optimisations takes
+# seconds: in debug it is compiled optimised, as in release.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

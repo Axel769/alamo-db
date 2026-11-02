@@ -1,0 +1,153 @@
+#!/bin/bash
+# Alpha release from the Mac: macOS build (universal, signed with the personal
+# Apple Development certificate, see below) and
+# Windows build (NSIS installer compiled from macOS with cargo-xwin), publishing
+# to Axel769/alamo-db-releases with latest.json for the updater, tag
+# v<version> on this repo.
+#
+# The keys stay on this Mac (~/.tauri): no secrets on GitHub runners or on
+# the VPS. Beforehand: merge into main, "version" bumped in
+# app/src-tauri/tauri.conf.json, section for the version in CHANGELOG.md.
+#
+# Tools: gh, jq, pnpm, rustup with the targets aarch64-apple-darwin,
+# x86_64-apple-darwin and x86_64-pc-windows-msvc; for Windows
+# `brew install nsis llvm lld` and `cargo install --locked cargo-xwin`.
+#
+# Usage: scripts/release-alpha.sh [--no-publish]
+#   --no-publish  builds and verifies, does not publish and does not tag.
+set -euo pipefail
+
+publish=1
+[ "${1:-}" = "--no-publish" ] && publish=0
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root"
+repo=Axel769/alamo-db-releases
+keys="$HOME/.tauri"
+target="${CARGO_TARGET_DIR:-$root/target}"
+# Homebrew's llvm and lld are keg-only: llvm-rc, clang-cl and lld-link for
+# cargo-xwin live here. `cargo install` puts cargo-xwin in ~/.cargo/bin.
+export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$PATH:$HOME/.cargo/bin"
+
+die() { echo "release: $*" >&2; exit 1; }
+
+for tool in gh jq pnpm cargo-xwin makensis llvm-rc lld-link; do
+  command -v "$tool" >/dev/null || die "missing $tool"
+done
+for f in alamo-updater.key alamo-sign-identity; do
+  [ -f "$keys/$f" ] || die "missing $keys/$f"
+done
+
+# --- What gets released: the content of main, new version and notes.
+git fetch -q origin main --tags
+commit="$(git rev-parse origin/main)"
+if [ "$publish" = 1 ]; then
+  [ -z "$(git status --porcelain)" ] || die "uncommitted changes"
+  git diff --quiet origin/main HEAD -- \
+    || die "the checkout does not match origin/main: merge and update"
+elif ! git diff --quiet origin/main HEAD --; then
+  # The dry run can be done before the merge: the checkout is built as is.
+  commit="$(git rev-parse HEAD)"
+  echo "== dry run on the current checkout, not on origin/main"
+fi
+version="$(jq -r .version app/src-tauri/tauri.conf.json)"
+tag="v$version"
+git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "$tag already exists"
+notes="What's new in this version:
+$(.github/scripts/release-notes.sh "$version")"
+
+echo "== Alamo DB $version from $commit"
+echo "$notes"
+
+# Security advisories come out every day: today's check.
+cargo deny --all-features check bans licenses sources advisories 2>/dev/null \
+  || die "cargo deny is not green"
+
+# --- macOS signing: Apple Development certificate of the personal team (Xcode,
+# free), the same as `cargo xtask run`. Keychain remembers
+# "Always Allow" per TEAM: with the old self-signed certificate
+# "Alamo DB" macOS only remembered the fingerprint (cdhash) of the single build
+# and asked for the password at every version. The name lives in
+# ~/.tauri/alamo-sign-identity (contains the email, outside the repo); it must
+# match exactly one valid identity, or codesign refuses it.
+identity="$(tr -d '\n' < "$keys/alamo-sign-identity")"
+matches="$(security find-identity -v -p codesigning | grep -cF "\"$identity\"" || true)"
+[ "$matches" = 1 ] || die "signing identity \"$identity\": $matches valid, exactly one needed"
+
+# Updater signature (not the code signature): without it, the installed app
+# refuses the update.
+export TAURI_SIGNING_PRIVATE_KEY="$(cat "$keys/alamo-updater.key")"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+
+(cd app && pnpm install --frozen-lockfile)
+
+echo "== macOS build (universal)"
+(cd app && APPLE_SIGNING_IDENTITY="$identity" pnpm tauri build \
+  --target universal-apple-darwin --bundles app,dmg \
+  --config src-tauri/tauri.release.conf.json)
+mac="$target/universal-apple-darwin/release/bundle"
+app="$mac/macos/Alamo DB.app"
+codesign -v --strict "$app"
+codesign -dr - "$app" 2>&1 | grep -qF "identifier \"io.github.axel769.alamo\" and anchor apple generic and certificate leaf[subject.CN] = \"$identity\"" \
+  || die "the .app does not carry the signature \"$identity\""
+
+echo "== Windows build (NSIS, cargo-xwin)"
+(cd app && pnpm tauri build --runner cargo-xwin \
+  --target x86_64-pc-windows-msvc --bundles nsis \
+  --config src-tauri/tauri.release.conf.json)
+win="$target/x86_64-pc-windows-msvc/release/bundle/nsis"
+
+# --- Assets with the names of the previous releases (made by tauri-action).
+out="$(mktemp -d)"
+cp "$mac/macos/Alamo DB.app.tar.gz" "$out/Alamo.DB_${version}_universal.app.tar.gz"
+cp "$mac/macos/Alamo DB.app.tar.gz.sig" "$out/Alamo.DB_${version}_universal.app.tar.gz.sig"
+cp "$mac/dmg/Alamo DB_${version}_universal.dmg" "$out/Alamo.DB_${version}_universal.dmg"
+cp "$win/Alamo DB_${version}_x64-setup.exe" "$out/Alamo.DB_${version}_x64-setup.exe"
+cp "$win/Alamo DB_${version}_x64-setup.exe.sig" "$out/Alamo.DB_${version}_x64-setup.exe.sig"
+ls -lh "$out"
+
+if [ "$publish" = 0 ]; then
+  echo "== --no-publish: assets in $out, nothing published"
+  exit 0
+fi
+
+echo "== publishing to $repo"
+# Draft until everything is there: the updater reads releases/latest and must
+# not see a release without latest.json.
+printf '%s\n' "$notes" > "$out/notes.txt"
+gh release create "$tag" -R "$repo" --draft --target main \
+  --title "Alamo DB $version" --notes-file "$out/notes.txt" \
+  "$out"/Alamo.DB_*
+
+asset_url() {
+  gh api "repos/$repo/releases" \
+    -q ".[] | select(.tag_name == \"$tag\") | .assets[] | select(.name == \"$1\") | .url"
+}
+mac_url="$(asset_url "Alamo.DB_${version}_universal.app.tar.gz")"
+win_url="$(asset_url "Alamo.DB_${version}_x64-setup.exe")"
+[ -n "$mac_url" ] && [ -n "$win_url" ] || die "asset URLs not found"
+
+# Same platform keys as tauri-action.
+jq -n \
+  --arg version "$version" \
+  --arg notes "$notes" \
+  --arg date "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+  --rawfile mac_sig "$out/Alamo.DB_${version}_universal.app.tar.gz.sig" \
+  --rawfile win_sig "$out/Alamo.DB_${version}_x64-setup.exe.sig" \
+  --arg mac_url "$mac_url" \
+  --arg win_url "$win_url" \
+  '{signature: ($win_sig | rtrimstr("\n")), url: $win_url} as $w
+   | {signature: ($mac_sig | rtrimstr("\n")), url: $mac_url} as $m
+   | {version: $version, notes: $notes, pub_date: $date,
+      platforms: {
+        "windows-x86_64": $w, "windows-x86_64-nsis": $w,
+        "darwin-aarch64": $m, "darwin-x86_64": $m, "darwin-universal": $m,
+        "darwin-aarch64-app": $m, "darwin-x86_64-app": $m,
+        "darwin-universal-app": $m}}' > "$out/latest.json"
+gh release upload "$tag" -R "$repo" "$out/latest.json"
+# Not a prerelease: releases/latest (the updater endpoint) skips those.
+gh release edit "$tag" -R "$repo" --draft=false --prerelease=false
+
+git tag -a "$tag" -m "Alamo DB $version" "$commit"
+git push -q origin "$tag"
+echo "== published: https://github.com/$repo/releases/tag/$tag"

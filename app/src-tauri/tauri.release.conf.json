@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "hardenedRuntime": false
+    }
+  }
+}

@@ -1,0 +1,6 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+# No `targets`: Windows and macOS are built on native runners (§15 phase 3),
+# and listing them here would force every developer to download the std of
+# platforms they do not use.

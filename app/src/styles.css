@@ -1,0 +1,5030 @@
+/* Without color-scheme WebKit draws native controls (number spinners,
+   select, scrollbar) in the light variant even with the dark theme: black
+   arrows on a black background. Declaring it makes them follow the theme. */
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* WebKit does not adapt the number spinner to the color-scheme (black arrows
+   in dark): drop the spinner, the port field does not need it. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  display: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  color: var(--cell-fg);
+  background: var(--cell-panel-bg);
+}
+
+.fill {
+  position: fixed;
+  inset: 0;
+}
+
+.msg {
+  padding: 2rem;
+  font-size: 14px;
+}
+
+.msg-error {
+  color: oklch(50% 0.19 25);
+  white-space: pre-wrap;
+}
+
+#portal {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 9999;
+}
+
+.report-overlay {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  background: rgba(20, 20, 24, 0.92);
+  color: #eee;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  font-family: ui-monospace, monospace;
+}
+
+/* ------------------------------------------------------------- Studio M1 */
+
+.studio {
+  height: 100%;
+  /* Flex column, not a grid with fixed rows: the banners (execution error,
+     failed commit) are extra children between toolbar and body, and with an
+     "auto 1fr auto" grid the first banner took the 1fr row, squashing editor
+     and results to the bottom. Here only the body grows. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* M2: schema tree sidebar + main area (§9.5, §10). */
+.studio-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  /* Anchor for the collapsible panel (.side-panel.floating). */
+  position: relative;
+}
+
+.studio-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(120px, 38%) 1fr;
+  /* minmax(0, …): the column does not grow to fit its content (the grid
+     canvas has a fixed width) — without it, a panel next to the grid would
+     push the whole page out instead of shrinking it. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Hidden editor (table tab, no tab): its row goes away, the content takes
+   everything — a display:none element generates no box and does not count. */
+.studio-main.no-editor {
+  grid-template-rows: auto 1fr;
+}
+
+/* ------------------------------------------------------------ activity bar */
+
+/* VSCode style: vertical strip of icons, one per sidebar panel (schema,
+   connections, history). The hidden panel stays mounted (no state loss),
+   it only disappears from the layout. */
+.activity-bar {
+  width: 42px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+  padding-bottom: 6px;
+  border-right: 1px solid var(--cell-divider);
+  background: var(--cell-header-bg);
+}
+
+/* Settings gear at the bottom, like VSCode. */
+.activity-settings {
+  margin-top: auto;
+}
+
+/* Settings dialog: compact column, form like the export one. */
+.settings-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.settings-dialog select {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+  max-width: 320px;
+}
+
+.activity-btn {
+  position: relative;
+  width: 42px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.activity-btn:hover {
+  color: var(--cell-fg);
+}
+
+.activity-btn.active {
+  color: var(--cell-fg);
+}
+
+/* Active indicator like VSCode: small bar on the left edge. */
+.activity-btn.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--cell-selection-border);
+}
+
+.activity-sep {
+  width: 22px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--cell-divider);
+}
+
+/* Dot of an open connection: initials and color of the profile. */
+.conn-av {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 3px 0;
+  border-radius: 50%;
+  border: 2px solid var(--conn);
+  background: color-mix(in oklch, var(--conn) 18%, transparent);
+  color: var(--cell-fg);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Connection of the active tab. */
+.conn-av.current {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--conn) 35%, transparent);
+}
+
+.conn-av.add {
+  border: 1px dashed var(--cell-divider);
+  background: none;
+  color: var(--cell-muted-fg);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.conn-av.add:hover {
+  color: var(--cell-fg);
+}
+
+/* Uncommitted writes on that connection (§9.7). */
+.conn-av-dirty {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--cell-prod);
+  border: 2px solid var(--cell-header-bg);
+}
+
+/* ------------------------------------------------------------- side panel */
+
+/* Common container of the sidebar panels: width and frame live here, the
+   content (schema-tree, conn-panel, history-panel) fills it. */
+.side-panel {
+  width: 240px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--cell-divider);
+  background: var(--cell-header-bg);
+  overflow: hidden;
+  /* Anchor for the resize handle (.panel-resize). */
+  position: relative;
+}
+
+.side-panel[hidden] {
+  display: none;
+}
+
+/* Collapsible (default): on top of the content, which does not shrink — the
+   grid is not resized on every opening. 42px = activity bar. */
+.side-panel.floating {
+  position: absolute;
+  left: 42px;
+  top: 0;
+  bottom: 0;
+  z-index: 30;
+  width: 300px;
+  box-shadow: 10px 0 28px rgba(0, 0, 0, 0.22);
+}
+
+.panel-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border-top: 1px solid var(--cell-border);
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.panel-pin {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.panel-pin:hover,
+.panel-pin.on {
+  color: var(--cell-fg);
+}
+
+/* Handle on the right edge: drag for the width, double-click to go back to
+   the default one. */
+.panel-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-resize:hover,
+.panel-resize:active {
+  background: var(--cell-selection-border);
+}
+
+.side-panel > aside {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Section label inside a panel (open/profiles, days). */
+.panel-section {
+  padding: 8px 10px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--cell-muted-fg);
+}
+
+/* ------------------------------------------------------------ schema tree */
+
+.tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.tree-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.tree-filter input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 24px 4px 8px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+}
+
+.tree-filter-clear {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px;
+}
+
+.tree-filter-clear:hover {
+  color: var(--cell-fg);
+}
+
+/* "Favorites only": toggle to the left of the text filter. */
+.tree-fav-only {
+  flex: none;
+  display: inline-flex;
+  padding: 4px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.tree-fav-only:hover {
+  color: var(--cell-fg);
+}
+
+.tree-fav-only.on {
+  color: oklch(72% 0.16 75);
+  border-color: currentColor;
+}
+
+.tree-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* border-box: the table/column rows are <div> (content-box by default)
+     and with the indent padding they overflowed the panel, cutting off the
+     count and the star; the <button> rows were already border-box. */
+  box-sizing: border-box;
+  width: 100%;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-fg);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tree-node:hover {
+  background: var(--state-alt);
+}
+
+/* M3.5: one root per connection (DBeaver-style multi-root). */
+.tree-node.conn-root {
+  font-weight: 600;
+}
+
+.tree-node.conn-root.active {
+  background: var(--state-alt);
+}
+
+.tree-node.conn-root.prod .tree-label {
+  color: var(--cell-prod);
+}
+
+.tree-node.schema,
+.tree-node.group {
+  padding-left: 20px;
+}
+
+.tree-node.rel {
+  padding-left: 32px;
+}
+
+.tree-node.col {
+  padding-left: 56px;
+  cursor: default;
+}
+
+.tree-caret {
+  width: 12px;
+  flex: none;
+  color: var(--cell-muted-fg);
+  font-size: 10px;
+}
+
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-label.muted {
+  color: var(--cell-muted-fg);
+}
+
+.tree-label.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.tree-count {
+  margin-left: auto;
+  color: var(--cell-muted-fg);
+  font-size: 11px;
+  flex: none;
+}
+
+/* Favorites: star that appears on hover, always visible (filled) when on.
+   It always takes its place: the row does not jump. */
+.fav-star {
+  flex: none;
+  display: inline-flex;
+  margin-left: auto;
+  padding: 0 1px;
+  color: var(--cell-muted-fg);
+  visibility: hidden;
+}
+
+.tree-count + .fav-star {
+  margin-left: 4px;
+}
+
+.tree-node:hover .fav-star,
+.fav-star.on,
+.fav-star.partial {
+  visibility: visible;
+}
+
+.fav-star:hover {
+  color: var(--cell-fg);
+}
+
+.fav-star.on {
+  color: oklch(72% 0.16 75);
+}
+
+.tree-note {
+  padding: 2px 10px;
+  color: var(--cell-muted-fg);
+  font-size: 12px;
+}
+
+.tree-note.nested {
+  padding-left: 32px;
+}
+
+.tree-note.error,
+.catalog-error-label {
+  color: oklch(50% 0.19 25);
+}
+
+/* Catalog read failure (CatalogError): label, advice, actions, details. */
+.catalog-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 10px 6px;
+  font-size: 12px;
+  /* The server message can be long, without spaces (host names): it wraps. */
+  overflow-wrap: anywhere;
+}
+
+.catalog-error.nested {
+  padding-left: 32px;
+}
+
+.catalog-error.page {
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--state-modified);
+}
+
+.catalog-error-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.catalog-error-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.rel-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  background: var(--state-selection);
+  color: var(--cell-muted-fg);
+}
+
+.rel-icon.view,
+.rel-icon.materialized_view {
+  background: var(--state-modified);
+}
+
+.col-pk {
+  width: 12px;
+  flex: none;
+  font-size: 10px;
+  color: var(--type-numeric);
+}
+
+.col-type {
+  margin-left: auto;
+  color: var(--cell-muted-fg);
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+  flex: none;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ tabbar */
+
+.tabbar-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  /* No text selection with the right button (WKWebView wants the prefix). */
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--cell-header-bg);
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.tabbar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 6px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* Overflow (§9.5): the strip scrolls, the ▾ lists all the tabs. */
+.tab-overflow {
+  border: none;
+  border-left: 1px solid var(--cell-divider);
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 10px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.tab-overflow:hover {
+  color: var(--cell-fg);
+}
+
+.tab-list {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  z-index: 30;
+  min-width: 220px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--cell-border);
+  border-radius: 6px;
+  background: var(--cell-panel-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.tab-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  color: var(--cell-fg);
+  cursor: pointer;
+  text-align: left;
+}
+
+.tab-list-item:hover,
+.tab-list-item.active {
+  background: var(--state-selection);
+}
+
+.tab-list-kind {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--state-alt);
+  color: var(--cell-muted-fg);
+}
+
+.tab-list-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-list-db {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.tab-list-title.preview {
+  font-style: italic;
+}
+
+.tab-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--cell-border);
+  border-radius: 6px;
+  background: var(--cell-panel-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.tab-menu-item {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  color: var(--cell-fg);
+  cursor: pointer;
+  text-align: left;
+}
+
+.tab-menu-item:hover:not(:disabled) {
+  background: var(--state-selection);
+}
+
+.tab-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tab-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--cell-divider);
+}
+
+.tab-pin {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 4px 8px 4px 12px;
+  font-size: 12.5px;
+  border: 1px solid var(--cell-border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--state-alt);
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  /* Anchor for the drop indicator. */
+  position: relative;
+}
+
+.tab.active {
+  background: var(--cell-panel-bg);
+  color: var(--cell-fg);
+}
+
+/* Connection (profile) color on the top edge: with several connections
+   open you can see at a glance which one the tab belongs to. */
+.tab {
+  border-top: 2px solid color-mix(in oklch, var(--conn, var(--cell-border)) 55%, transparent);
+}
+
+.tab.active {
+  border-top-color: var(--conn, var(--cell-border));
+}
+
+.tab.off {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.tab-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+/* Database/schema the tab works on. */
+.tab-sub {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--cell-muted-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Group label: opens the tabs of a connection. */
+.tab-group {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 5px;
+  flex: none;
+  margin-left: 6px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cell-fg);
+  background: color-mix(in oklch, var(--conn) 18%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab-group:first-child {
+  margin-left: 0;
+}
+
+.tab-group-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--conn);
+}
+
+.tab-group.off {
+  color: var(--cell-muted-fg);
+  background: var(--state-alt);
+}
+
+/* Active label = the connection page is being viewed. */
+.tab-group.active {
+  background: color-mix(in oklch, var(--conn) 34%, var(--cell-panel-bg));
+  box-shadow: inset 0 2px 0 var(--conn);
+}
+
+.tab-group-off {
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* Drag to reorder: the dragged tab fades, a line in the connection's
+   colour marks where it will land. */
+.tab.dragging {
+  opacity: 0.4;
+}
+
+.tabbar.dragging,
+.tabbar.dragging .tab {
+  cursor: grabbing;
+}
+
+.tab.drop-before::before,
+.tab.drop-after::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--conn, var(--cell-fg));
+}
+
+.tab.drop-before::before {
+  left: -2px;
+}
+
+.tab.drop-after::before {
+  right: -2px;
+}
+
+/* Preview tab (§9.5): provisional until a double click or an edit
+   promotes it. */
+.tab.preview .tab-title {
+  font-style: italic;
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tab title cut in the middle (titleParts): the head gives way first, down
+   to a lone "…" (Inter's is 6.8px at 13px); only then the tail is cut at the
+   end. At the floor this leaves "…routes", not "gt_ro…". */
+.tab .tab-title {
+  display: flex;
+  min-width: 0;
+}
+
+.tab .tab-title > span {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* Shrink factors under 1 would leave part of the overflow unshared: the
+   head gets a huge one instead. */
+.tab .tab-title > .tab-title-head {
+  flex-shrink: 1000;
+  min-width: 0.7em;
+}
+
+.tab-close {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.tab-close:hover {
+  background: var(--state-modified);
+  color: var(--cell-fg);
+}
+
+.tab-running {
+  color: var(--cell-selection-border);
+  font-size: 9px;
+}
+
+/* Separator between the SQL group and the tables group in the single row (§9.5). */
+.tab-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 5px 0;
+  background: var(--cell-divider);
+}
+
+/* Tab type icon (§9.5: heterogeneous tabs told apart by icon). */
+.tab-icon {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--state-selection);
+  color: var(--cell-fg);
+}
+
+.tab-new {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  padding: 2px 8px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.tab-new:hover {
+  color: var(--cell-fg);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--cell-header-bg);
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.toolbar .spacer {
+  flex: 1;
+  align-self: stretch;
+}
+
+/* macOS, integrated title bar: the three window buttons sit over the left
+   corner of the toolbar, which leaves room for them and takes the height
+   of a title bar. */
+.mac-titlebar .toolbar {
+  padding-left: 82px;
+  min-height: 38px;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.conn-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.conn-dot.on {
+  background: var(--cell-selection-border);
+}
+
+.conn-dot.off {
+  background: oklch(55% 0.19 25);
+}
+
+.conn-label {
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--cell-divider);
+  background: var(--cell-panel-bg);
+  color: var(--cell-fg);
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--cell-selection-border);
+  border-color: var(--cell-selection-border);
+  color: #fff;
+}
+
+.editor-pane {
+  overflow: hidden;
+  border-bottom: 1px solid var(--cell-divider);
+  background: var(--state-normal);
+}
+
+.editor-pane .cm-editor {
+  height: 100%;
+}
+
+.results-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--cell-panel-bg);
+}
+
+/* Grid + row card side by side. */
+.grid-row {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.grid-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  /* The canvas keeps the old width for one frame, until the ResizeObserver
+     updates: it must not widen the container. */
+  overflow: hidden;
+}
+
+/* Card of the selected row (alternative to the cell panel at the bottom). */
+.row-panel {
+  position: relative;
+  flex: none;
+  width: 320px;
+  max-width: calc(100% - 200px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--cell-divider);
+  background: var(--state-normal);
+}
+
+/* The width handle sits on the left edge, towards the grid. */
+.row-panel > .panel-resize {
+  left: -3px;
+  right: auto;
+}
+
+.row-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 12px;
+  border-bottom: 1px solid var(--cell-border);
+  font-size: 12px;
+}
+
+.row-panel-title {
+  font-weight: 600;
+}
+
+.row-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.row-field {
+  display: grid;
+  /* Names grow with the card: widening it shows them whole. */
+  grid-template-columns: minmax(104px, 35%) 1fr;
+  gap: 8px;
+  padding: 4px 12px;
+  align-items: baseline;
+  border-left: 3px solid transparent;
+}
+
+.row-field.current {
+  background: var(--state-selection);
+  border-left-color: var(--cell-selection-border);
+}
+
+/* Edited and not saved, as in the grid; a new row in its own colour. */
+.row-field.pending {
+  background: var(--state-modified);
+}
+
+.row-field.new {
+  background: var(--state-new);
+}
+
+.row-field:focus {
+  outline: none;
+}
+
+.row-field-input {
+  min-width: 0;
+  margin: -2px 0;
+  padding: 1px 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--cell-fg);
+  background: var(--state-normal);
+  border: 1px solid var(--cell-selection-border);
+  border-radius: 3px;
+  outline: none;
+}
+
+.row-field-key {
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-field-key small {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.row-field-val {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--cell-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* A long field must not eat the card: the current one opens. */
+  max-height: 5.2em;
+  overflow: hidden;
+}
+
+.row-field-val.open {
+  max-height: none;
+}
+
+.row-field-val.numeric { color: var(--type-numeric); }
+.row-field-val.temporal { color: var(--type-temporal); }
+.row-field-val.boolean { color: var(--type-boolean); }
+.row-field-val.structured { color: var(--type-structured); }
+
+.row-field-val.null,
+.row-field-val.muted {
+  color: var(--cell-null-fg);
+  font-style: italic;
+}
+
+/* Foreign key in the card: clickable value leading to the parent record. */
+/* Value and, on a foreign key, the arrow to the parent record. */
+.row-field-value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-field-value > .row-field-val {
+  min-width: 0;
+}
+
+.row-link {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.row-link:hover {
+  color: var(--cell-fg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.row-link-to {
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+  white-space: nowrap;
+}
+
+.row-related {
+  margin-top: 6px;
+  border-top: 1px solid var(--cell-border);
+}
+
+.row-related-item {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 3px 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--cell-border);
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--cell-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-related-item:hover {
+  border-color: var(--cell-selection-border);
+}
+
+/* Back/forward and navigation path inside the table tab. */
+.table-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+}
+
+.table-nav-trail {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  white-space: nowrap;
+}
+
+.table-nav-trail b {
+  color: var(--cell-fg);
+}
+
+.row-field-more {
+  color: var(--cell-muted-fg);
+  font-style: italic;
+}
+
+.hint {
+  padding: 1.5rem;
+  color: var(--cell-muted-fg);
+  font-size: 13px;
+}
+
+/* Badge of decision 10 (§7.3): local sort on an incomplete result set. It
+   sits above the grid, not in a banner: it must go away and come back with the sort. */
+.sort-badge {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 3;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--cell-border);
+  background: var(--state-modified);
+  color: var(--cell-fg);
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------- table tab */
+
+.subtab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.subtab-bar .spacer {
+  flex: 1;
+}
+
+.subtab {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 12px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.subtab.active {
+  background: var(--state-selection);
+  color: var(--cell-fg);
+}
+
+/* Connection context in the toolbar: current database of the sticky. */
+.db-badge {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--cell-fg);
+  background: var(--state-alt);
+  border: 1px solid var(--cell-border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.db-badge.none {
+  color: var(--cell-muted-fg);
+  font-style: italic;
+}
+
+/* On MySQL the context can be changed: select dressed like the badge. */
+.db-select {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--cell-fg);
+  background: var(--state-alt);
+  border: 1px solid var(--cell-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  max-width: 220px;
+}
+
+.db-select:disabled {
+  opacity: 0.6;
+}
+
+/* Server-side query bar (decision 10): sort chips and filters. */
+.table-query-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--cell-border);
+  font-size: 12px;
+}
+
+/* Hand-written WHERE bar (like DBeaver): full row, above the chips. */
+.where-box {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.where-kw {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cell-muted-fg);
+}
+
+.where-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--ui-border, var(--cell-border));
+  border-radius: 4px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+}
+
+.where-input .cm-editor.cm-focused {
+  outline: none;
+}
+
+.where-input:focus-within {
+  border-color: var(--cell-selection-border);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--cell-selection-border) 22%, transparent);
+}
+
+/* Text typed but not yet applied (Enter missing). */
+.where-box.dirty .where-input {
+  border-style: dashed;
+  border-color: var(--cell-selection-border);
+}
+
+.where-hint {
+  flex: none;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+  white-space: nowrap;
+}
+
+.where-hint kbd {
+  font: inherit;
+  font-weight: 600;
+  padding: 0 4px;
+  border: 1px solid var(--cell-border);
+  border-radius: 3px;
+  background: var(--cell-header-bg);
+  color: var(--cell-fg);
+}
+
+/* "+ Filter": select disguised as a button (column list). */
+.filter-add {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px dashed var(--cell-divider);
+  border-radius: 999px;
+  background: none;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+  max-width: 110px;
+}
+
+.filter-add:hover:not(:disabled) {
+  color: var(--cell-fg);
+}
+
+/* SELECT generated by the filters: "SQL ▾" on the right, the whole query in
+   the box (SqlPreview). */
+.table-sql {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sql-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Anchored to the right: the button sits at the end of the row. Double class:
+   `.db-picker-pop` comes further down in the file. */
+.db-picker-pop.sql-preview-pop {
+  left: auto;
+  right: 0;
+  width: min(560px, 80vw);
+}
+
+.sql-preview-code {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--cell-fg);
+  user-select: text;
+}
+
+.sql-preview-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px;
+  border-top: 1px solid var(--cell-border);
+}
+
+.query-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--cell-border);
+  border-radius: 5px;
+  background: var(--cell-panel-bg);
+  color: var(--cell-fg);
+}
+
+.query-chip .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.query-chip .muted {
+  color: var(--cell-muted-fg);
+}
+
+.query-chip select,
+.query-chip input {
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--cell-border);
+  border-radius: 4px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+  padding: 1px 4px;
+}
+
+.query-chip input {
+  width: 110px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.chip-x {
+  border: none;
+  background: none;
+  color: var(--cell-muted-fg);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.chip-x:hover:not(:disabled) {
+  background: var(--state-selection);
+  color: var(--cell-fg);
+}
+
+/* Sort direction in the chip: clickable, flips ↑/↓. */
+.chip-dir {
+  border: none;
+  background: none;
+  color: var(--cell-muted-fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chip-dir:hover:not(:disabled) {
+  background: var(--state-selection);
+  color: var(--cell-fg);
+}
+
+/* Bar groups: filters, then sort. An icon opens each group, a thin line
+   separates them. */
+.query-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.query-group + .query-group {
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--cell-border);
+}
+
+.query-group-icon {
+  display: inline-flex;
+  color: var(--cell-muted-fg);
+}
+
+/* Filters tinted with the accent, sorts neutral: they can be told apart
+   without reading them. */
+.query-chip.filter-chip {
+  background: color-mix(in oklab, var(--cell-selection-border) 10%, var(--cell-panel-bg));
+  border-color: color-mix(in oklab, var(--cell-selection-border) 35%, var(--cell-border));
+}
+
+/* "Sort ▾": box with all the columns (SortPanel). */
+.sort-panel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.db-picker-pop.sort-panel-pop {
+  width: 400px;
+  max-width: 90vw;
+}
+
+/* Search of the boxes with the × to clear it (PickerSearch). */
+.picker-search {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+
+.picker-search .db-picker-filter {
+  flex: 1;
+  min-width: 0;
+  padding-right: 32px;
+}
+
+.picker-search-x {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.sort-panel-list {
+  max-height: 360px;
+  overflow: auto;
+  padding: 4px;
+}
+
+.sort-panel-head {
+  padding: 8px 8px 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cell-muted-fg);
+}
+
+.sort-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.sort-panel-row:hover {
+  background: var(--state-alt);
+}
+
+.sort-panel-grip {
+  flex: none;
+  width: 13px;
+  display: inline-flex;
+  color: var(--cell-muted-fg);
+}
+
+.sort-panel-row.movable {
+  cursor: grab;
+  user-select: none;
+}
+
+.sort-panel-row.dragging {
+  cursor: grabbing;
+  background: var(--state-selection);
+  outline: 1px dashed var(--cell-selection-border);
+}
+
+.sort-panel-prio {
+  flex: none;
+  width: 14px;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--cell-selection-border);
+}
+
+.sort-panel-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.sort-panel-type {
+  flex: none;
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.sort-panel-dirs {
+  flex: none;
+  display: inline-flex;
+  border: 1px solid var(--ui-border, var(--cell-border));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sort-panel-dir {
+  width: 24px;
+  padding: 1px 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.sort-panel-dir + .sort-panel-dir {
+  border-left: 1px solid var(--ui-border, var(--cell-border));
+}
+
+.sort-panel-dir:hover {
+  background: var(--state-selection);
+  color: var(--cell-fg);
+}
+
+.sort-panel-dir.on {
+  background: var(--cell-selection-border);
+  color: var(--cell-panel-bg);
+  font-weight: 700;
+}
+
+.sort-panel-dir:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+
+/* Same width as the × of the sorted rows: aligned columns. */
+.sort-panel-x-gap {
+  flex: none;
+  width: 18px;
+}
+
+.sort-panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--cell-border);
+}
+
+.sort-panel-foot .spacer {
+  flex: 1;
+}
+
+/* "Clear" at the end of the group: a link, not another chip. */
+.query-clear {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.query-clear:hover:not(:disabled) {
+  color: var(--cell-fg);
+  text-decoration: underline;
+}
+
+/* With 2+ columns the priority is changed by dragging (SortChips). */
+.sort-chip.movable {
+  cursor: grab;
+  user-select: none;
+}
+
+.sort-chip.dragging {
+  cursor: grabbing;
+  border-style: dashed;
+  border-color: var(--cell-selection-border);
+  opacity: 0.75;
+}
+
+/* Same sign as the header (`↓1`), clearly readable. */
+.sort-chip .chip-dir {
+  color: var(--cell-fg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Non-clickable heading of the context menu on the header. */
+.tab-menu-label {
+  padding: 5px 10px 3px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  border-bottom: 1px solid var(--cell-border);
+  margin-bottom: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.structure-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.structure-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.structure-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--cell-muted-fg);
+  border-bottom: 1px solid var(--cell-border);
+  padding: 4px 12px 4px 0;
+}
+
+.structure-table td {
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--cell-divider);
+  white-space: nowrap;
+}
+
+.structure-table .num {
+  text-align: right;
+  color: var(--cell-muted-fg);
+}
+
+.structure-table .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.structure-table .muted {
+  color: var(--cell-muted-fg);
+}
+
+/* "Script" tab (Studio): rows with their own tab lead to that tab. */
+.script-table tr.clickable {
+  cursor: pointer;
+}
+
+.script-table tr.clickable:hover td {
+  background: var(--state-alt);
+}
+
+.script-table tr.failed td {
+  color: oklch(50% 0.19 25);
+}
+
+.ddl-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 14px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+  user-select: text;
+}
+
+/* Statement tabs + "Export all" at the right, outside the scrolling strip. */
+.stmt-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 8px;
+  border-bottom: 1px solid var(--cell-border);
+  min-width: 0;
+}
+
+.stmt-export {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.stmt-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  align-self: flex-end;
+  gap: 2px;
+  padding: 4px 8px 0;
+  /* Many tabs (script with many SELECTs): first they shrink down to a
+     minimum that keeps number and badge readable, then the strip scrolls.
+     Without min-width:0 + overflow the row widened the results panel
+     beyond the window and the tabs ended up off screen. Scrollbar hidden
+     as in the tab bar: the selected tab is brought into view by Studio
+     and the wheel scrolls horizontally. */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.stmt-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.stmt-tab {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--cell-border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--state-alt);
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.stmt-tab.active {
+  background: var(--cell-panel-bg);
+  color: var(--cell-fg);
+}
+
+.stmt-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 320px;
+  /* It shrinks (the snippet gets truncated) but not below the minimum: at
+     that point the strip scrolls. */
+  flex: 0 1 auto;
+  min-width: 7em;
+}
+
+.stmt-tab-n {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--cell-muted-fg);
+}
+
+.stmt-tab-sql {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+.stmt-tab-badge {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--cell-muted-fg);
+}
+
+.stmt-tab.active .stmt-tab-badge {
+  color: var(--cell-fg);
+}
+
+.stmt-tab.failed {
+  color: oklch(50% 0.19 25);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.banner.warn {
+  background: var(--state-modified);
+}
+
+.banner.neutral {
+  background: var(--state-alt);
+  color: var(--cell-muted-fg);
+}
+
+.banner.ok {
+  background: var(--state-selection);
+}
+
+/* Paged SQL tab: a thin row above the grid, always the same height from
+   one page to the next. */
+.banner.pages-bar {
+  padding: 3px 12px;
+  font-size: 12px;
+}
+
+.banner-note {
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+/* Error: visual hierarchy message/detail/hint (§6), never a single line. */
+.error-panel {
+  padding: 10px 14px;
+  background: var(--state-error);
+  border-bottom: 1px solid var(--cell-divider);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.error-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+/* The error text can be selected and copied (WKWebView wants the prefix);
+   the Copy button takes the whole block in one go. */
+.error-message,
+.error-detail,
+.error-hint,
+.error-context {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.error-head .spacer {
+  flex: 1;
+}
+
+.error-copy {
+  flex: none;
+  align-self: center;
+}
+
+.error-code {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.error-message {
+  font-weight: 600;
+}
+
+.error-detail {
+  margin-top: 4px;
+}
+
+.error-hint {
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.error-context {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  white-space: pre-wrap;
+}
+
+.notices {
+  max-height: 120px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.notice {
+  padding: 3px 12px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+
+.notice .sev {
+  color: var(--cell-muted-fg);
+  font-size: 10px;
+  margin-right: 6px;
+}
+
+.notice.warning .sev {
+  color: var(--type-structured);
+}
+
+.statusbar {
+  display: flex;
+  gap: 16px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  background: var(--cell-header-bg);
+  border-top: 1px solid var(--cell-divider);
+}
+
+.statusbar-conns {
+  margin-left: auto;
+}
+
+/* §9.7: on a prod profile the color pervades the chrome, not just a badge. */
+.studio.prod .toolbar {
+  box-shadow: inset 0 3px 0 var(--cell-prod);
+}
+
+/* Connection color on the frame: toolbar and status bar tinted, colored
+   thread under the toolbar and under the tabs. The content (editor, grid)
+   stays neutral: the data colors must not compete. Without a color on the
+   profile the frame stays as it was. Mix in oklab: in oklch the tint
+   towards the dark (bluish) background would rotate red into purple. */
+.studio.tinted .toolbar {
+  background: color-mix(in oklab, var(--conn) 13%, var(--cell-header-bg));
+  border-bottom: 2px solid color-mix(in oklab, var(--conn) 75%, var(--cell-header-bg));
+}
+
+.studio.tinted .tabbar-row {
+  border-bottom-color: color-mix(in oklab, var(--conn) 45%, var(--cell-divider));
+}
+
+.studio.tinted .statusbar {
+  background: color-mix(in oklab, var(--conn) 16%, var(--cell-header-bg));
+  border-top-color: color-mix(in oklab, var(--conn) 55%, var(--cell-divider));
+  color: var(--cell-fg);
+}
+
+/* Production: the tint is stronger, besides the §9.7 thread at the top. */
+.studio.tinted.prod .toolbar {
+  background: color-mix(in oklab, var(--conn) 22%, var(--cell-header-bg));
+}
+
+.studio.tinted.prod .statusbar {
+  background: color-mix(in oklab, var(--conn) 30%, var(--cell-header-bg));
+}
+
+.btn.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.btn.danger {
+  color: oklch(50% 0.19 25);
+}
+
+.profile-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--cell-divider);
+  font-size: 12px;
+}
+
+.profile-pill.prod {
+  border-color: var(--cell-prod);
+}
+
+.prod-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--cell-prod);
+}
+
+/* Read-only (§9.7 point 4): informative, not an alarm — no red. */
+.ro-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--cell-muted-fg);
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--cell-divider);
+  display: inline-block;
+  padding: 0;
+  cursor: pointer;
+  flex: none;
+}
+
+.swatch.active {
+  outline: 2px solid var(--cell-selection-border);
+  outline-offset: 1px;
+}
+
+/* ----------------------------------------------------- transactions (§9.7) */
+
+/* Badge in the toolbar: pill like .db-badge, colors progressing with the timer. */
+.txn-badge {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--state-alt);
+  border: 1px solid var(--cell-divider);
+  white-space: nowrap;
+}
+
+button.txn-badge {
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.txn-log {
+  margin: 0;
+  padding-left: 24px;
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.txn-log li {
+  margin-bottom: 8px;
+}
+
+.txn-log pre {
+  margin: 0;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.txn-log .muted {
+  font-size: 12px;
+}
+
+/* Manual commit switched on (§9.7): the toolbar button stays pressed. */
+.btn.active {
+  border-color: var(--cell-selection-border);
+  color: var(--cell-selection-border);
+  font-weight: 600;
+}
+
+.txn-badge.warn {
+  background: var(--state-modified);
+}
+
+.txn-badge.danger {
+  border-color: var(--cell-prod);
+  color: var(--cell-prod);
+  font-weight: 600;
+}
+
+.gate-warn {
+  display: block;
+}
+
+/* Row estimate from EXPLAIN in the confirmation dialogs (§9.7): one line
+   under the SQL. The warn fires when the estimate diverges from the expectation. */
+.explain-estimate {
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+}
+
+.explain-estimate.warn {
+  color: var(--cell-prod);
+  font-weight: 600;
+}
+
+.gate-list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.gate-list .mono,
+.update-dialog .gate-list li {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12.5px;
+}
+
+/* --------------------------------------------------------- export (dec. 11) */
+
+.export-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.export-dialog label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--cell-fg);
+}
+
+.export-dialog select,
+.export-dialog input[type="text"],
+.export-dialog input:not([type]) {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+  max-width: 320px;
+}
+
+.export-dialog .export-note {
+  font-size: 12px;
+  max-width: 420px;
+}
+
+.export-dialog .banner {
+  word-break: break-all;
+}
+
+/* ---------------------------------------- connections export/import */
+
+.transfer-dialog label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--cell-fg);
+  cursor: pointer;
+}
+
+.transfer-dialog .transfer-all {
+  color: var(--cell-muted-fg);
+}
+
+.transfer-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 44vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+}
+
+.transfer-dialog .transfer-row {
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.transfer-dialog .transfer-row:hover {
+  background: var(--state-alt);
+}
+
+.transfer-row .swatch {
+  cursor: inherit;
+}
+
+/* The name takes precedence: with long hosts (RDS, Azure) it is the
+   destination that gets shortened, not the name. */
+.transfer-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-dest {
+  flex: 1;
+  min-width: 0;
+  padding-left: 12px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transfer-dialog .prod-tag {
+  flex: none;
+}
+
+.dialog.transfer-dialog {
+  width: 760px;
+}
+
+/* File password (export with password, import of an encrypted file). */
+.transfer-pass {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.transfer-pass input {
+  flex: 1 1 200px;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+}
+
+.transfer-hint {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.transfer-hint b {
+  color: oklch(70% 0.14 70);
+  font-weight: 600;
+}
+
+/* "File format" in the import dialog: rules and example of our JSON. */
+.transfer-format-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+.transfer-format-toggle:hover {
+  color: var(--cell-fg);
+}
+
+ul.transfer-hint {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+}
+
+.transfer-example {
+  position: relative;
+}
+.transfer-example .btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.transfer-example pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-alt);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--cell-fg);
+}
+
+/* "already present" / "renamed" in the import preview. */
+.transfer-tag {
+  flex: none;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--cell-divider);
+  color: var(--cell-muted-fg);
+}
+
+/* Path that does not exist on this computer: under the row, indented to
+   the name's position. */
+.transfer-warn {
+  padding: 0 6px 4px 50px;
+  font-size: 12px;
+  color: oklch(70% 0.14 70);
+  word-break: break-all;
+}
+
+.transfer-dialog .banner {
+  display: block;
+  border-bottom: none;
+  border-radius: 6px;
+}
+
+/* The path wraps where needed, the text around it does not. */
+.transfer-dialog .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  word-break: break-all;
+}
+
+/* ⋯ next to the + in the connections panel header. */
+.tree-head-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* --------------------------------------------------- grid editing (M4) */
+
+/* The default dialog-body is a two-panel row (ConnectDialog): here a
+   compact column is needed. */
+.update-dialog .dialog-body {
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 16px;
+  gap: 10px;
+}
+
+.update-dialog .update-target {
+  font-size: 13px;
+}
+
+.update-dialog .update-target .muted {
+  color: var(--cell-muted-fg);
+}
+
+.update-dialog .update-target .mono,
+.update-dialog .update-change .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.update-dialog .update-change {
+  font-size: 13px;
+  color: var(--cell-muted-fg);
+}
+
+/* The preview is a closed block, not the full-height DDL panel. */
+.update-dialog .update-sql {
+  flex: none;
+  max-height: 40vh;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-alt);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-dialog .form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.update-dialog .form-actions .spacer {
+  flex: 1;
+}
+
+/* App update: release notes in a scrolling block. */
+.app-update-notes {
+  max-height: 30vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-alt);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-update-error {
+  font-size: 13px;
+  color: oklch(50% 0.19 25);
+}
+
+/* ------------------------------------------------- close dialog (§9.7.2) */
+
+/* Short questions (quit, unsaved changes): as narrow as the text. */
+.dialog.small-dialog {
+  width: 460px;
+}
+
+.small-dialog .dialog-body {
+  font-size: 13px;
+}
+
+.small-dialog .quit-pending .muted {
+  color: var(--cell-muted-fg);
+}
+
+.dialog-body .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.quit-pending {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.quit-pending li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------- connections dialog */
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog {
+  width: 640px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow: auto;
+  background: var(--cell-panel-bg);
+  border: 1px solid var(--cell-divider);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.dialog-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.dialog-body {
+  display: flex;
+  min-height: 320px;
+}
+
+.profile-list {
+  width: 200px;
+  flex: none;
+  border-right: 1px solid var(--cell-divider);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.profile-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cell-fg);
+  cursor: pointer;
+}
+
+.profile-item:hover {
+  background: var(--state-alt);
+}
+
+.profile-item.active {
+  background: var(--state-selection);
+}
+
+.profile-item.new {
+  color: var(--cell-muted-fg);
+}
+
+.profile-item .profile-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-form {
+  flex: 1;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.profile-form input,
+.profile-form select {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-fg);
+}
+
+.profile-form .form-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.profile-form .form-row .grow {
+  flex: 1;
+}
+
+.profile-form .form-row .port {
+  width: 80px;
+}
+
+.profile-form .form-hint {
+  margin-top: -4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--cell-muted-fg);
+}
+
+.profile-form label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--cell-fg);
+  padding-bottom: 6px;
+}
+
+.form-row.swatches {
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.swatch.none {
+  background: linear-gradient(
+    to top right,
+    transparent 44%,
+    oklch(55% 0.19 25) 46%,
+    oklch(55% 0.19 25) 54%,
+    transparent 56%
+  );
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.form-actions .spacer {
+  flex: 1;
+}
+
+/* ------------------------------------------------------- inspect panel */
+
+.inspect-panel {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--cell-divider);
+  background: var(--state-normal);
+}
+
+/* Thin strip straddling the top edge: drag it to raise the panel. */
+.inspect-grip {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  z-index: 1;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.inspect-grip:hover {
+  background: var(--cell-border);
+}
+
+.inspect-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--cell-border);
+  background: var(--cell-header-bg);
+}
+
+.inspect-head .spacer {
+  flex: 1;
+}
+
+.inspect-col {
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+}
+
+.inspect-type,
+.inspect-pos,
+.inspect-len,
+.inspect-keys {
+  color: var(--cell-muted-fg);
+}
+
+.inspect-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.inspect-body > .hint,
+.inspect-body > .inspect-null {
+  padding: 8px 12px;
+}
+
+/* CodeMirror fills the body and scrolls by itself. */
+.inspect-editor {
+  flex: 1;
+  min-height: 0;
+}
+.inspect-editor[hidden] {
+  display: none;
+}
+
+.inspect-null {
+  color: var(--cell-null-fg);
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+
+/* ------------------------------------------- connections/history panels */
+
+/* Connection/profile row: clickable body + ✕ to disconnect. */
+.conn-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.conn-item:hover,
+.conn-item.active {
+  background: var(--state-alt);
+}
+
+.conn-item .conn-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.conn-item.active .conn-main {
+  font-weight: 600;
+}
+
+.conn-item.prod .tree-label {
+  color: var(--cell-prod);
+}
+
+/* Open transaction dot (§9.7): filled = with writes. */
+.conn-txn {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--cell-prod);
+}
+
+.conn-txn.writes {
+  background: var(--cell-prod);
+}
+
+.conn-x {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 8px;
+  /* Visible only on hover: the list stays clean. */
+  visibility: hidden;
+}
+
+.conn-item:hover .conn-x:not(:disabled),
+.conn-item.active .conn-x:not(:disabled) {
+  /* On the active connection it stays visible: it is the only way to
+     disconnect when there are no open tabs. */
+  visibility: visible;
+}
+
+.conn-x:hover {
+  color: var(--cell-fg);
+}
+
+.conn-x.danger {
+  visibility: visible;
+  color: var(--cell-prod);
+}
+
+/* History entry: time + profile swatch + first line of the query. */
+.hist-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--cell-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hist-entry:hover {
+  background: var(--state-alt);
+}
+
+.hist-time {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--cell-muted-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.hist-sql {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------ ⌘K palette */
+
+.cmdk-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 13vh;
+}
+
+.cmdk {
+  width: 620px;
+  max-width: 92vw;
+  max-height: 64vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--cell-panel-bg);
+  border: 1px solid var(--cell-divider);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.cmdk-input {
+  flex: none;
+  padding: 13px 16px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--cell-fg);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--cell-border);
+  outline: none;
+}
+
+.cmdk-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 6px 6px;
+}
+
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--cell-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmdk-item.on {
+  background: var(--state-selection);
+}
+
+.cmdk-icon {
+  flex: none;
+  width: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.cmdk-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmdk-sub {
+  margin-left: auto;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--cell-muted-fg);
+}
+
+.cmdk-foot {
+  flex: none;
+  display: flex;
+  gap: 16px;
+  padding: 5px 14px;
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+  border-top: 1px solid var(--cell-border);
+  background: var(--cell-header-bg);
+}
+
+/* ------------------------------------------------- connection page */
+
+.conn-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--cell-panel-bg);
+}
+
+.conn-page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--cell-border);
+  background: color-mix(in oklch, var(--conn) 9%, transparent);
+}
+
+.conn-page-av {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--conn);
+  background: color-mix(in oklch, var(--conn) 18%, transparent);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.conn-page-title h2 {
+  margin: 0;
+  font-size: 17px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.conn-page-ro {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--cell-divider);
+  color: var(--cell-muted-fg);
+}
+
+/* Channel security indicator (connection page). */
+.conn-sec {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--cell-divider);
+}
+
+.conn-sec.ok {
+  background: var(--state-selection);
+}
+
+.conn-sec.warn {
+  background: var(--state-modified);
+}
+
+.conn-page-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.conn-page-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.conn-page-tool {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.conn-page-tool .spacer {
+  flex: 1;
+}
+
+.conn-page-filter {
+  box-sizing: border-box;
+  width: 320px;
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-fg);
+  background: var(--state-normal);
+  border: 1px solid var(--cell-divider);
+  border-radius: 5px;
+  outline: none;
+}
+
+.conn-page-filter:focus {
+  border-color: var(--conn);
+}
+
+.conn-page-filter.small {
+  width: 100%;
+  margin: 8px 0 6px;
+}
+
+.conn-page-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.conn-page-col {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 6px;
+  font-size: 12.5px;
+}
+
+.conn-page-side-actions {
+  margin-bottom: 6px;
+}
+
+.conn-page-count {
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.conn-page-sys {
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--cell-divider);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.seg button {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.seg button.on {
+  background: var(--state-alt);
+  color: var(--cell-fg);
+  font-weight: 600;
+}
+
+.conn-page-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.conn-page-list {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.conn-page-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+}
+
+.conn-page-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  font-weight: 600;
+  padding: 6px 12px;
+  background: var(--cell-header-bg);
+  border-bottom: 1px solid var(--cell-divider);
+  white-space: nowrap;
+}
+
+.conn-page-table td {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--cell-border);
+  white-space: nowrap;
+  color: var(--cell-muted-fg);
+  cursor: default;
+}
+
+.conn-page-table td.name {
+  color: var(--cell-fg);
+  font-weight: 600;
+}
+
+.conn-page-table .num {
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.conn-page-table tr.system td.name {
+  font-weight: 400;
+  font-style: italic;
+}
+
+.conn-page-table tbody tr:hover td {
+  background: var(--state-alt);
+}
+
+/* Star column of the tables view: narrow, star visible on hover or when on
+   (same rule as the tree rows). */
+.conn-page-table th.fav,
+.conn-page-table td.fav {
+  width: 1px;
+  padding-right: 0;
+}
+
+.conn-page-table td.fav .fav-star {
+  margin-left: 0;
+  cursor: pointer;
+}
+
+.conn-page-table tbody tr:hover .fav-star {
+  visibility: visible;
+}
+
+.conn-page-table tr.sel td {
+  background: color-mix(in oklch, var(--conn) 16%, transparent);
+}
+
+.conn-page-table tr.sel td:first-child {
+  box-shadow: inset 3px 0 0 var(--conn);
+}
+
+.conn-page-cur,
+.conn-page-use {
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--cell-fg);
+  background: color-mix(in oklch, var(--conn) 22%, transparent);
+}
+
+.conn-page-cur {
+  font-weight: 400;
+  background: none;
+  border: 1px solid var(--cell-divider);
+  color: var(--cell-muted-fg);
+}
+
+.conn-page-use {
+  margin-left: 0;
+}
+
+.conn-page-side {
+  width: 320px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 14px 10px;
+  border-left: 1px solid var(--cell-border);
+  background: var(--cell-header-bg);
+}
+
+.conn-page-side h3 {
+  margin: 0;
+  font-size: 15px;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conn-page-meta {
+  margin: 3px 0 10px;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+}
+
+.conn-page-rels {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.conn-page-rel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-fg);
+  text-align: left;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.conn-page-rel:hover {
+  background: var(--state-alt);
+}
+
+.conn-page-hint {
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+}
+
+.conn-page-hint b {
+  color: var(--cell-fg);
+}
+
+/* ------------------------------------------------ connections dialog: sections */
+
+.form-sections {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.form-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  white-space: nowrap;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+  cursor: pointer;
+}
+
+.form-section.active {
+  color: var(--cell-fg);
+  font-weight: 600;
+  border-bottom-color: var(--cell-selection-border);
+}
+
+.form-section-badge {
+  font-size: 10.5px;
+  font-weight: 400;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--cell-divider);
+  color: var(--cell-muted-fg);
+}
+
+/* Required fields missing in that section. */
+.form-section-warn {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cell-prod);
+}
+
+/* ------------------------------------------------------------------ icons */
+
+/* Lucide: aligned to the text and never squeezed by flex. */
+svg.lucide {
+  flex: none;
+  vertical-align: -2px;
+}
+
+.btn svg.lucide {
+  margin-right: 2px;
+}
+
+.btn.small svg.lucide:only-child,
+.tab-close svg.lucide,
+.chip-x svg.lucide {
+  margin-right: 0;
+  display: block;
+}
+
+.btn kbd {
+  font: inherit;
+  font-size: 0.9em;
+  opacity: 0.75;
+}
+
+/* Type icons (tabs, tree, lists): no more letter on a background. */
+.tab-icon,
+.rel-icon,
+.tab-list-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  background: none;
+  color: var(--cell-muted-fg);
+}
+
+.tab.active .tab-icon {
+  color: var(--cell-fg);
+}
+
+.tree-caret svg.lucide {
+  display: block;
+}
+
+/* ---------------------------------------------------- controls polish */
+
+/* One language for buttons, fields, tabs and menus: soft borders (the
+   solid divider, meant for structural lines, looked like a hard outline on
+   controls), explicit hover/focus states, short transitions. Appearance
+   only: no change of function. */
+:root {
+  --ui-border: color-mix(in oklab, var(--cell-divider) 42%, transparent);
+  --ui-border-strong: color-mix(in oklab, var(--cell-divider) 70%, transparent);
+  --ui-hover: color-mix(in oklab, var(--cell-fg) 7%, transparent);
+  --ui-focus: color-mix(in oklab, var(--cell-selection-border) 55%, transparent);
+  --ui-ease: 120ms ease-out;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-color: var(--ui-border);
+  background: color-mix(in oklab, var(--cell-fg) 3%, var(--cell-panel-bg));
+  transition:
+    background-color var(--ui-ease),
+    border-color var(--ui-ease),
+    color var(--ui-ease);
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--cell-fg) 9%, var(--cell-panel-bg));
+  border-color: var(--ui-border-strong);
+}
+
+.btn:active:not(:disabled) {
+  background: color-mix(in oklab, var(--cell-fg) 14%, var(--cell-panel-bg));
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--cell-selection-border) 88%, white);
+  border-color: transparent;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in oklab, oklch(55% 0.19 25) 14%, var(--cell-panel-bg));
+  border-color: color-mix(in oklab, oklch(55% 0.19 25) 55%, transparent);
+}
+
+/* Keyboard focus: always visible, never on mouse click. */
+.btn:focus-visible,
+.tab:focus-visible,
+.tab-group:focus-visible,
+.conn-av:focus-visible,
+.activity-btn:focus-visible,
+.tree-node:focus-visible,
+.filter-add:focus-visible,
+.chip-x:focus-visible,
+.chip-dir:focus-visible,
+.query-clear:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+/* Text fields and select: same border as buttons, focus on the border. */
+.profile-form input,
+.profile-form select,
+.tree-filter input,
+.conn-page-filter,
+.db-select,
+.filter-add,
+.query-chip input,
+.query-chip select {
+  border-color: var(--ui-border);
+  transition:
+    border-color var(--ui-ease),
+    box-shadow var(--ui-ease);
+}
+
+.profile-form input:focus,
+.profile-form select:focus,
+.tree-filter input:focus,
+.query-chip input:focus {
+  outline: none;
+  border-color: var(--cell-selection-border);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--cell-selection-border) 22%, transparent);
+}
+
+/* Toolbar pills: same soft border. */
+.profile-pill,
+.db-badge {
+  border-color: var(--ui-border);
+}
+
+/* Tabs: readable hover, sharper active. */
+.tab {
+  border-color: var(--ui-border);
+  transition:
+    background-color var(--ui-ease),
+    color var(--ui-ease);
+}
+
+.tab:hover:not(.active) {
+  background: color-mix(in oklab, var(--cell-fg) 6%, var(--state-alt));
+  color: var(--cell-fg);
+}
+
+.tab-close,
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+  transition: background-color var(--ui-ease);
+}
+
+.tab-close:hover,
+.chip-x:hover {
+  background: var(--ui-hover);
+}
+
+.tab-new {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  transition: background-color var(--ui-ease);
+}
+
+.tab-new:hover {
+  background: var(--ui-hover);
+}
+
+.tab-group {
+  transition: background-color var(--ui-ease);
+}
+
+.tab-group:hover:not(.off) {
+  background: color-mix(in oklab, var(--conn) 28%, transparent);
+}
+
+/* Activity bar and list items: hover with a background, not just a color change. */
+.activity-btn {
+  border-radius: 6px;
+  transition:
+    color var(--ui-ease),
+    background-color var(--ui-ease);
+}
+
+.activity-btn:hover {
+  background: var(--ui-hover);
+}
+
+.conn-av {
+  transition:
+    box-shadow var(--ui-ease),
+    transform var(--ui-ease);
+}
+
+.conn-av:hover {
+  transform: scale(1.06);
+}
+
+.tree-node,
+.hist-entry,
+.conn-page-rel,
+.cmdk-item,
+.tab-menu-item {
+  transition: background-color 80ms ease-out;
+}
+
+/* Context menus and palette: same border and softer shadow. */
+.tab-menu,
+.cmdk,
+.dialog {
+  border-color: var(--ui-border-strong);
+}
+
+.tab-menu {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+/* Sub-tabs (Data / Structure / DDL) and sections: transition on change. */
+.subtab,
+.form-section,
+.seg button {
+  transition:
+    color var(--ui-ease),
+    background-color var(--ui-ease),
+    border-color var(--ui-ease);
+}
+
+.seg {
+  border-color: var(--ui-border);
+}
+
+/* Those who prefer less motion see none. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+/* ------------------------------------------- connection modal (redone) */
+
+/* Fixed size: before, the dialog changed height on every section and
+   jumped. Profile list on the left with its own scroll, form on the right
+   with header and actions always visible. */
+.connect-dialog {
+  width: 860px;
+  height: 580px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.connect-dialog .dialog-title {
+  flex: none;
+  padding: 14px 18px;
+  font-size: 15px;
+}
+
+.dialog-sub {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--cell-muted-fg);
+}
+
+.connect-dialog .dialog-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.connect-dialog .profile-list {
+  width: 270px;
+  padding: 10px;
+  gap: 8px;
+  background: var(--cell-header-bg);
+  overflow: hidden;
+}
+
+.profile-items {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.profile-filter {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-fg);
+  background: var(--state-normal);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.profile-filter:focus {
+  border-color: var(--cell-selection-border);
+}
+
+.connect-dialog .profile-item {
+  flex: none;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: background-color var(--ui-ease);
+}
+
+.connect-dialog .profile-item.active {
+  background: color-mix(in oklab, var(--conn) 16%, var(--cell-panel-bg));
+  border-color: color-mix(in oklab, var(--conn) 55%, transparent);
+}
+
+/* Initials in the profile color: the same dot as the bar on the left. */
+.profile-av {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--conn);
+  background: color-mix(in oklab, var(--conn) 18%, transparent);
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.profile-av.big {
+  width: 40px;
+  height: 40px;
+  font-size: 13px;
+}
+
+.profile-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.profile-text .profile-name {
+  font-weight: 600;
+}
+
+.profile-host {
+  font-size: 11.5px;
+  color: var(--cell-muted-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Connection already open on that profile. */
+.profile-open {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cell-selection-border);
+}
+
+.profile-empty {
+  padding: 14px 8px;
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+}
+
+.profile-new {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+  background: none;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    color var(--ui-ease),
+    border-color var(--ui-ease);
+}
+
+.profile-new:hover,
+.profile-new.active {
+  color: var(--cell-fg);
+  border-color: var(--cell-selection-border);
+}
+
+/* Import / Export under "New profile": discreet links, not buttons. */
+.profile-transfer {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.profile-transfer button {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+  color: var(--cell-muted-fg);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.profile-transfer button:hover:not(:disabled) {
+  color: var(--cell-fg);
+  text-decoration: underline;
+}
+
+.profile-transfer button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.connect-dialog .profile-form {
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+}
+
+.form-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  background: color-mix(in oklab, var(--conn) 8%, transparent);
+}
+
+.form-head-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.form-head-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.connect-dialog .form-sections {
+  flex: none;
+  margin: 0;
+  padding: 0 12px;
+}
+
+/* Saved profile in read-only: label on the left, value on the right. */
+.profile-summary {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px 12px;
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.profile-summary dt {
+  color: var(--cell-muted-fg);
+}
+
+.profile-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-summary .mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.form-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.connect-dialog .form-actions {
+  flex: none;
+  padding: 12px 18px;
+  border-top: 1px solid var(--cell-border);
+  background: var(--cell-header-bg);
+}
+
+.connect-dialog .error-panel {
+  border: 1px solid color-mix(in oklab, var(--cell-prod) 35%, transparent);
+  border-radius: 8px;
+  cursor: default;
+}
+
+/* Never-seen bastion (§12): the fingerprint has to be read and compared,
+   so large, monospace and selectable. */
+.host-key-fingerprint {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--cell-header-bg);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.host-key-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ============================================================ mock look
+   The app takes the look of the interface mock (mock-concetti/
+   concetto-4-combinato.html, outside the repository): flat full-height tabs with the colored strip
+   at the top, wider sidebar with icons on a background, thin lines, blue
+   accent. Trailing block that overrides the previous shapes: the palette
+   lives in tokens.css. */
+
+:root {
+  --ui-accent-fg: #fff;
+  --ui-accent-soft: color-mix(in oklab, var(--cell-selection-border) 16%, transparent);
+}
+
+:root[data-theme="dark"] {
+  --ui-accent-fg: oklch(16% 0.02 265);
+}
+
+.btn {
+  padding: 5px 11px;
+  font-size: 12.5px;
+}
+
+.btn.small {
+  padding: 3px 9px;
+}
+
+.btn.primary {
+  color: var(--ui-accent-fg);
+  font-weight: 600;
+  border-color: transparent;
+}
+
+/* ---- icon sidebar */
+.activity-bar {
+  width: 48px;
+  padding: 8px 0;
+  gap: 4px;
+  border-right: 1px solid var(--cell-border);
+}
+
+.activity-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.activity-btn.active {
+  color: var(--cell-selection-border);
+  background: var(--ui-accent-soft);
+}
+
+.activity-btn.active::before {
+  display: none;
+}
+
+.conn-av {
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
+}
+
+.side-panel.floating {
+  left: 48px;
+}
+
+.side-panel {
+  border-right: 1px solid var(--cell-border);
+}
+
+/* ---- tab bar: flat, full height */
+.tabbar-row {
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.tabbar {
+  height: 38px;
+  padding: 0;
+  gap: 0;
+  align-items: stretch;
+}
+
+.tab,
+.tab-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin: 0;
+  border: none;
+  border-right: 1px solid var(--cell-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.tab {
+  gap: 7px;
+  max-width: 240px;
+  padding: 0 8px 0 12px;
+  font-size: 13px;
+}
+
+/* Full bar (§9.5): the tabs shrink, the title cut with "…", down to a
+   floor where icon, the last word of a name of about eight letters
+   ("…services") and × still fit (106px of content, 127 with the padding);
+   past it the strip scrolls. The active tab shrinks too: if it stayed whole, every click
+   would push its neighbors around. The ▾ list has the full names. */
+.tab {
+  flex: 0 1 auto;
+  min-width: 106px;
+}
+
+.tab-icon,
+.tab-close,
+.tab-pin,
+.tab-running,
+.tab-new {
+  flex: none;
+}
+
+/* The strip at the top is the connection color. */
+.tab::before,
+.tab-group::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: var(--conn, var(--cell-border));
+  opacity: 0.5;
+}
+
+.tab.active {
+  background: var(--cell-panel-bg);
+}
+
+.tab.active::before,
+.tab-group::before {
+  opacity: 1;
+}
+
+/* With many tabs open the active one must stand out: on the others the
+   strip is a thin hint and the text is dimmed; the active one has the full
+   strip and marked sides. No bold: it widens the title and would make the
+   neighboring tabs jump on every change. */
+.tab:not(.active)::before {
+  height: 2px;
+  opacity: 0.35;
+}
+
+.tab:not(.active) .tab-title,
+.tab:not(.active) .tab-icon {
+  color: color-mix(in oklab, var(--cell-muted-fg) 85%, var(--cell-header-bg));
+}
+
+.tab:not(.active) .tab-sub {
+  color: color-mix(in oklab, var(--cell-muted-fg) 70%, var(--cell-header-bg));
+}
+
+.tab:not(.active):hover .tab-title {
+  color: var(--cell-fg);
+}
+
+.tab.active {
+  box-shadow:
+    inset 1px 0 0 var(--cell-divider),
+    inset -1px 0 0 var(--cell-divider);
+}
+
+/* The active tab merges with the content: it covers the border under the bar. */
+.tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--cell-panel-bg);
+}
+
+.tab:hover:not(.active) {
+  background: var(--ui-hover);
+}
+
+.tab.off::before {
+  background: var(--cell-divider);
+}
+
+/* Connection label: the "tab" that opens the group. */
+/* Stays at the left edge while the strip scrolls, so the tabs passing
+   under it still say whose they are; the next group's label covers it.
+   Opaque backgrounds only (hover and active too): the tabs slide below. */
+.tab-group {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  gap: 8px;
+  max-width: 260px;
+  padding: 0 14px 0 12px;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  background: color-mix(in oklab, var(--conn) 13%, var(--cell-header-bg));
+}
+
+.tab-group .tab-title {
+  font-weight: 700;
+}
+
+.tab-group.active {
+  background: color-mix(in oklab, var(--conn) 26%, var(--cell-panel-bg));
+  box-shadow: none;
+}
+
+.tab-group:hover:not(.off) {
+  background: color-mix(in oklab, var(--conn) 20%, var(--cell-header-bg));
+}
+
+.tab-group.off {
+  background: var(--state-alt);
+}
+
+.tab-group.off::before {
+  background: var(--cell-divider);
+}
+
+.tab-group-dot {
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--conn) 25%, transparent);
+}
+
+/* Database (schema on PG) marker: opens every run of adjacent tabs on the
+   same database; a click shows the database's tables. Not a tab: no
+   stripe, a faint tint of the connection. */
+.tab-db {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  max-width: 200px;
+  padding: 0 9px 0 8px;
+  border-right: 1px solid var(--cell-border);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--cell-fg);
+  background: color-mix(in oklab, var(--conn) 6%, var(--cell-header-bg));
+  white-space: nowrap;
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+  cursor: pointer;
+  /* Pinned beside the label (pinMarkers), the run's tabs slide below it:
+     opaque background, above the tabs, under the labels. */
+  position: relative;
+  z-index: 1;
+}
+
+.tab-db:hover {
+  background: color-mix(in oklab, var(--conn) 14%, var(--cell-header-bg));
+}
+
+.tab-db.pinned {
+  box-shadow: 1px 0 0 var(--cell-border), 4px 0 6px -4px rgb(0 0 0 / 0.25);
+}
+
+.tab-db svg.lucide {
+  flex: none;
+  color: var(--cell-muted-fg);
+}
+
+.tab-db-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The SQL/tables separator: the tab borders are enough. */
+.tab-sep {
+  display: none;
+}
+
+.tab-new {
+  padding: 0 12px;
+  border-radius: 0;
+}
+
+.tab-sub {
+  font-size: 10.5px;
+}
+
+/* ---- status bar */
+.statusbar {
+  align-items: center;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  font-size: 11.5px;
+  border-top: 1px solid var(--cell-border);
+}
+
+/* ---- filter labels: pills in the accent */
+.query-chip {
+  border-radius: 999px;
+}
+
+/* ---- mock title bar: commands in the center, connection on the right */
+.toolbar {
+  min-height: 44px;
+  box-sizing: border-box;
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--cell-border);
+}
+
+.cmd-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 340px;
+  max-width: 40vw;
+  padding: 5px 8px 5px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+  background: var(--cell-panel-bg);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color var(--ui-ease);
+}
+
+.cmd-box:hover {
+  border-color: var(--cell-selection-border);
+}
+
+.cmd-box span {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-box kbd,
+.query-bar kbd {
+  font: 11px ui-monospace, monospace;
+  padding: 1px 5px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 4px;
+}
+
+/* The connection being worked on: tinted pill, opens its page. */
+button.profile-pill {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--cell-fg);
+  padding: 4px 11px;
+  background: color-mix(in oklab, var(--conn, var(--cell-divider)) 18%, transparent);
+  border-color: transparent;
+  cursor: pointer;
+  transition: background-color var(--ui-ease);
+}
+
+button.profile-pill:hover {
+  background: color-mix(in oklab, var(--conn, var(--cell-divider)) 30%, transparent);
+}
+
+/* ---- query bar, above the editor */
+.studio-main {
+  grid-template-rows: auto auto minmax(120px, 38%) 1fr;
+  /* Container of the progress thread (.run-progress, absolute). */
+  position: relative;
+}
+
+.studio-main.no-editor .run-progress {
+  grid-row: 1 / 2;
+}
+
+/* SQL tab: results exist only after the first run. Without them the editor
+   takes everything; collapsed, the handle remains; open, default height 40%
+   or the dragged one (inline, from Studio). */
+.studio-main.no-results {
+  grid-template-rows: auto auto 1fr;
+}
+
+.studio-main.results-collapsed {
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.studio-main.results-open {
+  grid-template-rows: auto auto minmax(120px, 1fr) auto minmax(120px, 40%);
+}
+
+.results-handle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 22px;
+  background: var(--cell-header-bg);
+  border-bottom: 1px solid var(--cell-divider);
+  user-select: none;
+  touch-action: none;
+}
+
+.results-handle.open {
+  cursor: row-resize;
+}
+
+.results-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--cell-muted-fg);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.results-toggle:hover {
+  color: var(--cell-fg);
+}
+
+.results-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Three dots in the center: they say "drag me" without stealing space. */
+.results-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 3px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--cell-border);
+}
+
+.results-handle.open:hover .results-grip {
+  background: var(--cell-muted-fg);
+}
+
+.query-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--cell-border);
+  background: var(--cell-panel-bg);
+}
+
+.query-bar .btn.primary kbd {
+  border: none;
+  padding: 0;
+  opacity: 0.8;
+}
+
+/* Split Run button: main action + arrow with the menu. */
+.run-group {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.run-group .btn.primary:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.run-group .run-more {
+  padding: 0 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in oklab, var(--ui-accent-fg, #fff) 35%, transparent);
+}
+
+.run-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--cell-border);
+  border-radius: 6px;
+  background: var(--cell-panel-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.run-menu .tab-menu-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+}
+
+.run-menu kbd {
+  font: 11px ui-monospace, monospace;
+  color: var(--cell-muted-fg);
+}
+
+/* What the query runs on: connection › database. */
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: color-mix(in oklab, var(--conn) 13%, transparent);
+  white-space: nowrap;
+}
+
+.ctx-chip .tab-group-dot {
+  box-shadow: none;
+  width: 8px;
+  height: 8px;
+}
+
+.ctx-sep {
+  color: var(--cell-muted-fg);
+}
+
+.ctx-chip .db-select,
+.ctx-chip .db-badge {
+  border: none;
+  background: none;
+  padding: 1px 6px;
+}
+
+/* ---- selection always evident, even without a color on the profile */
+
+/* Modal: the selected profile has background, border and bar in the accent —
+   it does not depend on the profile color, which may be faint. */
+.connect-dialog .profile-item.active {
+  background: var(--ui-accent-soft);
+  border-color: var(--cell-selection-border);
+  box-shadow: inset 3px 0 0 var(--cell-selection-border);
+}
+
+/* Tab bar: the connection label in the foreground is full and has its own
+   line underneath; the others stay faint. */
+.tab-group:not(.active) {
+  background: color-mix(in oklab, var(--conn) 9%, var(--cell-header-bg));
+}
+
+.tab-group.active {
+  background: color-mix(in oklab, var(--conn) 30%, var(--cell-panel-bg));
+}
+
+.tab-group.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--conn);
+}
+
+/* Dot of the connection being worked on: filled, not just the halo; the
+   others dimmed. */
+.conn-av.current {
+  background: color-mix(in oklab, var(--conn) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--conn) 40%, transparent);
+}
+
+.conn-av:not(.current):not(.add) {
+  opacity: 0.7;
+}
+
+/* ---- profile deletion: evident button and confirmation with the name */
+
+/* Delete in the modal: it must be noticed (red background and border),
+   without shouting as much as the button that really deletes. */
+.btn.danger.strong {
+  color: oklch(62% 0.2 25);
+  background: color-mix(in oklab, oklch(55% 0.2 25) 14%, var(--cell-panel-bg));
+  border-color: color-mix(in oklab, oklch(55% 0.2 25) 55%, transparent);
+  font-weight: 600;
+}
+
+.btn.danger.strong:hover:not(:disabled) {
+  background: color-mix(in oklab, oklch(55% 0.2 25) 26%, var(--cell-panel-bg));
+  border-color: oklch(55% 0.2 25);
+}
+
+/* The button that deletes: solid red, disabled until the name is right. */
+.btn.danger.solid {
+  color: #fff;
+  background: oklch(52% 0.2 25);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.btn.danger.solid:hover:not(:disabled) {
+  background: oklch(58% 0.21 25);
+  border-color: transparent;
+}
+
+.confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: inherit;
+}
+
+.connect-dialog {
+  position: relative;
+}
+
+.confirm-box {
+  width: 440px;
+  max-width: 90%;
+  padding: 18px;
+  background: var(--cell-panel-bg);
+  border: 1px solid color-mix(in oklab, oklch(55% 0.2 25) 60%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+}
+
+.confirm-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: oklch(64% 0.2 25);
+}
+
+.confirm-list {
+  margin: 10px 0 14px;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--cell-muted-fg);
+}
+
+.confirm-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--cell-muted-fg);
+}
+
+.confirm-label b {
+  color: var(--cell-fg);
+  font-family: ui-monospace, monospace;
+  user-select: all;
+}
+
+.confirm-label input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  color: var(--cell-fg);
+  background: var(--state-normal);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 6px;
+  outline: none;
+}
+
+.confirm-label input:focus {
+  border-color: oklch(58% 0.2 25);
+  box-shadow: 0 0 0 3px color-mix(in oklab, oklch(55% 0.2 25) 22%, transparent);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Table tab: loading state of the next rows (scroll to the bottom), next
+   to the reload button. */
+/* Grid changes not yet saved: count in the color of the modified cells,
+   then View SQL / Discard / Save. */
+.pending-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+}
+
+.pending-count {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--state-modified);
+  color: var(--cell-fg);
+}
+
+/* Pending new rows: same badge, in the green of the grid rows. */
+.pending-count.new-rows {
+  background: var(--state-new);
+}
+
+/* Pending rows to delete: same badge, in the red of the rows. */
+.pending-count.deleted-rows {
+  background: var(--state-error);
+}
+
+/* Row / Duplicate / Delete (like DBeaver): always visible on the data,
+   next to the changes bar. */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.row-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Shortcut on the right in the context menu items. */
+.tab-menu-key {
+  float: right;
+  margin-left: 16px;
+  color: var(--cell-muted-fg);
+  font-size: 11px;
+}
+
+.more-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+/* Connection page, columns of the selected table: key in its own column
+   (aligned names), type on the right, breathing room between button and
+   list. */
+.conn-page-side-actions {
+  margin: 2px 0 14px;
+}
+.conn-page-col {
+  align-items: center;
+  gap: 6px;
+  padding: 5px 2px;
+  border-bottom: 1px solid color-mix(in oklab, var(--cell-border) 55%, transparent);
+}
+.conn-page-col:last-child {
+  border-bottom: 0;
+}
+.conn-page-col-key {
+  flex: none;
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cell-muted-fg);
+}
+.conn-page-col-key svg {
+  width: 12px;
+  height: 12px;
+}
+.conn-page-col-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-page-col-type {
+  flex: none;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--cell-muted-fg);
+}
+
+/* Database choice in the query bar: button + list with filter. */
+.db-picker {
+  position: relative;
+  display: inline-flex;
+}
+.db-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 2px 8px 2px 6px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--cell-fg);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+.db-picker-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--cell-fg) 9%, transparent);
+}
+.db-picker-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.db-picker-btn.none .db-picker-value {
+  color: var(--cell-muted-fg);
+  font-style: italic;
+}
+.db-picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-picker-btn svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--cell-muted-fg);
+}
+.db-picker-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cell-border);
+  border-radius: 8px;
+  background: var(--cell-panel-bg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.db-picker-filter {
+  flex: none;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--cell-fg);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--cell-border);
+  outline: none;
+}
+.db-picker-list {
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px;
+}
+.db-picker-item {
+  display: block;
+  width: 100%;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--cell-fg);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.db-picker-item.sel {
+  background: var(--state-selection);
+}
+.db-picker-item.current {
+  font-weight: 700;
+  color: var(--cell-selection-border);
+}
+
+/* "+ Filter": column name on the left, type in gray on the right. */
+.filter-add-item {
+  display: flex;
+  gap: 12px;
+}
+.filter-add-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.filter-add-type {
+  flex: none;
+  margin-left: auto;
+  color: var(--cell-muted-fg);
+}
+
+/* Running: it must be seen without looking for it. Spinner in the button
+   and in the status bar, thread running under the bars, notice with the
+   elapsed time in place of the results. */
+.spinner {
+  display: inline-block;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 2px solid color-mix(in oklab, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: spin 0.8s linear infinite;
+}
+.spinner.big {
+  width: 16px;
+  height: 16px;
+  color: var(--cell-selection-border);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.run-progress {
+  /* Out of the flow of the .studio-main grid: as a normal child it took a
+     template row (the editor ended up in the 1fr row and the results at
+     the bottom, squashed). Absolute, it rests on the bottom of the query
+     bar (row 2) or, without editor, of the tab bar. */
+  position: absolute;
+  /* Explicit start AND end: for an absolute element the "auto" end is the
+     container edge, and the thread would end at the bottom of the window. */
+  grid-row: 2 / 3;
+  grid-column: 1 / 2;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--cell-selection-border) 22%, transparent);
+}
+.run-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  background: var(--cell-selection-border);
+  animation: run-slide 1.2s ease-in-out infinite;
+}
+@keyframes run-slide {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
+}
+.running-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 1.5rem;
+  font-size: 13px;
+  color: var(--cell-fg);
+}
+.running-notice .elapsed {
+  color: var(--cell-muted-fg);
+  font-variant-numeric: tabular-nums;
+}
+.statusbar-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cell-fg);
+  font-weight: 600;
+}
+.statusbar-running .elapsed {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.btn.cancel-live:not(:disabled) {
+  border-color: var(--cell-selection-border);
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+  .run-progress::after {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+/* Name of the open database in the connection page: it stays the title of
+   the level (bold, interface font) but it is also the quick database
+   switch. */
+.conn-page-crumb .db-picker-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--ui-border, var(--cell-border));
+}
+
+/* "Default ▾": default sort of the table tab (SortMenu). */
+.sort-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: none;
+  white-space: nowrap;
+}
+.sort-menu-btn.active,
+.sort-menu-btn.modified {
+  color: var(--cell-fg);
+  border-style: solid;
+}
+/* Sort different from the default: a dot in the accent. */
+.sort-menu-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cell-selection-border);
+}
+.sort-menu-pop {
+  width: 320px;
+  padding: 4px;
+  font-size: 12px;
+}
+.sort-menu-current {
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--cell-muted-fg);
+  border-bottom: 1px solid var(--cell-border);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sort-menu-note {
+  padding: 4px 10px;
+  color: var(--cell-muted-fg);
+}
+
+/* PG (§3.3): the server's databases sit between the connection and its
+   schemas, one indent step deeper for everything under them. */
+.tree-node.database {
+  padding-left: 20px;
+}
+
+.tree-db .tree-node.schema,
+.tree-db .tree-node.group {
+  padding-left: 32px;
+}
+
+.tree-db .tree-node.rel {
+  padding-left: 44px;
+}
+
+.tree-db .tree-node.col {
+  padding-left: 68px;
+}
+
+.tree-db .tree-note.nested,
+.tree-db .catalog-error.nested {
+  padding-left: 44px;
+}

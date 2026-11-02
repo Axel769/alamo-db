@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A new push to a PR cancels the run still going for the previous one.
+# Pushes to main are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # GitHub-hosted runners: free and unlimited on a public repository. A
+  # self-hosted runner must not serve a public repo (a fork's pull request
+  # would run its code on the machine). Windows and macOS remain the real
+  # targets (ARCHITECTURE.md §1.2, §15): the release builds them, here fmt,
+  # clippy and tests run on Linux.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # System libraries Tauri needs to compile alamo-app on Linux.
+      - name: tauri linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      # `tauri::generate_context!` demands `app/dist` at compile time:
+      # without a built frontend, clippy and tests on alamo-app do not start.
+      - uses: pnpm/action-setup@v4
+        with:
+          # The version is dictated by `packageManager`, which lives in the
+          # frontend's package.json, not in the root.
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      - run: pnpm build
+        working-directory: app
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  # Two quick checks in one job (one checkout, one wait for the runner).
+  # Non-negotiable constraint of §2: `core` does not depend on Tauri.
+  # The constraint is enforced here, not by hoping nobody violates it.
+  # §13: cargo-deny from day one, with a deny-list on GPL/AGPL. It is there to
+  # block a transitive dependency that gets in six months later without
+  # anyone noticing.
+  core-purity-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: alamo-core must not depend on tauri
+        run: |
+          if cargo tree -p alamo-core --prefix none | grep -qi '^tauri'; then
+            echo "::error::alamo-core depends on Tauri: constraint of ARCHITECTURE.md §2 violated"
+            exit 1
+          fi
+      - name: alamo-core must not have external dependencies
+        run: |
+          deps=$(cargo tree -p alamo-core --prefix none --edges normal | tail -n +2 | sort -u)
+          if [ -n "$deps" ]; then
+            echo "::error::alamo-core has acquired dependencies: $deps"
+            exit 1
+          fi
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources advisories
+
+  # §15.1: version matrix tested in CI — PG 15/18, MySQL 8.0/8.4 LTS,
+  # MariaDB 10.11/11.8 LTS. The containers are started by `cargo xtask test-matrix`
+  # via testcontainers-rs; one job per engine to keep the logs separate and the
+  # runners in parallel.
+  integration-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [postgres, mysql, mariadb]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask test-matrix ${{ matrix.engine }}
+
+  # Smoke test of the bench against a real PG (the integration suites run in
+  # the integration-matrix job above).
+  integration-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: alamo
+          POSTGRES_DB: alamo_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      ALAMO_BENCH_URL: postgres://postgres:alamo@localhost:5432/alamo_bench
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Smoke test, NOT a measurement: a shared runner does not produce
+      # comparable numbers. The thresholds of §15 only hold on a fixed machine.
+      - run: cargo run -p alamo-bench --release -- prepare --rows 20000 --force
+      - run: cargo run -p alamo-bench --release -- run --table t2 --reps 1 --no-budget

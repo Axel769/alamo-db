@@ -1,0 +1,21 @@
+Alamo DB
+Copyright 2026 Alessandro Garau and the Alamo DB contributors
+
+This product includes software developed by the Alamo DB contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License in the LICENSE file in this repository
+or at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+The License does not grant permission to use the "Alamo DB" name or logo
+(Apache License 2.0, section 6). See TRADEMARK.md.
+
+Third-party dependency licenses and copyright notices are generated with
+`cargo about generate` (see about.toml) and must be distributed with any
+binary release.
+
+NOTE: cargo-about covers Rust crates only. Assets bundled in the future
+(fonts, images) must be attributed separately.
