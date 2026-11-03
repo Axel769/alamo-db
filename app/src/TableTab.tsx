@@ -50,6 +50,7 @@ import { RowLinks } from "./RowPanel";
 import { makePermanent, newSqlTab, newTableTab, persistWorkspace, releaseTabResults } from "./tabs";
 import { asErrorOut } from "./errors";
 import { guardUnsaved, numericColumns, pendingToWrites, settleWrites } from "./pending";
+import { freeStickyForGridSave } from "./sticky";
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -68,6 +69,7 @@ import SortChips from "./SortChips";
 import SortPanel from "./SortPanel";
 import SortMenu, { defaultSortKey } from "./SortMenu";
 import { sortAdd, sortHeaderClick, sortOnly, sortRemove } from "./tableSort";
+import { commitCellEditor } from "./GridView";
 import type { RowActions, RowsHandle, ServerSortProps, SortSpec } from "./GridView";
 
 const SUBS: { key: TableSub; label: string }[] = [
@@ -758,6 +760,7 @@ export default function TableTab({
     const cursor = gridRows.current?.cursorAfterSave() ?? null;
     setSaving(true);
     try {
+      await freeStickyForGridSave(connId);
       const result = await ipc.tableWriteBatch(connId, table.schema, table.name, writes, appendTo());
       if (isClean(result)) {
         // First the new values in the grid, then the highlight goes: the
@@ -785,14 +788,26 @@ export default function TableTab({
     }
   };
   // Cmd+S from the global listener: always the version of this render.
+  // With the cell editor still open its text is saved too: the editor
+  // closes, the value goes pending (stage), then the save of the render
+  // that sees it. The editor is closed a task later: Glide answers every
+  // key (⌘S too) with a timeout that would read the Enter's motion and
+  // close it discarding the text.
   const saveRef = useRef(save);
   saveRef.current = save;
   useEffect(() => {
     if (tab.sub !== "data") return;
+    const nextTask = () => new Promise((r) => window.setTimeout(r, 0));
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "s") return;
       e.preventDefault();
-      void saveRef.current();
+      void (async () => {
+        await nextTask();
+        if (commitCellEditor()) await nextTask();
+        await stageChain.current;
+        await nextTask();
+        await saveRef.current();
+      })();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1086,6 +1101,7 @@ export default function TableTab({
     setBatch({ ...batch, phase: "running", error: null });
     const cursor = gridRows.current?.cursorAfterSave() ?? null;
     try {
+      await freeStickyForGridSave(connId);
       const result = await ipc.tableWriteBatch(connId, table.schema, table.name, batch.writes, appendTo());
       const refreshed = isClean(result) && (await refreshSaved(batch.writes, result));
       settle(batch.writes, result);

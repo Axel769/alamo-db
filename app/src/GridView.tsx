@@ -1629,6 +1629,16 @@ export function isLong(s: string): boolean {
   return s.length > CLAMP || /[\r\n]/.test(s);
 }
 
+/// Glide's cell editor open (focus inside it): closed keeping the text, as
+/// Enter would. `true` = there was one; Glide hands the value to
+/// `onCellEdited` from a timeout, so it arrives at the next task.
+export function commitCellEditor(): boolean {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.closest(".gdg-clip-region")) return false;
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  return true;
+}
+
 function clamp(s: string): string {
   let out = s.length > CLAMP ? s.slice(0, CLAMP) + "…" : s;
   if (/[\n\r\t]/.test(out)) out = out.replace(/[ \t]*\r?\n[ \t]*/g, " ↵ ").replace(/[\r\t]/g, " ");

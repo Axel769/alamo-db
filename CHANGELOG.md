@@ -11,6 +11,11 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- Table tabs on production (or with manual commit): Save works while a SQL tab of the same connection shows a query paused at its first rows ("scroll for more rows"). The paused query stops, its rows stay. Before, Save failed with "running on the main connection: wait for it to finish".
+- Table tabs: ⌘S (Ctrl+S on Windows and Linux) with a cell still being edited saves that cell too, right away. Before, the cell had to be closed with Enter first, or ⌘S saved nothing.
+
 ## [0.1.0-alpha.12] - 2026-11-02
 
 - Grid: with a whole column selected, ⌘+click (Ctrl+click on Windows and Linux) on one of its cells takes that cell out of the selection, and the same click puts it back. Copy, typing a value and ⇧Del then skip it.

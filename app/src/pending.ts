@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { asErrorOut } from "./errors";
 import { t } from "./i18n";
 import { BatchUpdateOut, CellAssign, ColumnOut, ErrorOut, ipc, isDefaultCell, PendingValue, RowUpdate, TableWrite } from "./ipc";
+import { freeStickyForGridSave } from "./sticky";
 import { NewRow, PendingEdits, pendingRowId, unsavedCount, useStore } from "./store";
 
 function assign(column: string, value: PendingValue, numeric: Set<string>): CellAssign {
@@ -95,6 +96,7 @@ export async function savePendingEdits(tabId: string): Promise<ErrorOut | null> 
   const connId = tab.connId;
   const writes = pendingToWrites(tab, numericColumns(tab.statements[0]?.columns));
   try {
+    await freeStickyForGridSave(connId);
     const result = await ipc.tableWriteBatch(connId, tab.table.schema, tab.table.name, writes);
     settleWrites(tabId, connId, writes, result);
     return result.error;
