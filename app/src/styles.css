@@ -5081,3 +5081,120 @@ button.profile-pill:hover {
   font-size: 12px;
   user-select: all;
 }
+
+/* ---------------------------------------------- TLS (§12.2): connection dialog, Security section */
+
+.tls-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.profile-form label.tls-mode {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--cell-fg);
+  cursor: pointer;
+}
+
+.profile-form label.tls-mode.selected {
+  border-color: var(--cell-selection-border);
+  background: var(--state-selection);
+}
+
+.tls-mode input {
+  margin: 3px 0 0;
+}
+
+.tls-mode-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--cell-muted-fg);
+}
+
+.tls-mode.level-plain .tls-mode-icon,
+.tls-mode.level-maybe .tls-mode-icon {
+  color: var(--cell-prod);
+}
+
+.tls-mode.level-verified .tls-mode-icon,
+.tls-mode.level-full .tls-mode-icon {
+  color: var(--cell-selection-border);
+}
+
+.tls-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tls-mode-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.tls-mode-label code,
+.profile-summary .tls-id {
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.tls-mode-tag {
+  font-size: 10.5px;
+  font-weight: 400;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--cell-divider);
+  color: var(--cell-muted-fg);
+}
+
+.tls-mode-tag.warn {
+  background: var(--state-modified);
+  color: var(--cell-fg);
+}
+
+.tls-mode-desc {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--cell-muted-fg);
+}
+
+/* Production warning and plaintext outcome: a block inside the form, not a
+   bar across it. */
+.profile-form .tls-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: none;
+  border-radius: 6px;
+}
+
+.profile-form .form-error {
+  font-size: 12px;
+  color: var(--cell-prod);
+}
+
+/* Certificate and channel facts: the summary grid with narrower captions. */
+.profile-summary.cert-facts,
+.profile-summary.tls-facts {
+  grid-template-columns: 100px 1fr;
+  font-size: 12.5px;
+}
+
+.profile-summary dd.warn {
+  color: var(--cell-prod);
+}
+
+/* Negotiated TLS on the connection page header. */
+.conn-page-tls {
+  overflow-wrap: anywhere;
+}

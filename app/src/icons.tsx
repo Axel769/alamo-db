@@ -20,6 +20,8 @@ import {
   KeyRound,
   Layers,
   Link2,
+  Lock,
+  LockOpen,
   LucideProps,
   Pin,
   Play,
@@ -27,6 +29,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  ShieldCheck,
   Square,
   Star,
   RotateCcw,
@@ -57,6 +60,9 @@ export const IconImport = (p: LucideProps) => <Download {...base} {...p} />;
 export const IconDuplicate =(p: LucideProps) => <CopyPlus {...base} {...p} />;
 export const IconFilter = (p: LucideProps) => <Funnel {...base} size={13} {...p} />;
 export const IconCheck = (p: LucideProps) => <Check {...base} size={12} {...p} />;
+export const IconLock = (p: LucideProps) => <Lock {...base} {...p} />;
+export const IconLockOpen = (p: LucideProps) => <LockOpen {...base} {...p} />;
+export const IconShieldCheck = (p: LucideProps) => <ShieldCheck {...base} {...p} />;
 export const IconGrip = (p: LucideProps) => <GripVertical {...base} size={13} {...p} />;
 export const IconSort = (p: LucideProps) => <ArrowUpDown {...base} size={13} {...p} />;
 export const IconKey = (p: LucideProps) => <KeyRound {...base} size={12} {...p} />;

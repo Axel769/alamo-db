@@ -376,9 +376,28 @@ export type ScriptExportTarget = "file" | "folder";
 
 /// Response of the connect from profile (M3.5): the id of the open connection —
 /// every later command carries it — and the profile.
-/// What really protects the open connection (indicator in the connection
-/// page): `prefer` may have fallen back to plaintext.
-export type ConnSecurity = { encrypted: boolean; verified: boolean };
+/// What really protects the open connection (§12.2), measured on the
+/// session: `prefer` may have fallen back to plaintext. `null` = the engine
+/// cannot tell (shown as "not available").
+export type ConnSecurity = {
+  encrypted: boolean;
+  verified: boolean;
+  protocol: string | null;
+  cipher: string | null;
+  cert: CertOut | null;
+};
+
+/// A certificate as the backend summarises it: the server's, or the
+/// profile's root CA. Dates in unix seconds.
+export type CertOut = {
+  subject: string | null;
+  issuer: string | null;
+  not_before: number | null;
+  not_after: number | null;
+};
+
+/// Outcome of "Test connection".
+export type TestOut = { database: string | null; elapsed_ms: number; security: ConnSecurity };
 
 export type ConnectOut = {
   conn_id: number;
@@ -441,7 +460,12 @@ export const ipc = {
   /// Credentials never cross the IPC towards the frontend: only the flags.
   /// "Test connection": opens, runs a query, closes. Does not touch the keychain.
   testProfile: (id: number, password: string | null, sshSecret: string | null) =>
-    invoke<{ database: string | null; elapsed_ms: number }>("test_profile", { id, password, sshSecret }),
+    invoke<TestOut>("test_profile", { id, password, sshSecret }),
+  /// Native picker for the profile's root CA. `null` = cancelled.
+  pickRootCert: () => invoke<string | null>("pick_root_cert"),
+  /// Subject, issuer and validity of the root CA file; rejects with the
+  /// reason (missing, unreadable, not a PEM certificate).
+  inspectRootCert: (path: string) => invoke<CertOut>("inspect_root_cert", { path }),
   profilePasswordPresent: (id: number) =>
     invoke<{ db: boolean; ssh: boolean }>("profile_password_present", { id }),
   sshProfilesList: () => invoke<SshProfileOut[]>("ssh_profiles_list"),

@@ -981,7 +981,7 @@ function StudioInner() {
               currentDb: null,
               txn: null,
               // Bench: plaintext connection from URL, never a real profile.
-              security: { encrypted: false, verified: false },
+              security: { encrypted: false, verified: false, protocol: null, cipher: null, cert: null },
               // No profile to reopen on another database.
               oneDbPerConn: false,
               parent: null,

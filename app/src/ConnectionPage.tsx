@@ -12,6 +12,8 @@ import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import CatalogError from "./CatalogError";
 import { locale, t } from "./i18n";
+import { tlsMode } from "./tlsModes";
+import { tlsSummary } from "./TlsFacts";
 import { ipc, RelationOut, SchemaStatsOut } from "./ipc";
 import {
   ConnUi,
@@ -282,9 +284,11 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
             {engineName(conn.profile.dialect)} · {conn.profile.username}@{conn.profile.host}:
             {conn.profile.port}
             {!switchDb && !dbList && conn.profile.database ? ` · ${conn.profile.database}` : ""}
-            {conn.profile.sslmode !== "disable" ? ` · SSL ${conn.profile.sslmode}` : ""}
+            {conn.profile.sslmode !== "disable" ? ` · TLS ${tlsMode(conn.profile.sslmode).short}` : ""}
             {conn.profile.ssh_profile_id !== null ? " · SSH" : ""}
           </div>
+          {/* What the channel really negotiated (§12.2), in plain sight. */}
+          {tlsSummary(conn.security) && <div className="conn-page-sub conn-page-tls">{tlsSummary(conn.security)}</div>}
         </div>
         <div className="conn-page-actions">
           {/* With an open database the query is born there, like "New query here". */}

@@ -3,10 +3,12 @@
 // keychain straight into the backend (§12).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t, tMsg } from "./i18n";
-import { ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut } from "./ipc";
+import { CertOut, ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut, TestOut } from "./ipc";
 import { SshPick, sshAuthLabel, sshSummary } from "./SshProfilesDialog";
 import { connInitials } from "./ConnectionPage";
-import { IconPlus, IconTrash, IconX } from "./icons";
+import { IconLock, IconLockOpen, IconPlus, IconShieldCheck, IconTrash, IconX } from "./icons";
+import { TLS_MODE_ORDER, TlsLevel, tlsMode, verifiesChain } from "./tlsModes";
+import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
 import { connColor } from "./connColor";
 import { engineName, engineOf, engines, engineShortName } from "./engines";
@@ -123,7 +125,29 @@ export default function ConnectDialog({
   const openIds = connections.map((c) => c.profile.id);
   /// Result of the last successful "Test connection"; disappears at the first
   /// change to the profile.
-  const [testOk, setTestOk] = useState<{ database: string | null; elapsed_ms: number } | null>(null);
+  const [testOk, setTestOk] = useState<TestOut | null>(null);
+  /// The root CA as the backend reads it (§12.2), for the path it was read
+  /// from: a result for a path that has since changed is not shown.
+  const [caInfo, setCaInfo] = useState<{ path: string; cert: CertOut | null; error: string | null } | null>(null);
+  const caPath = verifiesChain(draft.sslmode) ? (draft.ssl_root_cert ?? "").trim() : "";
+  useEffect(() => {
+    if (!caPath) {
+      setCaInfo(null);
+      return;
+    }
+    let live = true;
+    // Debounced: the path is also typed by hand.
+    const timer = setTimeout(() => {
+      ipc.inspectRootCert(caPath).then(
+        (cert) => live && setCaInfo({ path: caPath, cert, error: null }),
+        (e) => live && setCaInfo({ path: caPath, cert: null, error: String(e) }),
+      );
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [caPath]);
 
   const reload = useCallback(async (selectId?: number | null) => {
     const [list, sshList] = await Promise.all([ipc.profilesList(), ipc.sshProfilesList()]);
@@ -271,7 +295,7 @@ export default function ConnectDialog({
     sec === "general" ? t("General") : sec === "access" ? t("Access") : sec === "security" ? t("Security") : t("SSH tunnel");
   const sectionBadge = (sec: Section): string | null =>
     sec === "security"
-      ? draft.sslmode
+      ? tlsMode(draft.sslmode).short
       : sec === "ssh"
         ? draft.ssh_profile_id !== null
           ? t("on")
@@ -698,7 +722,18 @@ export default function ConnectDialog({
                 <input
                   type="checkbox"
                   checked={draft.is_production}
-                  onChange={(e) => set({ is_production: e.target.checked })}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    // A new production profile starts from the strongest
+                    // mode the engine has (§12.2); a saved one keeps its
+                    // choice, the Security banner says what it costs.
+                    const upgrade =
+                      on &&
+                      draft.id === null &&
+                      !verifiesChain(draft.sslmode) &&
+                      (engine?.tls_modes.includes("verify-full") ?? false);
+                    set({ is_production: on, ...(upgrade ? { sslmode: "verify-full" } : {}) });
+                  }}
                 />
                 {t("production")}
               </label>
@@ -774,52 +809,101 @@ export default function ConnectDialog({
             )}
             {section === "security" && (
               <>
-            <div className="form-row">
-              <label
-                title={t(
-                  "prefer/require encrypt without verifying the server; verify-ca verifies the certificate against the given CA, verify-full also the host name",
-                )}
-              >
-                SSL
-                <select value={draft.sslmode} onChange={(e) => set({ sslmode: e.target.value })}>
-                  {/* The modes the engine honours (MySQL: no verify-ca); a mode
-                      it does not stays visible only if the profile already has it. */}
+                {/* The modes the engine honours (§2.1), weakest first; a
+                    mode it does not honour stays visible only if the
+                    profile already has it, marked as such. */}
+                <div className="tls-modes" role="radiogroup" aria-label={t("Encryption")}>
                   {[
-                    ...(engine?.tls_modes ?? []),
-                    ...(engine?.tls_modes.includes(draft.sslmode) ? [] : [draft.sslmode]),
-                  ].map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {draft.is_production && draft.sslmode !== "verify-ca" && draft.sslmode !== "verify-full" && (
-              <div className="banner warn">
-                {t(
-                  "Production profile: with {mode} the server is not verified, and whoever controls the network can read the password. verify-full recommended.",
-                  { mode: draft.sslmode }
+                    ...TLS_MODE_ORDER.filter((m) => engine?.tls_modes.includes(m) ?? true),
+                    ...(engine && !engine.tls_modes.includes(draft.sslmode) ? [draft.sslmode] : []),
+                  ].map((id) => {
+                    const m = tlsMode(id);
+                    const supported = engine?.tls_modes.includes(id) ?? true;
+                    return (
+                      <label
+                        key={id}
+                        className={"tls-mode level-" + m.level + (draft.sslmode === id ? " selected" : "")}
+                      >
+                        <input
+                          type="radio"
+                          name="sslmode"
+                          value={id}
+                          checked={draft.sslmode === id}
+                          onChange={() => set({ sslmode: id })}
+                        />
+                        <span className="tls-mode-icon">
+                          <TlsLevelIcon level={m.level} />
+                        </span>
+                        <span className="tls-mode-text">
+                          <span className="tls-mode-label">
+                            {m.label}
+                            <code>{id}</code>
+                            {m.recommended && <span className="tls-mode-tag">{t("recommended")}</span>}
+                            {!supported && (
+                              <span className="tls-mode-tag warn">{t("not supported by this engine")}</span>
+                            )}
+                          </span>
+                          {m.description && <span className="tls-mode-desc">{m.description}</span>}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {draft.is_production && !verifiesChain(draft.sslmode) && (
+                  <div className="banner warn tls-banner">
+                    <span>
+                      {t(
+                        "Production profile: with \u201c{mode}\u201d the server is not authenticated. Whoever controls the network can impersonate it and read the password.",
+                        { mode: tlsMode(draft.sslmode).label },
+                      )}
+                    </span>
+                    {engine?.tls_modes.includes("verify-full") && (
+                      <button className="btn small" onClick={() => set({ sslmode: "verify-full" })}>
+                        {t("Use \u201cVerify certificate and host name\u201d")}
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-            {(draft.sslmode === "verify-ca" || draft.sslmode === "verify-full") && (
-              <label>
-                {t("Root CA (PEM)")}
-                <input
-                  value={draft.ssl_root_cert ?? ""}
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  placeholder={
-                    draft.sslmode === "verify-ca"
-                      ? t("required: the host name is not checked")
-                      : t("optional — empty = system roots")
-                  }
-                  onChange={(e) => set({ ssl_root_cert: e.target.value || null })}
-                />
-              </label>
-            )}
+                {verifiesChain(draft.sslmode) && (
+                  <>
+                    <div className="form-row">
+                      <label className="grow">
+                        {t("Root CA (PEM)")}
+                        <input
+                          value={draft.ssl_root_cert ?? ""}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder={draft.sslmode === "verify-ca" ? t("required") : t("optional")}
+                          onChange={(e) => set({ ssl_root_cert: e.target.value || null })}
+                        />
+                      </label>
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() =>
+                          void ipc.pickRootCert().then((p) => {
+                            if (p) set({ ssl_root_cert: p });
+                          })
+                        }
+                      >
+                        {t("Browse…")}
+                      </button>
+                    </div>
+                    <div className="form-hint">
+                      {draft.sslmode === "verify-ca"
+                        ? t("Required: the certificate is checked against this CA only, the host name is not checked.")
+                        : t("Optional: empty = the roots the system trusts. With a company CA, pick its certificate here.")}
+                    </div>
+                    {caInfo &&
+                      caInfo.path === caPath &&
+                      (caInfo.error ? (
+                        <div className="form-error">{tMsg(caInfo.error)}</div>
+                      ) : (
+                        caInfo.cert && <CertFacts cert={caInfo.cert} />
+                      ))}
+                  </>
+                )}
               </>
             )}
             {section === "ssh" && (
@@ -911,10 +995,13 @@ export default function ConnectDialog({
             </>
             )}
             {testOk && (
-              <div className="banner ok">
-                {t("Connection succeeded in {ms} ms", { ms: testOk.elapsed_ms })}
-                {testOk.database ? " · " + testOk.database : ""}
-              </div>
+              <>
+                <div className="banner ok">
+                  {t("Connection succeeded in {ms} ms", { ms: testOk.elapsed_ms })}
+                  {testOk.database ? " · " + testOk.database : ""}
+                </div>
+                <TlsFacts security={testOk.security} ssh={draft.ssh_profile_id !== null} />
+              </>
             )}
             {error && error.code === "ssh_host_key_unknown" && (
               <div className="error-panel host-key-panel">
@@ -1074,6 +1161,13 @@ function friendlyHint(message: string): { text: string; section: Section | null 
       text: t("The server certificate is signed by a CA the system does not know: set the root CA."),
       section: "security",
     };
+  // The given CA did not sign the server certificate (another server's CA,
+  // or a CA that was re-issued).
+  if (m.includes("badsignature"))
+    return {
+      text: t("The server certificate is not signed by the given root CA: check the file, it may belong to another server."),
+      section: "security",
+    };
   // rustls >= 0.23.18 writes "certificate not valid for name …".
   if (m.includes("notvalidforname") || m.includes("not valid for name"))
     return {
@@ -1116,6 +1210,14 @@ function asError(e: unknown): ErrorOut {
     statement_char_offset: null,
     statement_index: null,
   };
+}
+
+/// The padlock of a TLS level: open for plaintext (or possibly so), closed
+/// for an encrypted channel, shield when the server is authenticated too.
+function TlsLevelIcon({ level }: { level: TlsLevel }) {
+  if (level === "plain" || level === "maybe") return <IconLockOpen />;
+  if (level === "encrypted") return <IconLock />;
+  return <IconShieldCheck />;
 }
 
 /// Saved profile in read-only: what is about to be opened, and only the fields
@@ -1177,8 +1279,10 @@ function ProfileSummary({
         )}
         <dt>{t("User")}</dt>
         <dd className="mono">{draft.username}</dd>
-        <dt>SSL</dt>
-        <dd>{draft.sslmode}</dd>
+        <dt>TLS</dt>
+        <dd>
+          {tlsMode(draft.sslmode).label} <code className="tls-id">{draft.sslmode}</code>
+        </dd>
         <dt>{t("SSH tunnel")}</dt>
         <dd className={ssh ? "mono" : undefined}>{ssh ? `${ssh.username}@${ssh.host}:${ssh.port}` : t("no")}</dd>
         {mode.length > 0 && (
