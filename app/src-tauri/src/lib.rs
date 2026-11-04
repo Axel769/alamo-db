@@ -457,33 +457,9 @@ async fn open_profile(
     // Tunnel failed, no session.
     let mut tunnel = None;
     let tunnel_port = if let Some(sp) = &ssh_profile {
-        let auth = match sp.auth.as_str() {
-            "password" => alamo_tunnel::TunnelAuth::Password(ssh_secret.clone()),
-            "key" => alamo_tunnel::TunnelAuth::Key {
-                path: expand_home(
-                    &sp.key_path
-                        .clone()
-                        .filter(|s| !s.trim().is_empty())
-                        .ok_or_else(|| internal("SSH tunnel: private key path missing"))?,
-                ),
-                passphrase: (!ssh_secret.is_empty()).then(|| ssh_secret.clone()),
-            },
-            _ => alamo_tunnel::TunnelAuth::Agent,
-        };
         let sid = sp.id.unwrap_or(0);
-        let trusted_key = {
-            let db = locked(&db.0);
-            storage::ssh_host_key_get(&db, sid).map_err(|e| internal(e.to_string()))?
-        };
         let cfg = alamo_tunnel::TunnelConfig {
-            ssh: alamo_tunnel::SshEndpoint {
-                host: sp.host.clone(),
-                port: sp.port,
-                user: sp.username.clone(),
-                auth,
-                known_hosts: None,
-                trusted_key,
-            },
+            ssh: ssh_endpoint(&locked(&db.0), sp, &ssh_secret)?,
             target_host: profile.host.clone(),
             target_port: profile.port,
         };
@@ -515,6 +491,38 @@ async fn open_profile(
         ssh_typed,
         db_account: db_acc,
         ssh_account: ssh_acc,
+    })
+}
+
+/// The bastion of an SSH profile as `alamo-tunnel` wants it: credential
+/// resolved by the caller (dialog or keychain), trusted key from the profile.
+fn ssh_endpoint(
+    db: &rusqlite::Connection,
+    sp: &storage::SshProfile,
+    secret: &str,
+) -> Result<alamo_tunnel::SshEndpoint, ErrorOut> {
+    let auth = match sp.auth.as_str() {
+        "password" => alamo_tunnel::TunnelAuth::Password(secret.to_owned()),
+        "key" => alamo_tunnel::TunnelAuth::Key {
+            path: expand_home(
+                &sp.key_path
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| internal("SSH tunnel: private key path missing"))?,
+            ),
+            passphrase: (!secret.is_empty()).then(|| secret.to_owned()),
+        },
+        _ => alamo_tunnel::TunnelAuth::Agent,
+    };
+    let trusted_key =
+        storage::ssh_host_key_get(db, sp.id.unwrap_or(0)).map_err(|e| internal(e.to_string()))?;
+    Ok(alamo_tunnel::SshEndpoint {
+        host: sp.host.clone(),
+        port: sp.port,
+        user: sp.username.clone(),
+        auth,
+        known_hosts: None,
+        trusted_key,
     })
 }
 
@@ -559,10 +567,31 @@ fn ssh_host_key_trust(
         .map_err(|e| e.to_string())?
         .and_then(|p| p.ssh_profile_id)
         .ok_or("the profile does not use an SSH tunnel")?;
+    trust_pending(&state, &db, sid, &fingerprint)
+}
+
+/// Same, from the SSH profiles manager ("Test tunnel"): `id` is the SSH
+/// profile itself.
+#[tauri::command]
+fn ssh_profile_host_key_trust(
+    state: State<'_, AppState>,
+    db: State<'_, Db>,
+    id: i64,
+    fingerprint: String,
+) -> Result<(), String> {
+    trust_pending(&state, &locked(&db.0), id, &fingerprint)
+}
+
+fn trust_pending(
+    state: &AppState,
+    db: &rusqlite::Connection,
+    sid: i64,
+    fingerprint: &str,
+) -> Result<(), String> {
     let pending = locked(&state.pending_host_keys).remove(&sid);
     match pending {
         Some(p) if p.fingerprint == fingerprint => {
-            storage::ssh_host_key_set(&db, sid, &p.key).map_err(|e| e.to_string())
+            storage::ssh_host_key_set(db, sid, &p.key).map_err(|e| e.to_string())
         }
         _ => Err("fingerprint no longer valid: retry the connection".into()),
     }
@@ -906,9 +935,42 @@ fn profile_delete(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), Stri
 
 // ------------------------------------------------------------- SSH profiles
 
+/// SSH profile as the manager shows it: who uses it, what is saved for it.
+#[derive(Serialize)]
+struct SshProfileOut {
+    #[serde(flatten)]
+    profile: storage::SshProfile,
+    /// Database profiles that go through this bastion, by name.
+    used_by: Vec<String>,
+    /// Bastion key confirmed by the user, as a fingerprint (`SHA256:…`).
+    host_fingerprint: Option<String>,
+    /// Its credential is in the keychain (the credential itself never
+    /// crosses the IPC).
+    secret_saved: bool,
+}
+
 #[tauri::command]
-fn ssh_profiles_list(db: State<'_, Db>) -> Result<Vec<storage::SshProfile>, String> {
-    storage::ssh_profiles_list(&locked(&db.0)).map_err(|e| e.to_string())
+fn ssh_profiles_list(app: AppHandle, db: State<'_, Db>) -> Result<Vec<SshProfileOut>, String> {
+    let service = keychain_service(app.config());
+    let db = locked(&db.0);
+    let mut usage = storage::ssh_profile_usage(&db).map_err(|e| e.to_string())?;
+    storage::ssh_profiles_list(&db)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|profile| {
+            let id = profile.id.unwrap_or(0);
+            let host_fingerprint = storage::ssh_host_key_get(&db, id)
+                .map_err(|e| e.to_string())?
+                .as_deref()
+                .and_then(alamo_tunnel::fingerprint_of);
+            Ok(SshProfileOut {
+                used_by: usage.remove(&id).unwrap_or_default(),
+                host_fingerprint,
+                secret_saved: secrets::exists(&service, &ssh_account(&db, id)?)?,
+                profile,
+            })
+        })
+        .collect()
 }
 
 /// Like `profile_save`: bastion or user changed = old credential gone.
@@ -936,6 +998,71 @@ fn ssh_profile_delete(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), 
     storage::ssh_profile_delete(&db, id).map_err(|e| e.to_string())?;
     // The bastion's credential dies with its profile.
     secrets::forget(&app.config().identifier, &account)
+}
+
+/// "Do not save it" in the manager: the bastion's credential leaves the
+/// keychain for every connection that goes through it.
+#[tauri::command]
+fn ssh_secret_forget(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), String> {
+    let account = ssh_account(&locked(&db.0), id)?;
+    secrets::forget(&app.config().identifier, &account)
+}
+
+#[tauri::command]
+fn ssh_host_key_forget(db: State<'_, Db>, id: i64) -> Result<(), String> {
+    storage::ssh_host_key_forget(&locked(&db.0), id).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct ProbeOut {
+    elapsed_ms: u64,
+}
+
+/// "Test tunnel" of the SSH profiles manager: bastion reachable, key
+/// trusted, credential accepted — nothing forwarded. The credential comes
+/// from the dialog or, empty, from the keychain; with `save_secret` the
+/// typed one is saved once the bastion has accepted it (as on connect:
+/// never a wrong credential in the keychain).
+#[tauri::command]
+async fn ssh_profile_test(
+    app: AppHandle,
+    db: State<'_, Db>,
+    id: i64,
+    secret: Option<String>,
+    save_secret: bool,
+) -> Result<ProbeOut, ErrorOut> {
+    let started = Instant::now();
+    let service = keychain_service(app.config());
+    let (sp, account) = {
+        let db = locked(&db.0);
+        let sp = storage::ssh_profile_get(&db, id)
+            .map_err(|e| internal(e.to_string()))?
+            .ok_or_else(|| internal(format!("SSH profile {id} does not exist")))?;
+        (sp, ssh_account(&db, id).map_err(internal)?)
+    };
+    let typed = Zeroizing::new(secret.unwrap_or_default());
+    let secret = if typed.is_empty() {
+        Zeroizing::new(
+            secrets::get(&service, &account)
+                .map_err(internal)?
+                .unwrap_or_default(),
+        )
+    } else {
+        typed.clone()
+    };
+    // The lock must not live across the await: built first.
+    let endpoint = ssh_endpoint(&locked(&db.0), &sp, &secret)?;
+    alamo_tunnel::probe(&endpoint)
+        .await
+        .map_err(|e| tunnel_error(&app, id, &sp, e))?;
+    if save_secret && !typed.is_empty() {
+        if let Err(e) = secrets::save(&service, &account, &typed) {
+            eprintln!("keychain (SSH profile {id}): {e}");
+        }
+    }
+    Ok(ProbeOut {
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
 }
 
 // ------------------------------------------------- connections export/import
@@ -2781,6 +2908,10 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             ssh_profiles_list,
             ssh_profile_save,
             ssh_profile_delete,
+            ssh_secret_forget,
+            ssh_host_key_forget,
+            ssh_profile_test,
+            ssh_profile_host_key_trust,
             connections_export,
             connections_import_open,
             connections_import_apply,

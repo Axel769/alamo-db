@@ -122,6 +122,16 @@ export type SshProfile = {
   key_path: string | null;
 };
 
+/// SSH profile as the manager shows it (see `SshProfileOut` in the backend).
+export type SshProfileOut = SshProfile & {
+  /// Database profiles that go through this bastion, by name.
+  used_by: string[];
+  /// Bastion key confirmed by the user, as a fingerprint; null = never seen.
+  host_fingerprint: string | null;
+  /// Its credential is in the keychain (the credential never arrives).
+  secret_saved: boolean;
+};
+
 export type SortOut = { rows: number; incomplete: boolean };
 
 /// Rows per page of the table tab: mirror of the backend's
@@ -434,9 +444,21 @@ export const ipc = {
     invoke<{ database: string | null; elapsed_ms: number }>("test_profile", { id, password, sshSecret }),
   profilePasswordPresent: (id: number) =>
     invoke<{ db: boolean; ssh: boolean }>("profile_password_present", { id }),
-  sshProfilesList: () => invoke<SshProfile[]>("ssh_profiles_list"),
-  sshProfileSave: (profile: SshProfile) => invoke<number>("ssh_profile_save", { profile }),
+  sshProfilesList: () => invoke<SshProfileOut[]>("ssh_profiles_list"),
+  /// Only the profile's own fields cross: a `SshProfileOut` is fine as input.
+  sshProfileSave: ({ id, name, host, port, username, auth, key_path }: SshProfile) =>
+    invoke<number>("ssh_profile_save", { profile: { id, name, host, port, username, auth, key_path } }),
   sshProfileDelete: (id: number) => invoke<void>("ssh_profile_delete", { id }),
+  /// "Test tunnel" on a SAVED SSH profile: bastion, host key, credential —
+  /// nothing forwarded. Empty secret = the keychain's; with saveSecret a typed
+  /// one is saved once accepted.
+  sshProfileTest: (id: number, secret: string | null, saveSecret: boolean) =>
+    invoke<{ elapsed_ms: number }>("ssh_profile_test", { id, secret, saveSecret }),
+  /// As `sshHostKeyTrust`, but `id` is the SSH profile (from the manager).
+  sshProfileHostKeyTrust: (id: number, fingerprint: string) =>
+    invoke<void>("ssh_profile_host_key_trust", { id, fingerprint }),
+  sshHostKeyForget: (id: number) => invoke<void>("ssh_host_key_forget", { id }),
+  sshSecretForget: (id: number) => invoke<void>("ssh_secret_forget", { id }),
   /// Never-seen bastion (error `ssh_host_key_unknown`): the user trusts
   /// the fingerprint shown. The backend saves the key it saw itself,
   /// only if the fingerprint matches; then the connection is retried.

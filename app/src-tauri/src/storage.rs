@@ -5,6 +5,7 @@
 //! **No passwords on disk**: they live in the system keychain (M5, §12,
 //! `secrets` module) or only in memory — never in here.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use alamo_core::tls::{TlsMode, TlsOptions};
@@ -668,6 +669,32 @@ pub fn ssh_host_key_set(db: &Connection, id: i64, key: &str) -> rusqlite::Result
     Ok(())
 }
 
+/// The user no longer trusts the saved key: the next connection asks for
+/// the fingerprint again (bastion reinstalled, key rotated on purpose).
+pub fn ssh_host_key_forget(db: &Connection, id: i64) -> rusqlite::Result<()> {
+    db.execute(
+        "UPDATE ssh_profiles SET host_key = NULL WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
+/// Names of the database profiles that go through each SSH profile: the
+/// manager says who a change or a deletion touches.
+pub fn ssh_profile_usage(db: &Connection) -> rusqlite::Result<HashMap<i64, Vec<String>>> {
+    let mut stmt = db.prepare(
+        "SELECT ssh_profile_id, name FROM profiles
+         WHERE ssh_profile_id IS NOT NULL ORDER BY name",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    let mut usage: HashMap<i64, Vec<String>> = HashMap::new();
+    for row in rows {
+        let (sid, name) = row?;
+        usage.entry(sid).or_default().push(name);
+    }
+    Ok(usage)
+}
+
 /// Deletes the SSH profile and detaches the database profiles that used it
 /// (they go back to a direct connection: disappearing is better than
 /// pointing into the void).
@@ -927,8 +954,22 @@ mod tests {
         sp.username = "other".into();
         ssh_profile_save(&db, &sp).unwrap();
         assert_ne!(ssh_secret_tag(&db, sid).unwrap().as_ref(), Some(&tag));
+        // Usage: who goes through the bastion, by name.
+        let mut other = profile();
+        other.name = "other".into();
+        other.ssh_profile_id = Some(sid);
+        profile_save(&db, &other).unwrap();
+        profile_save(&db, &profile()).unwrap();
+        let usage = ssh_profile_usage(&db).unwrap();
+        assert_eq!(usage.get(&sid).unwrap(), &["local", "other"]);
+        assert_eq!(usage.len(), 1);
+        // Forgetting the key: the next connection asks again.
+        ssh_host_key_set(&db, sid, "ssh-ed25519 AAAA").unwrap();
+        ssh_host_key_forget(&db, sid).unwrap();
+        assert_eq!(ssh_host_key_get(&db, sid).unwrap(), None);
         // Delete: the database profile goes back to a direct connection.
         ssh_profile_delete(&db, sid).unwrap();
+        assert!(ssh_profile_usage(&db).unwrap().is_empty());
         assert!(ssh_profile_get(&db, sid).unwrap().is_none());
         assert_eq!(profile_get(&db, pid).unwrap().unwrap().ssh_profile_id, None);
     }
