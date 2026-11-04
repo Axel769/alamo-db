@@ -1378,6 +1378,19 @@ and the UI must warn, not silently make an open transaction disappear.
 
 - TLS via `rustls`, with explicit handling of the `sslmode` modes.
 - SSH tunnel via `russh`.
+- **SSH profiles are a shared entity** (`ssh_profiles`, referenced by
+  `profiles.ssh_profile_id`): a bastion is saved once and used by several
+  connections, and so is its credential in the keychain. They are created,
+  edited and deleted in their own manager (`SshProfilesDialog`), which shows
+  who goes through each bastion, its confirmed host key and whether a
+  credential is saved; the connection's SSH tab only picks one (DataGrip
+  model). Rationale: a change to a bastion applies to every connection that
+  uses it, so it is made where that is visible, and deletion asks for
+  confirmation listing the connections that fall back to a direct
+  connection. "Test tunnel" (`alamo_tunnel::probe`) saves the profile first
+  and logs into the bastion without forwarding anything; the typed credential
+  reaches the keychain only once the bastion has accepted it, and only if
+  asked.
 - **Credentials in the system keychain** (`keyring` crate) — never in plain text in the
   configuration file.
 

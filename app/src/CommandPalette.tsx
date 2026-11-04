@@ -11,7 +11,7 @@ import { t } from "./i18n";
 import { ipc } from "./ipc";
 import { activeTab, profileConns, useStore } from "./store";
 import { activateTab, makePermanent, newSqlTab, openTablePreview } from "./tabs";
-import { IconDatabase, IconExport, IconHistory, IconImport, IconPlug, IconPlus, IconSettings, IconSql, IconTable } from "./icons";
+import { IconDatabase, IconExport, IconHistory, IconImport, IconKey, IconPlug, IconPlus, IconSettings, IconSql, IconTable } from "./icons";
 import type { TransferKind } from "./ConnectionsTransfer";
 import { canSwitchDb } from "./engines";
 
@@ -23,6 +23,7 @@ type Props = {
   onPanel: (id: "schema" | "connections" | "history") => void;
   onSettings: () => void;
   onTransfer: (kind: TransferKind) => void;
+  onSshProfiles: () => void;
 };
 
 /// Every word of the search must appear; higher score if the name starts
@@ -40,7 +41,7 @@ function score(text: string, words: string[]): number | null {
 
 const MAX_PER_GROUP = 40;
 
-export default function CommandPalette({ onClose, onOpenDialog, onPanel, onSettings, onTransfer }: Props) {
+export default function CommandPalette({ onClose, onOpenDialog, onPanel, onSettings, onTransfer, onSshProfiles }: Props) {
   const store = useStore();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
@@ -161,6 +162,7 @@ export default function CommandPalette({ onClose, onOpenDialog, onPanel, onSetti
       { key: t("New connection…"), item: { group: "", icon: <IconPlus />, title: t("New connection…"), run: act(() => onOpenDialog(null)) } },
       { key: t("Export connections…"), item: { group: "", icon: <IconExport />, title: t("Export connections…"), run: act(() => onTransfer("export")) } },
       { key: t("Import connections…"), item: { group: "", icon: <IconImport />, title: t("Import connections…"), run: act(() => onTransfer("import")) } },
+      { key: t("SSH profiles…"), item: { group: "", icon: <IconKey size={14} />, title: t("SSH profiles…"), run: act(onSshProfiles) } },
       { key: t("Settings"), item: { group: "", icon: <IconSettings size={14} />, title: t("Settings"), run: act(onSettings) } },
     ]);
     return out;

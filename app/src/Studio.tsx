@@ -29,6 +29,7 @@ import {
 import ConnectDialog from "./ConnectDialog";
 import ExplainEstimate from "./ExplainEstimate";
 import SettingsDialog from "./SettingsDialog";
+import SshProfilesDialog, { SshPick } from "./SshProfilesDialog";
 import ConnectionsPanel from "./ConnectionsPanel";
 import { ExportConnectionsDialog, ImportConnectionsDialog, TransferKind } from "./ConnectionsTransfer";
 import ConnectionPage, { connInitials } from "./ConnectionPage";
@@ -107,6 +108,12 @@ function StudioInner() {
   const [dialogProfileId, setDialogProfileId] = useState<number | null>(null);
   // Export/import of the saved connections (ConnectionsTransfer).
   const [transfer, setTransfer] = useState<TransferKind | null>(null);
+  /// SSH profiles manager, above the connections dialog or on its own
+  /// (command palette): what it opens on, null = closed.
+  const [sshManager, setSshManager] = useState<{ id: SshPick } | null>(null);
+  /// The profile picked in the manager, for the SSH tab of the connections
+  /// dialog; `v` grows at every closing so the same id is picked again.
+  const [sshPick, setSshPick] = useState<{ id: number | null; v: number } | null>(null);
   // Grows on every import: ConnectDialog re-reads the profiles (the panel
   // goes through the ["profiles"] query).
   const [profilesVersion, setProfilesVersion] = useState(0);
@@ -1781,6 +1788,7 @@ function StudioInner() {
           }}
           onSettings={() => setSettingsOpen(true)}
           onTransfer={setTransfer}
+          onSshProfiles={() => setSshManager({ id: null })}
         />
       )}
 
@@ -1790,7 +1798,9 @@ function StudioInner() {
         connected={connected}
         initialProfileId={dialogProfileId}
         onTransfer={setTransfer}
-        covered={transfer !== null}
+        onManageSsh={(id) => setSshManager({ id })}
+        sshPick={sshPick}
+        covered={transfer !== null || sshManager !== null}
         profilesVersion={profilesVersion}
         onClose={() => {
           setDialogOpen(false);
@@ -1849,6 +1859,20 @@ function StudioInner() {
           onImported={() => {
             void queryClient.invalidateQueries({ queryKey: ["profiles"] });
             setProfilesVersion((v) => v + 1);
+          }}
+        />
+      )}
+
+      {sshManager && (
+        <SshProfilesDialog
+          initialId={sshManager.id}
+          onClose={(picked) => {
+            setSshManager(null);
+            setSshPick((p) => ({ id: picked, v: (p?.v ?? 0) + 1 }));
+            // Profiles may have been unlinked from a deleted bastion: the
+            // dialog and the panel re-read them.
+            setProfilesVersion((v) => v + 1);
+            void queryClient.invalidateQueries({ queryKey: ["profiles"] });
           }}
         />
       )}

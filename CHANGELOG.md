@@ -15,6 +15,7 @@ Before launching "Release (alpha)": bump `version` in
 
 - Table tabs on production (or with manual commit): Save works while a SQL tab of the same connection shows a query paused at its first rows ("scroll for more rows"). The paused query stops, its rows stay. Before, Save failed with "running on the main connection: wait for it to finish".
 - Table tabs: ⌘S (Ctrl+S on Windows and Linux) with a cell still being edited saves that cell too, right away. Before, the cell had to be closed with Enter first, or ⌘S saved nothing.
+- SSH profiles have their own window (from the SSH tab of a connection, "Edit…" and "Manage…", or "SSH profiles…" in the command palette): the list on the left with New, Duplicate and Delete, the bastion's details on the right, how many connections use it, the host key confirmed and "Test tunnel", which logs into the bastion without opening a database. Delete asks for confirmation and says which connections go back to a direct connection. The SSH tab of a connection now only picks a profile. Before, the bastion was edited inside the connection and deleted with a two-click button, without saying what it changed elsewhere.
 
 ## [0.1.0-alpha.12] - 2026-11-02
 

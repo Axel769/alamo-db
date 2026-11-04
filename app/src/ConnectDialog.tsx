@@ -3,7 +3,8 @@
 // keychain straight into the backend (§12).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t, tMsg } from "./i18n";
-import { ConnectOut, ErrorOut, ipc, Profile, SshProfile } from "./ipc";
+import { ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut } from "./ipc";
+import { SshPick, sshAuthLabel, sshSummary } from "./SshProfilesDialog";
 import { connInitials } from "./ConnectionPage";
 import { IconPlus, IconTrash, IconX } from "./icons";
 import { useStore } from "./store";
@@ -39,16 +40,6 @@ const newProfile = (): Profile => ({
   db_exclude: "",
 });
 
-const NEW_SSH: SshProfile = {
-  id: null,
-  name: "",
-  host: "",
-  port: 22,
-  username: "",
-  auth: "agent",
-  key_path: null,
-};
-
 // Fixed palette, not a color picker: the color is there to tell the
 // environments apart at a glance (§9.1), not to decorate.
 const COLORS = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#a02a83", "#6b7280"];
@@ -69,6 +60,12 @@ type Props = {
   covered: boolean;
   /// Grows at every successful import: the profile list must be re-read.
   profilesVersion: number;
+  /// The SSH profiles manager (§12): bastions are created, edited and
+  /// deleted there; the SSH tab here only picks one.
+  onManageSsh: (id: SshPick) => void;
+  /// The profile picked in the manager at its closing (`v` grows every
+  /// time): it goes into the tab if the profile is being edited.
+  sshPick: { id: number | null; v: number } | null;
 };
 
 export default function ConnectDialog({
@@ -80,13 +77,14 @@ export default function ConnectDialog({
   onTransfer,
   covered,
   profilesVersion,
+  onManageSsh,
+  sshPick,
 }: Props) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [draft, setDraft] = useState<Profile>(newProfile);
-  /// Saved SSH profiles (reusable bastions): the draft is the one being
-  /// edited; null = tunnel off for this database profile.
-  const [sshProfiles, setSshProfiles] = useState<SshProfile[]>([]);
-  const [sshDraft, setSshDraft] = useState<SshProfile | null>(null);
+  /// Saved SSH profiles (reusable bastions): the draft references one by
+  /// id, null = direct connection.
+  const [sshProfiles, setSshProfiles] = useState<SshProfileOut[]>([]);
   const [password, setPassword] = useState("");
   /// Bastion password or key passphrase (depends on ssh_auth):
   /// like the db password, never persisted outside the keychain.
@@ -101,7 +99,6 @@ export default function ConnectDialog({
   const [retry, setRetry] = useState<{ id: number; action: "connect" | "test" } | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [sshConfirmDelete, setSshConfirmDelete] = useState(false);
   const [section, setSection] = useState<Section>("general");
   /// A saved profile opens read-only (summary + password +
   /// Connect): to change it you need "Edit profile". So a field
@@ -140,13 +137,8 @@ export default function ConnectDialog({
     }
   }, []);
 
-  // The SSH draft follows the selected database profile: its bastion if
-  // it has one, off otherwise. Local edits to the fields do not touch
-  // these dependencies, so they are not overwritten.
-  useEffect(() => {
-    const linked = sshProfiles.find((s) => s.id === draft.ssh_profile_id);
-    setSshDraft(linked ? { ...linked } : null);
-  }, [draft.id, draft.ssh_profile_id, sshProfiles]);
+  /// `v` of the last `sshPick` applied: each closing of the manager counts once.
+  const pickApplied = useRef(0);
 
   // On profile change and at every opening of the dialog: the checkbox reflects
   // the real state of the keychain — ticking saves, unticking forgets
@@ -198,6 +190,22 @@ export default function ConnectDialog({
       setProfiles(list);
       setSshProfiles(sshList);
       if (draft.id === null && profiles.length === 0 && list.length > 0) setDraft({ ...list[0] });
+      // A deleted bastion unlinks the saved profiles in the backend: the
+      // one shown read-only must say so too.
+      const current = !editing && draft.id !== null ? list.find((p) => p.id === draft.id) : undefined;
+      if (current) setDraft({ ...current });
+      // Back from the SSH profiles manager: the profile chosen there goes
+      // into the tab — only while editing, a look must not change a saved
+      // profile. Nothing chosen there (null) leaves the tunnel as it is,
+      // unless its bastion is gone.
+      if (editing && sshPick && sshPick.v !== pickApplied.current) {
+        pickApplied.current = sshPick.v;
+        setDraft((d) => {
+          const exists = sshList.some((s) => s.id === d.ssh_profile_id);
+          return sshPick.id === null && exists ? d : { ...d, ssh_profile_id: sshPick.id };
+        });
+        setTestOk(null);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profilesVersion]);
@@ -235,6 +243,8 @@ export default function ConnectDialog({
 
   if (!open) return null;
 
+  /// The bastion of the draft, if it still exists.
+  const ssh = sshProfiles.find((s) => s.id === draft.ssh_profile_id) ?? null;
   // The database is mandatory only where the engine says so (PG: every
   // connection is born inside a db; MySQL connects without a default schema).
   const engine = engineOf(draft.dialect);
@@ -246,12 +256,7 @@ export default function ConnectDialog({
     draft.username.trim() !== "" &&
     draft.port > 0 &&
     draft.port <= 65535 &&
-    (sshDraft === null ||
-      (sshDraft.host.trim() !== "" &&
-        sshDraft.username.trim() !== "" &&
-        sshDraft.port > 0 &&
-        sshDraft.port <= 65535 &&
-        (sshDraft.auth !== "key" || (sshDraft.key_path ?? "").trim() !== "")));
+    (draft.ssh_profile_id === null || ssh !== null);
 
   const set = (patch: Partial<Profile>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -268,7 +273,7 @@ export default function ConnectDialog({
     sec === "security"
       ? draft.sslmode
       : sec === "ssh"
-        ? sshDraft
+        ? draft.ssh_profile_id !== null
           ? t("on")
           : null
         : sec === "access" && passwordSaved
@@ -282,43 +287,13 @@ export default function ConnectDialog({
       !(draft.port > 0 && draft.port <= 65535),
     access: draft.username.trim() === "",
     security: false,
-    ssh:
-      sshDraft !== null &&
-      (sshDraft.host.trim() === "" ||
-        sshDraft.username.trim() === "" ||
-        !(sshDraft.port > 0 && sshDraft.port <= 65535) ||
-        (sshDraft.auth === "key" && (sshDraft.key_path ?? "").trim() === "")),
+    // Bastion deleted in the manager while this profile pointed at it.
+    ssh: draft.ssh_profile_id !== null && ssh === null,
   };
   const friendly = error ? friendlyHint(error.message) : null;
 
-  const setSsh = (patch: Partial<SshProfile>) => {
-    setSshDraft((d) => (d ? { ...d, ...patch } : d));
-    setSshConfirmDelete(false);
-  };
-
-  const deleteSsh = async () => {
-    if (!sshDraft || sshDraft.id === null) return;
-    if (!sshConfirmDelete) {
-      setSshConfirmDelete(true);
-      return;
-    }
-    await ipc.sshProfileDelete(sshDraft.id);
-    setSshConfirmDelete(false);
-    setSshDraft(null);
-    // The linked database profiles were unlinked by the backend:
-    // reload to see them as the database is now.
-    await reload(draft.id ?? undefined);
-  };
-
   const save = async (): Promise<number> => {
-    // SSH profile first: the database profile references its id. Empty
-    // name = derived from the bastion.
-    let sshId: number | null = null;
-    if (sshDraft) {
-      const name = sshDraft.name.trim() || `${sshDraft.username}@${sshDraft.host}`;
-      sshId = await ipc.sshProfileSave({ ...sshDraft, name });
-    }
-    const id = await ipc.profileSave({ ...draft, ssh_profile_id: sshId });
+    const id = await ipc.profileSave(draft);
     await reload(id);
     return id;
   };
@@ -369,11 +344,7 @@ export default function ConnectDialog({
   /// Leaves edit mode discarding the changes: back to the saved profile.
   const cancelEdit = () => {
     const saved = profiles.find((p) => p.id === draft.id);
-    if (saved) {
-      setDraft({ ...saved });
-      const linked = sshProfiles.find((x) => x.id === saved.ssh_profile_id);
-      setSshDraft(linked ? { ...linked } : null);
-    }
+    if (saved) setDraft({ ...saved });
     setError(null);
     setTestOk(null);
     setConfirmDelete(false);
@@ -413,6 +384,9 @@ export default function ConnectDialog({
   /// Name of the SAVED profile (not the one being edited in the form): it is
   /// the one that gets deleted, and the one to type to confirm.
   const savedName = profiles.find((p) => p.id === draft.id)?.name ?? draft.name;
+  /// How many OTHER saved profiles go through the draft's bastion: the
+  /// manager edits it for all of them.
+  const sshOthers = ssh ? ssh.used_by.filter((n) => draft.id === null || n !== savedName).length : 0;
   const deleteReady = deleteText.trim() === savedName.trim() && savedName.trim() !== "";
 
   /// The Delete button only opens the confirmation; this one deletes, and
@@ -584,7 +558,7 @@ export default function ConnectDialog({
                   {engineName(draft.dialect)}
                   {draft.host.trim() ? ` · ${draft.username || "?"}@${draft.host}:${draft.port}` : ""}
                   {draft.database.trim() ? ` · ${draft.database}` : ""}
-                  {sshDraft ? " · SSH" : ""}
+                  {draft.ssh_profile_id !== null ? " · SSH" : ""}
                 </span>
               </span>
             </div>
@@ -609,7 +583,7 @@ export default function ConnectDialog({
             {!editing && (
               <ProfileSummary
                 draft={draft}
-                ssh={sshDraft}
+                ssh={ssh}
                 password={password}
                 onPassword={setPassword}
                 sshSecret={sshSecret}
@@ -856,31 +830,34 @@ export default function ConnectDialog({
             >
               <input
                 type="checkbox"
-                checked={sshDraft !== null}
+                checked={draft.ssh_profile_id !== null}
                 onChange={(e) => {
                   if (!e.target.checked) {
-                    setSshDraft(null);
+                    set({ ssh_profile_id: null });
                     return;
                   }
-                  const linked = sshProfiles.find((s) => s.id === draft.ssh_profile_id);
-                  setSshDraft({ ...(linked ?? sshProfiles[0] ?? NEW_SSH) });
+                  // No bastion yet: created in the manager, which hands
+                  // it back here at closing.
+                  const first = sshProfiles[0];
+                  if (first) set({ ssh_profile_id: first.id });
+                  else onManageSsh("new");
                 }}
               />
               {t("SSH tunnel")}
             </label>
-            {sshDraft && (
+            {draft.ssh_profile_id !== null && (
               <>
                 <div className="form-row">
-                  <label style={{ flex: 1 }}>
+                  <label className="grow">
                     {t("SSH profile")}
                     <select
-                      value={sshDraft.id ?? "new"}
+                      value={ssh ? String(ssh.id) : "missing"}
                       onChange={(e) => {
-                        const v = e.target.value;
-                        const chosen = sshProfiles.find((s) => String(s.id) === v);
-                        setSshDraft({ ...(chosen ?? NEW_SSH) });
+                        if (e.target.value === "new") onManageSsh("new");
+                        else set({ ssh_profile_id: Number(e.target.value) });
                       }}
                     >
+                      {ssh === null && <option value="missing">{t("(deleted profile: pick another)")}</option>}
                       {sshProfiles.map((s) => (
                         <option key={s.id} value={String(s.id)}>
                           {s.name}
@@ -889,91 +866,37 @@ export default function ConnectDialog({
                       <option value="new">{t("new SSH profile…")}</option>
                     </select>
                   </label>
-                  {sshDraft.id !== null && (
-                    <button
-                      className="btn danger small"
-                      title={t("Delete this SSH profile: database profiles using it fall back to a direct connection")}
-                      onClick={() => void deleteSsh()}
-                    >
-                      {sshConfirmDelete ? t("Confirm?") : t("Delete")}
-                    </button>
-                  )}
+                  <button
+                    className="btn"
+                    disabled={ssh === null}
+                    title={t("Host, user and key of this bastion, for every connection that uses it")}
+                    onClick={() => onManageSsh(draft.ssh_profile_id)}
+                  >
+                    {t("Edit…")}
+                  </button>
+                  <button className="btn" title={t("All the SSH profiles: create, duplicate, delete, test")} onClick={() => onManageSsh(null)}>
+                    {t("Manage…")}
+                  </button>
                 </div>
-                <label>
-                  {t("SSH profile name")}
-                  <input
-                    value={sshDraft.name}
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    placeholder={t("empty = user@host")}
-                    onChange={(e) => setSsh({ name: e.target.value })}
-                  />
-                </label>
-                <div className="form-row">
-                  <label style={{ flex: 1 }}>
-                    {t("SSH host")}
-                    <input
-                      value={sshDraft.host}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      onChange={(e) => setSsh({ host: e.target.value })}
-                    />
-                  </label>
-                  <label>
-                    {t("Port")}
-                    <input
-                      type="number"
-                      value={sshDraft.port}
-                      onChange={(e) => setSsh({ port: Number(e.target.value) })}
-                    />
-                  </label>
-                </div>
-                <div className="form-row">
-                  <label style={{ flex: 1 }}>
-                    {t("SSH user")}
-                    <input
-                      value={sshDraft.username}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      onChange={(e) => setSsh({ username: e.target.value })}
-                    />
-                  </label>
-                  <label>
-                    {t("Authentication")}
-                    <select value={sshDraft.auth} onChange={(e) => setSsh({ auth: e.target.value })}>
-                      <option value="agent">{t("SSH agent")}</option>
-                      <option value="key">{t("private key")}</option>
-                      <option value="password">{t("SSH password")}</option>
-                    </select>
-                  </label>
-                </div>
-                {sshDraft.auth === "key" && (
-                  <label>
-                    {t("Private key (path)")}
-                    <input
-                      value={sshDraft.key_path ?? ""}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      placeholder="~/.ssh/id_ed25519"
-                      onChange={(e) => setSsh({ key_path: e.target.value || null })}
-                    />
-                  </label>
+                {ssh && (
+                  <div className="form-hint">
+                    {sshSummary(ssh)} · {sshAuthLabel(ssh)} ·{" "}
+                    {ssh.host_fingerprint ? t("host key confirmed") : t("host key never seen")}
+                    {sshOthers === 1 && " · " + t("shared with 1 other connection")}
+                    {sshOthers > 1 && " · " + t("shared with {n} other connections", { n: sshOthers })}
+                  </div>
                 )}
-                {sshDraft.auth !== "agent" && (
+                {ssh && ssh.auth !== "agent" && (
                   <label>
-                    {sshDraft.auth === "key" ? t("Key passphrase") : t("SSH password")}
+                    {ssh.auth === "key" ? t("Key passphrase") : t("SSH password")}
                     <input
                       type="password"
                       value={sshSecret}
                       autoComplete="off"
                       placeholder={
-                        passwordSaved
+                        ssh.secret_saved
                           ? t("saved in the keychain — empty = use it")
-                          : sshDraft.auth === "key"
+                          : ssh.auth === "key"
                             ? t("empty if the key is not encrypted")
                             : ""
                       }

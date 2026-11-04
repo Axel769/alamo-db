@@ -5028,3 +5028,56 @@ button.profile-pill:hover {
 .tree-db .catalog-error.nested {
   padding-left: 44px;
 }
+
+/* SSH profiles manager: the bones of the connections dialog, smaller. */
+.ssh-dialog {
+  width: 780px;
+  height: 540px;
+}
+
+.ssh-dialog .profile-list {
+  width: 260px;
+}
+
+.profile-toolbar {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.profile-toolbar .spacer {
+  flex: 1;
+}
+
+.profile-sub {
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.ssh-dialog .form-scroll {
+  padding-top: 18px;
+}
+
+/* Host key and usage of the saved profile: facts, not fields. */
+.ssh-facts {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cell-border);
+  border-radius: 8px;
+  background: var(--cell-header-bg);
+}
+
+.ssh-facts dd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.ssh-facts code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  user-select: all;
+}
