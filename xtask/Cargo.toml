@@ -10,6 +10,10 @@ license = "Apache-2.0"
 
 [dependencies]
 testcontainers = { version = "0.27", features = ["blocking"] }
+# TLS lab (`test-matrix` TLS targets, `tls-lab`): generated CA and server
+# certificate, pure Rust.
+rcgen = "0.14"
+time = { version = "0.3", default-features = false, features = ["std"] }
 
 [workspace]
 
