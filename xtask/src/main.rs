@@ -136,11 +136,13 @@ fn main() {
         .iter()
         .filter(|t| filter.as_ref().is_none_or(|f| t.id().contains(f.as_str())))
         .collect();
-    // One CA for the whole run: generated only if a TLS target is selected.
+    // One CA for the whole run, generated only if a TLS target is selected,
+    // in a folder of its own: the lab's CA must stay the one its running
+    // servers were started with.
     let lab = selected
         .iter()
         .any(|t| t.tls)
-        .then(|| tls::generate(&root.join("target/tls")).unwrap_or_else(|e| fail(&e)));
+        .then(|| tls::generate(&root.join("target/tls/matrix")).unwrap_or_else(|e| fail(&e)));
 
     for target in selected {
         ran += 1;
@@ -500,7 +502,7 @@ fn tls_lab() {
         (Engine::MariaDb, 3310),
     ];
     let root = repo_root();
-    let lab = tls::generate(&root.join("target/tls")).unwrap_or_else(|e| fail(&e));
+    let lab = tls::generate(&root.join("target/tls/lab")).unwrap_or_else(|e| fail(&e));
     let mut containers = Vec::new();
     for (engine, port) in PORTS {
         let target = MATRIX
