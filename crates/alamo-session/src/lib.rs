@@ -20,6 +20,7 @@ pub mod introspect;
 pub mod registry;
 pub mod table;
 pub mod txn;
+pub mod x509;
 
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use alamo_core::dialect::{Capabilities, Dialect};
 use alamo_core::error::DbError;
 use alamo_core::schema_info::{ColumnInfo, ForeignKey, RelationInfo, SchemaInfo, SchemaStats};
 use alamo_core::stream::FetchOptions;
-use alamo_core::tls::TlsOptions;
+use alamo_core::tls::{TlsInfo, TlsOptions};
 use alamo_driver_postgres::PgSession;
 
 use driver::{DbConn, Driver, ServerConnId};
@@ -473,10 +474,10 @@ impl Session {
         })
     }
 
-    /// The channel of the editor connection is encrypted (see
-    /// `Connection::channel_encrypted`).
-    pub async fn channel_encrypted(&self) -> Result<bool, Box<DbError>> {
-        self.sticky().channel_encrypted().await
+    /// What protects the editor connection (see `Connection::tls_info`):
+    /// `None` = plaintext.
+    pub async fn tls_info(&self) -> Result<Option<TlsInfo>, Box<DbError>> {
+        self.sticky().tls_info().await
     }
 
     pub fn read_only(&self) -> bool {

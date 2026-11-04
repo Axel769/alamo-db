@@ -9,7 +9,7 @@ use alamo_core::schema_info::{
     ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats,
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
-use alamo_core::tls::{TlsMode, TlsOptions};
+use alamo_core::tls::{TlsInfo, TlsMode, TlsOptions};
 use alamo_driver_postgres::introspect;
 use alamo_driver_postgres::{PgDialect, PgError, PgSession};
 use futures_util::future::BoxFuture;
@@ -202,19 +202,32 @@ impl Connection for PgConn {
     }
 
     /// `prefer` may have fallen back to plaintext and tokio-postgres does
-    /// not say so: the server does.
-    fn channel_encrypted(&self) -> BoxFuture<'_, DbResult<bool>> {
+    /// not say so: the server does, with protocol and cipher. The
+    /// certificate is the one the driver's verifier saw at the handshake.
+    fn tls_info(&self) -> BoxFuture<'_, DbResult<Option<TlsInfo>>> {
         async move {
-            self.0
+            let row = self
+                .0
                 .client
                 .query_one(
-                    "SELECT ssl FROM pg_catalog.pg_stat_ssl \
+                    "SELECT ssl, version, cipher FROM pg_catalog.pg_stat_ssl \
                      WHERE pid = pg_catalog.pg_backend_pid()",
                     &[],
                 )
                 .await
-                .map(|r| r.get::<_, bool>(0))
-                .map_err(boxed_pg)
+                .map_err(boxed_pg)?;
+            if !row.get::<_, bool>(0) {
+                return Ok(None);
+            }
+            Ok(Some(TlsInfo {
+                protocol: row.get(1),
+                cipher: row.get(2),
+                server_cert: self
+                    .0
+                    .server_cert_der()
+                    .and_then(|der| crate::x509::summarize_der(&der).ok()),
+                verified: self.0.tls_verifies_chain(),
+            }))
         }
         .boxed()
     }

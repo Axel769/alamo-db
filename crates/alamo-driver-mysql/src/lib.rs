@@ -14,6 +14,7 @@ pub mod dialect;
 pub mod error;
 pub mod execute;
 pub mod introspect;
+pub mod tls;
 pub mod typecode;
 
 pub use dialect::MyDialect;
@@ -22,6 +23,7 @@ pub use execute::{
     connection_budget, current_database, execute_streaming, explain_rows_estimate, fetch_warnings,
     set_idle_txn_timeout, set_session_read_only, use_database,
 };
+pub use tls::{tls_status, TlsStatus};
 
 use mysql_async::prelude::Queryable;
 use mysql_async::{Conn, Opts, OptsBuilder, SslOpts};

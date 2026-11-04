@@ -9,7 +9,7 @@ use alamo_core::schema_info::{
     ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats,
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
-use alamo_core::tls::{TlsMode, TlsOptions};
+use alamo_core::tls::{CertSummary, TlsInfo, TlsMode, TlsOptions};
 use alamo_driver_mysql::introspect;
 use alamo_driver_mysql::{MyDialect, MyError, MySession};
 use futures_util::future::BoxFuture;
@@ -268,10 +268,30 @@ impl Connection for MyConn {
         .boxed()
     }
 
-    /// The session keeps the effective regime after the downgrade.
-    fn channel_encrypted(&self) -> BoxFuture<'_, DbResult<bool>> {
-        let on = self.tls.mode.wants_tls();
-        async move { Ok(on) }.boxed()
+    /// The session keeps the effective regime after the downgrade; the
+    /// server tells the rest. No subject/issuer here: `mysql_async` hides
+    /// the certificate, the status variables only carry its validity.
+    fn tls_info(&self) -> BoxFuture<'_, DbResult<Option<TlsInfo>>> {
+        async move {
+            if !self.tls.mode.wants_tls() {
+                return Ok(None);
+            }
+            let status = alamo_driver_mysql::tls_status(&mut self.lock().await?.conn)
+                .await
+                .map_err(boxed)?;
+            Ok(status.map(|s| TlsInfo {
+                protocol: s.version,
+                cipher: s.cipher,
+                server_cert: Some(CertSummary {
+                    subject: None,
+                    issuer: None,
+                    not_before: s.not_before,
+                    not_after: s.not_after,
+                }),
+                verified: self.tls.mode.verifies_chain(),
+            }))
+        }
+        .boxed()
     }
 
     /// `Capabilities::read_only_txn` is off: never called.

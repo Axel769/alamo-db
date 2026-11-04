@@ -116,6 +116,35 @@ impl TlsOptions {
     }
 }
 
+/// What was negotiated on an open channel, measured on the session itself
+/// (§12.2), never inferred from the profile. A `None` field is a datum the
+/// engine cannot give: the UI says "not available", it does not hide it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TlsInfo {
+    /// Protocol version as the server names it (`TLSv1.3`).
+    pub protocol: Option<String>,
+    /// Cipher suite (`TLS_AES_256_GCM_SHA384`).
+    pub cipher: Option<String>,
+    /// The certificate the server presented.
+    pub server_cert: Option<CertSummary>,
+    /// The handshake succeeded under a chain-verifying mode: the server is
+    /// who the CA says. `false` on an encrypted channel = `prefer`/`require`,
+    /// which never authenticate the server.
+    pub verified: bool,
+}
+
+/// The human-readable part of an X.509 certificate: the server's, or the
+/// profile's root CA inspected by the connection dialog.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CertSummary {
+    /// RFC 4514 names (`CN=db.example.com,O=Example`).
+    pub subject: Option<String>,
+    pub issuer: Option<String>,
+    /// Validity bounds, unix seconds.
+    pub not_before: Option<i64>,
+    pub not_after: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

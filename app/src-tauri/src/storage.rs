@@ -784,7 +784,8 @@ fn tls_mode(p: &Profile) -> TlsMode {
     TlsMode::parse(&p.sslmode).unwrap_or_default()
 }
 
-/// TLS regime of the profile (§12), for the drivers' connector.
+/// TLS regime of the profile (§12), for the drivers' connector. `~/` in
+/// the CA path as in the SSH key path: the field is typed by hand too.
 pub fn tls_options(p: &Profile, tunneled: bool) -> TlsOptions {
     TlsOptions {
         mode: tls_mode(p),
@@ -792,7 +793,7 @@ pub fn tls_options(p: &Profile, tunneled: bool) -> TlsOptions {
             .ssl_root_cert
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-            .map(std::path::PathBuf::from),
+            .map(crate::expand_home),
         // SSH tunnel: the TCP points to 127.0.0.1 but the certificate must
         // be verified against the real name.
         tls_server_name: tunneled.then(|| p.host.clone()),

@@ -69,8 +69,9 @@ pub struct PgSession {
     url: String,
     /// TLS connector of the session (`None` = plaintext): cancel, terminate
     /// and every out-of-band connection MUST use it — opening them in
-    /// plaintext on a TLS profile would be a silent downgrade (§12).
-    tls: Option<MakeRustlsConnect>,
+    /// plaintext on a TLS profile would be a silent downgrade (§12). It also
+    /// remembers the server certificate (§12.2).
+    tls: Option<tls::Connector>,
 }
 
 impl PgSession {
@@ -87,7 +88,9 @@ impl PgSession {
     /// connect fails.
     pub async fn connect(url: &str, tls_opts: &TlsOptions) -> Result<PgSession, PgError> {
         match tls::make_connector(tls_opts)? {
-            Some(connector) => Self::connect_inner(url, connector.clone(), Some(connector)).await,
+            Some(connector) => {
+                Self::connect_inner(url, connector.make.clone(), Some(connector)).await
+            }
             None => Self::connect_inner(url, NoTls, None).await,
         }
     }
@@ -95,7 +98,7 @@ impl PgSession {
     async fn connect_inner<T>(
         url: &str,
         connector: T,
-        tls: Option<MakeRustlsConnect>,
+        tls: Option<tls::Connector>,
     ) -> Result<PgSession, PgError>
     where
         T: MakeTlsConnect<Socket>,
@@ -160,7 +163,19 @@ impl PgSession {
     /// The session's TLS connector, for the out-of-band connections opened
     /// from outside (cancel in the registry, §7.1).
     pub fn tls_connector(&self) -> Option<MakeRustlsConnect> {
-        self.tls.clone()
+        self.tls.as_ref().map(|c| c.make.clone())
+    }
+
+    /// The certificate the server presented at this session's handshake
+    /// (DER), for the UI (§12.2). `None` = plaintext session.
+    pub fn server_cert_der(&self) -> Option<Vec<u8>> {
+        self.tls.as_ref().and_then(|c| c.server_cert_der())
+    }
+
+    /// The session's mode verified the chain: the certificate above is
+    /// trusted, not just seen.
+    pub fn tls_verifies_chain(&self) -> bool {
+        self.tls.as_ref().is_some_and(|c| c.verifies_chain())
     }
 
     /// Empties the queue of the notices received so far, in arrival order.
@@ -181,7 +196,7 @@ impl PgSession {
         // Same TLS as the session (§12): the escalation connection must not
         // degrade to plaintext.
         let start = self.backend_start.as_deref();
-        let terminated = match self.tls.clone() {
+        let terminated = match self.tls_connector() {
             Some(connector) => Self::terminate_with(&self.url, pid, start, connector).await?,
             None => Self::terminate_with(&self.url, pid, start, NoTls).await?,
         };

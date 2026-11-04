@@ -4650,8 +4650,10 @@ async fn mysql_next_page_does_not_repeat_inserted_rows() {
 
 // ------------------------------------------------------------------ TLS (§12)
 
-/// The test PG container has no TLS: `prefer` must try and degrade
-/// to plaintext without the session noticing.
+/// `prefer` takes what the server offers: the plain PG container has no
+/// TLS and the session goes on in plaintext without noticing; the TLS
+/// target (lab CA set) answers with an encrypted channel. Either way the
+/// session reports the truth.
 #[tokio::test]
 async fn tls_prefer_degrades_on_server_without_tls() {
     use alamo_core::tls::{TlsMode, TlsOptions};
@@ -4669,14 +4671,23 @@ async fn tls_prefer_degrades_on_server_without_tls() {
         .execute("SELECT 1".into(), FetchOptions::default(), emit)
         .expect("execution");
     c.done.notified().await;
+    let server_has_tls = std::env::var_os("ALAMO_TEST_TLS_CA").is_some();
+    let info = session.tls_info().await.unwrap();
+    assert_eq!(info.is_some(), server_has_tls, "{info:?}");
+    assert!(!info.is_some_and(|i| i.verified), "prefer never verifies");
 }
 
 /// `require` against a server without TLS: the connect MUST fail — the
-/// plaintext downgrade is exactly what require rules out.
+/// plaintext downgrade is exactly what require rules out. Not applicable to
+/// the TLS target.
 #[tokio::test]
 async fn tls_require_fails_on_server_without_tls() {
     use alamo_core::tls::{TlsMode, TlsOptions};
     let url = require_url!();
+    if std::env::var_os("ALAMO_TEST_TLS_CA").is_some() {
+        eprintln!("skipped: the server has TLS");
+        return;
+    }
     let sep = if url.contains('?') { '&' } else { '?' };
     let url = format!("{url}{sep}sslmode=require");
     let tls = TlsOptions {
@@ -4967,19 +4978,20 @@ async fn pg_safe_literals_with_standard_conforming_strings_off() {
     run_setup(&setup, "DROP TABLE sec_scs").await;
 }
 
-/// The UI indicator asks the channel whether it is encrypted: in plaintext it says
-/// no, with TLS it says yes. The MySQL 8.x and MariaDB 11.x containers of the
-/// matrix turn TLS on by themselves; MariaDB 10.11 and PG of the matrix do not.
+/// The UI asks the channel what protects it: in plaintext `None`, with TLS
+/// the protocol and cipher the server names. The MySQL 8.x and MariaDB 11.x
+/// containers of the matrix turn TLS on by themselves; MariaDB 10.11 and
+/// PG of the plain matrix do not.
 #[tokio::test]
-async fn encrypted_channel_tells_the_truth() {
+async fn tls_info_tells_the_truth() {
     use alamo_core::tls::{TlsMode, TlsOptions};
     if let Some(url) = test_url() {
         let s = Session::connect(&url).await.expect("connection");
-        assert!(!s.channel_encrypted().await.expect("pg_stat_ssl"));
+        assert_eq!(s.tls_info().await.expect("pg_stat_ssl"), None);
     }
     if let Some(url) = mysql_url() {
         let plain = Session::connect(&url).await.expect("connection");
-        assert!(!plain.channel_encrypted().await.unwrap());
+        assert_eq!(plain.tls_info().await.unwrap(), None);
         // MariaDB without certificates (10.11 of the matrix): `require` gets
         // rejected, and rightly so — the encrypted branch is not tested here.
         // `@@have_ssl` only on MariaDB: MySQL 8.4 removed it.
@@ -4997,6 +5009,145 @@ async fn encrypted_channel_tells_the_truth() {
         let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
             .await
             .expect("TLS connection");
-        assert!(s.channel_encrypted().await.unwrap());
+        let info = s.tls_info().await.unwrap().expect("encrypted channel");
+        assert!(
+            info.protocol.as_deref().unwrap_or("").starts_with("TLSv1."),
+            "{info:?}"
+        );
+        assert!(info.cipher.is_some(), "{info:?}");
+        assert!(!info.verified, "require never verifies the server");
     }
+}
+
+/// The lab CA (`cargo xtask test-matrix tls`, `cargo xtask tls-lab`):
+/// the server certificate of the TLS targets is signed by it. `None` =
+/// plain matrix, the verifying tests skip (or fail if required).
+fn lab_ca() -> Option<std::path::PathBuf> {
+    match std::env::var("ALAMO_TEST_TLS_CA") {
+        Ok(p) => Some(p.into()),
+        Err(_) => {
+            skip_or_fail("ALAMO_TEST_TLS_CA");
+            None
+        }
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+/// verify-full with the lab CA on PG: the connection passes and the UI gets
+/// the whole picture — protocol, cipher, the server certificate as the
+/// verifier saw it, verified.
+#[tokio::test]
+async fn tls_verify_full_with_lab_ca_reports_certificate() {
+    use alamo_core::tls::{TlsMode, TlsOptions};
+    let url = require_url!();
+    let Some(ca) = lab_ca() else { return };
+    let tls = TlsOptions {
+        mode: TlsMode::VerifyFull,
+        root_cert: Some(ca),
+        tls_server_name: None,
+    };
+    let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
+        .await
+        .expect("verify-full with the lab CA");
+    let info = s.tls_info().await.unwrap().expect("encrypted channel");
+    assert!(
+        info.protocol.as_deref().unwrap_or("").starts_with("TLSv1."),
+        "{info:?}"
+    );
+    assert!(
+        info.cipher.as_deref().is_some_and(|c| !c.is_empty()),
+        "{info:?}"
+    );
+    assert!(info.verified, "{info:?}");
+    let cert = info.server_cert.expect("server certificate captured");
+    assert!(
+        cert.subject.as_deref().unwrap().contains("CN=localhost"),
+        "{cert:?}"
+    );
+    assert!(
+        cert.issuer.as_deref().unwrap().contains("CN=Alamo Test CA"),
+        "{cert:?}"
+    );
+    assert!(cert.not_before.unwrap() < unix_now(), "{cert:?}");
+    assert!(cert.not_after.unwrap() > unix_now(), "{cert:?}");
+}
+
+/// verify-ca with the lab CA on PG: chain verified, verified for the UI.
+#[tokio::test]
+async fn tls_verify_ca_with_lab_ca() {
+    use alamo_core::tls::{TlsMode, TlsOptions};
+    let url = require_url!();
+    let Some(ca) = lab_ca() else { return };
+    let tls = TlsOptions {
+        mode: TlsMode::VerifyCa,
+        root_cert: Some(ca),
+        tls_server_name: None,
+    };
+    let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
+        .await
+        .expect("verify-ca with the lab CA");
+    let info = s.tls_info().await.unwrap().expect("encrypted channel");
+    assert!(info.verified, "{info:?}");
+    assert!(info.server_cert.is_some(), "{info:?}");
+}
+
+/// verify-full without the lab CA: the system roots do not know the lab,
+/// the connection is refused — not degraded, not "verified".
+#[tokio::test]
+async fn tls_verify_full_without_lab_ca_is_refused() {
+    use alamo_core::tls::{TlsMode, TlsOptions};
+    let url = require_url!();
+    if lab_ca().is_none() {
+        return;
+    }
+    let tls = TlsOptions {
+        mode: TlsMode::VerifyFull,
+        root_cert: None,
+        tls_server_name: None,
+    };
+    let err = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
+        .await
+        .err()
+        .expect("unknown CA must be refused");
+    assert!(err.message.contains("UnknownIssuer"), "{}", err.message);
+}
+
+/// verify-full with the lab CA on MySQL/MariaDB: encrypted and verified,
+/// protocol, cipher and validity from the server; subject and issuer are
+/// not available there, and the UI says so.
+#[tokio::test]
+async fn tls_verify_full_with_lab_ca_reports_cipher_and_validity() {
+    use alamo_core::tls::{TlsMode, TlsOptions};
+    let url = require_mysql!();
+    let Some(ca) = lab_ca() else { return };
+    let tls = TlsOptions {
+        mode: TlsMode::VerifyFull,
+        root_cert: Some(ca),
+        tls_server_name: None,
+    };
+    let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
+        .await
+        .expect("verify-full with the lab CA");
+    let info = s.tls_info().await.unwrap().expect("encrypted channel");
+    assert!(
+        info.protocol.as_deref().unwrap_or("").starts_with("TLSv1."),
+        "{info:?}"
+    );
+    assert!(
+        info.cipher.as_deref().is_some_and(|c| !c.is_empty()),
+        "{info:?}"
+    );
+    assert!(info.verified, "{info:?}");
+    let cert = info
+        .server_cert
+        .expect("validity from the status variables");
+    assert_eq!((&cert.subject, &cert.issuer), (&None, &None), "{cert:?}");
+    assert!(cert.not_before.unwrap() < unix_now(), "{cert:?}");
+    assert!(cert.not_after.unwrap() > unix_now(), "{cert:?}");
 }

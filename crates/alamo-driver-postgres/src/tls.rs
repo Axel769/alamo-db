@@ -2,11 +2,15 @@
 //! `MakeRustlsConnect`. The semantics of the modes are documented in
 //! `alamo_core::tls`; only the translation into a rustls config lives here.
 //!
+//! The connector also keeps the certificate the server presented (§12.2):
+//! tokio-postgres hides the rustls session, but every mode goes through a
+//! verifier of ours, which sees the certificate before deciding.
+//!
 //! Crypto provider: `ring`, passed **explicitly** to every builder — never
 //! the process default, which is global state and panics if two
 //! dependencies install a different one.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
@@ -23,12 +27,41 @@ use alamo_core::tls::{TlsMode, TlsOptions};
 
 use crate::PgError;
 
+/// The certificate the server presented at the last handshake made with
+/// this connector (DER). The cancel/terminate connections reuse the
+/// connector and talk to the same server: their overwrite changes nothing.
+type PeerCertSlot = Arc<Mutex<Option<Vec<u8>>>>;
+
+/// The session's connector plus what its handshakes revealed (§12.2).
+#[derive(Clone)]
+pub struct Connector {
+    pub make: MakeRustlsConnect,
+    mode: TlsMode,
+    peer_cert: PeerCertSlot,
+}
+
+impl Connector {
+    /// `None` = no handshake done yet with this connector.
+    pub fn server_cert_der(&self) -> Option<Vec<u8>> {
+        self.peer_cert
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// The mode verified the chain: the certificate above is trusted, not
+    /// just seen.
+    pub fn verifies_chain(&self) -> bool {
+        self.mode.verifies_chain()
+    }
+}
+
 /// `None` = mode `disable`: connects with `NoTls`.
 ///
 /// Errors are possible only in the verifying modes: `verify-ca` without a
 /// profile CA, unreadable CA or one without certificates, empty system root
 /// store. They fail the connect, never a silent degradation to unverified.
-pub fn make_connector(opts: &TlsOptions) -> Result<Option<MakeRustlsConnect>, PgError> {
+pub fn make_connector(opts: &TlsOptions) -> Result<Option<Connector>, PgError> {
     opts.check().map_err(config_err)?;
     if !opts.mode.wants_tls() {
         return Ok(None);
@@ -37,30 +70,33 @@ pub fn make_connector(opts: &TlsOptions) -> Result<Option<MakeRustlsConnect>, Pg
     let builder = ClientConfig::builder_with_provider(Arc::clone(&provider))
         .with_safe_default_protocol_versions()
         .map_err(|e| config_err(format!("TLS configuration: {e}")))?;
-    let config = if opts.mode.verifies_chain() {
+    let verifier: Arc<dyn ServerCertVerifier> = if opts.mode.verifies_chain() {
         let roots = Arc::new(root_store(opts.root_cert.as_deref())?);
         let webpki = WebPkiServerVerifier::builder_with_provider(roots, provider)
             .build()
             .map_err(|e| config_err(format!("TLS certificate verification: {e}")))?;
         match opts.mode {
-            TlsMode::VerifyFull => builder
-                .dangerous()
-                .with_custom_certificate_verifier(webpki)
-                .with_no_client_auth(),
-            _ => builder
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(NoHostname(webpki)))
-                .with_no_client_auth(),
+            TlsMode::VerifyFull => webpki,
+            _ => Arc::new(NoHostname(webpki)),
         }
     } else {
         // prefer/require: encrypted channel, no server authentication
         // (libpq semantics, see alamo_core::tls).
-        builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
-            .with_no_client_auth()
+        Arc::new(NoVerify(provider))
     };
-    Ok(Some(MakeRustlsConnect::new(config)))
+    let peer_cert = PeerCertSlot::default();
+    let config = builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(Capture {
+            inner: verifier,
+            slot: Arc::clone(&peer_cert),
+        }))
+        .with_no_client_auth();
+    Ok(Some(Connector {
+        make: MakeRustlsConnect::new(config),
+        mode: opts.mode,
+        peer_cert,
+    }))
 }
 
 /// The profile CA (PEM) if present, ONLY that one: a server with an internal
@@ -101,6 +137,51 @@ fn root_store(custom_ca: Option<&std::path::Path>) -> Result<RootCertStore, PgEr
 
 fn config_err(msg: String) -> PgError {
     PgError::Db(Box::new(DbError::internal(msg)))
+}
+
+/// Keeps the server certificate, then lets the mode's verifier decide: the
+/// capture is what the UI shows (§12.2), the decision stays the inner one's.
+#[derive(Debug)]
+struct Capture {
+    inner: Arc<dyn ServerCertVerifier>,
+    slot: PeerCertSlot,
+}
+
+impl ServerCertVerifier for Capture {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        *self.slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(end_entity.to_vec());
+        self.inner
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
 }
 
 /// Encrypted channel without server authentication (`prefer`/`require`):
@@ -241,5 +322,24 @@ mod tests {
             tls_server_name: None,
         };
         assert!(make_connector(&opts).is_err());
+    }
+
+    /// The capture happens before the inner verdict and keeps the DER as
+    /// presented: what the UI shows is the real certificate, not a copy
+    /// re-encoded by us.
+    #[test]
+    fn capture_keeps_the_presented_certificate() {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let slot = PeerCertSlot::default();
+        let capture = Capture {
+            inner: Arc::new(NoVerify(provider)),
+            slot: Arc::clone(&slot),
+        };
+        let der = CertificateDer::from(vec![0x30, 0x03, 0x02, 0x01, 0x07]);
+        let name = ServerName::try_from("db.example").unwrap();
+        capture
+            .verify_server_cert(&der, &[], &name, &[], UnixTime::now())
+            .expect("NoVerify accepts anything");
+        assert_eq!(slot.lock().unwrap().as_deref(), Some(der.as_ref()));
     }
 }

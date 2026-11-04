@@ -336,14 +336,60 @@ struct ConnectOut {
     one_db_per_conn: bool,
 }
 
-/// What really protects the open connection, for the UI indicator: `prefer`
+/// What really protects the open connection, for the UI (§12.2): `prefer`
 /// may have fallen back to clear text, `require` encrypts without knowing
-/// who it is talking to.
+/// who it is talking to. Every field beyond `encrypted` is as measured on
+/// the session; `None` = the engine cannot tell.
 #[derive(Serialize)]
 struct Security {
     encrypted: bool,
     /// Server certificate verified (verify-ca/verify-full).
     verified: bool,
+    protocol: Option<String>,
+    cipher: Option<String>,
+    cert: Option<CertOut>,
+}
+
+impl From<Option<alamo_core::tls::TlsInfo>> for Security {
+    fn from(info: Option<alamo_core::tls::TlsInfo>) -> Security {
+        match info {
+            None => Security {
+                encrypted: false,
+                verified: false,
+                protocol: None,
+                cipher: None,
+                cert: None,
+            },
+            Some(i) => Security {
+                encrypted: true,
+                verified: i.verified,
+                protocol: i.protocol,
+                cipher: i.cipher,
+                cert: i.server_cert.map(CertOut::from),
+            },
+        }
+    }
+}
+
+/// A certificate as the UI shows it: the server's, or the profile's root
+/// CA inspected in the dialog. Dates in unix seconds.
+#[derive(Serialize)]
+struct CertOut {
+    subject: Option<String>,
+    issuer: Option<String>,
+    not_before: Option<i64>,
+    not_after: Option<i64>,
+}
+
+impl From<alamo_core::tls::CertSummary> for CertOut {
+    fn from(c: alamo_core::tls::CertSummary) -> CertOut {
+        CertOut {
+            subject: c.subject,
+            issuer: c.issuer,
+            not_before: c.not_before,
+            not_after: c.not_after,
+        }
+    }
 }
 
 /// SSH tunnel of a connection, with what is needed to rebuild it if it drops
@@ -602,6 +648,9 @@ struct TestOut {
     /// Current database as seen by the server once connected.
     database: Option<String>,
     elapsed_ms: u64,
+    /// What the channel negotiated (§12.2): the dialog shows it next to
+    /// the outcome, so a profile is judged before it is used.
+    security: Security,
 }
 
 /// "Test connection": opens (tunnel, TLS, authentication), runs a real
@@ -622,12 +671,14 @@ async fn test_profile(
         .current_database()
         .await
         .map_err(|e| ErrorOut::from(&*e))?;
+    let security = security(&opened.session).await;
     // Explicit drop: session first, then the tunnel that carries it.
     drop(opened.session);
     drop(opened.tunnel);
     Ok(TestOut {
         database,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        security,
     })
 }
 
@@ -726,7 +777,7 @@ async fn connect_profile(
         eprintln!("keychain (profile {id}): {e}");
     }
     let session = state.session(conn_id).map_err(internal)?;
-    let security = security(&session, &profile).await;
+    let security = security(&session).await;
     let db = locked(&db.0);
     let _ = storage::profile_touch(&db, id);
     Ok(ConnectOut {
@@ -739,14 +790,8 @@ async fn connect_profile(
 
 /// What protects the channel, measured on the open session. If the server
 /// does not answer the question, better "not encrypted" than a false padlock.
-async fn security(session: &Session, profile: &storage::Profile) -> Security {
-    let encrypted = session.channel_encrypted().await.unwrap_or(false);
-    let verified = encrypted
-        && alamo_core::tls::TlsMode::parse(&profile.sslmode).is_some_and(|m| m.verifies_chain());
-    Security {
-        encrypted,
-        verified,
-    }
+async fn security(session: &Session) -> Security {
+    Security::from(session.tls_info().await.unwrap_or(None))
 }
 
 /// Databases of the server (connection page, tree), through the profile's
@@ -821,7 +866,7 @@ async fn open_database(
     };
     profile.database = db;
     let session = state.session(id).map_err(internal)?;
-    let security = security(&session, &profile).await;
+    let security = security(&session).await;
     Ok(ConnectOut {
         conn_id: id,
         profile,
@@ -1179,6 +1224,47 @@ struct ImportPreviewOut {
     rows: Vec<transfer::ImportRow>,
 }
 
+/// Native "open file" dialog, Rust side only (no JS binding, see the plugin
+/// setup). `None` = cancelled. The e2e build takes the path queued by
+/// `e2e_next_pick` instead of opening anything.
+async fn pick_file(
+    app: &AppHandle,
+    filter_name: &str,
+    extensions: &[&str],
+) -> Result<Option<std::path::PathBuf>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    #[cfg(feature = "e2e")]
+    if let Some(p) = e2e::take_pick() {
+        return Ok(Some(p));
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter(filter_name, extensions)
+        .pick_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Ok(Some(picked)) = rx.await else {
+        return Ok(None);
+    };
+    picked.into_path().map(Some).map_err(|e| e.to_string())
+}
+
+/// "Browse…" of the profile's root CA (§12.2). `None` = cancelled.
+#[tauri::command]
+async fn pick_root_cert(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(pick_file(&app, "PEM certificate", &["pem", "crt", "cer"])
+        .await?
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Subject, issuer and validity of the profile's root CA, shown under the
+/// field as soon as it is filled: a wrong file is found before connecting.
+#[tauri::command]
+fn inspect_root_cert(path: String) -> Result<CertOut, String> {
+    alamo_session::x509::inspect_pem_file(&expand_home(&path)).map(CertOut::from)
+}
+
 /// First half of the import: native open dialog, read, checks and preview.
 /// Writes nothing. `None` = cancelled by the user.
 #[tauri::command]
@@ -1187,26 +1273,8 @@ async fn connections_import_open(
     state: State<'_, AppState>,
     db: State<'_, Db>,
 ) -> Result<Option<ImportPreviewOut>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    #[cfg(feature = "e2e")]
-    let chosen = e2e::take_pick();
-    #[cfg(not(feature = "e2e"))]
-    let chosen: Option<std::path::PathBuf> = None;
-    let path = match chosen {
-        Some(p) => p,
-        None => {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            app.dialog()
-                .file()
-                .add_filter("JSON", &["json"])
-                .pick_file(move |p| {
-                    let _ = tx.send(p);
-                });
-            let Ok(Some(picked)) = rx.await else {
-                return Ok(None);
-            };
-            picked.into_path().map_err(|e| e.to_string())?
-        }
+    let Some(path) = pick_file(&app, "JSON", &["json"]).await? else {
+        return Ok(None);
     };
     let len = std::fs::metadata(&path)
         .map_err(|e| format!("reading {}: {e}", path.display()))?
@@ -2914,6 +2982,8 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             ssh_profile_host_key_trust,
             connections_export,
             connections_import_open,
+            pick_root_cert,
+            inspect_root_cert,
             connections_import_apply,
             ssh_host_key_trust,
             autosave_get,

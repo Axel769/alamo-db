@@ -129,11 +129,13 @@ dependencies = [
  "alamo-driver-mysql",
  "alamo-driver-postgres",
  "futures-util",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "x509-cert",
 ]
 
 [[package]]

@@ -18,6 +18,10 @@ futures-util = { workspace = true, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.151"
 tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+# Certificate summaries (§12.2): both already in the tree through
+# tokio-postgres-rustls, no new crate.
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+rustls-pki-types = { version = "1", features = ["std"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

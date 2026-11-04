@@ -597,6 +597,57 @@ async fn tls_require_establishes_encrypted_channel() {
     assert_eq!(s.tls_options().mode, TlsMode::Require);
 }
 
+/// What the server reports about the channel (§12.2): with `require` the
+/// status variables name protocol and cipher, and the certificate's
+/// validity is a real window around now.
+#[tokio::test]
+async fn tls_status_reports_the_channel() {
+    use alamo_core::tls::{TlsMode, TlsOptions};
+    let url = require_url!(mysql_url(), MYSQL_VAR);
+    let opts = TlsOptions {
+        mode: TlsMode::Require,
+        root_cert: None,
+        tls_server_name: None,
+    };
+    let mut s = MySession::connect(&url, &opts)
+        .await
+        .expect("TLS require connection");
+    let status = alamo_driver_mysql::tls_status(&mut s.conn)
+        .await
+        .expect("SHOW SESSION STATUS")
+        .expect("encrypted session");
+    assert!(
+        status
+            .version
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("TLSv1."),
+        "{status:?}"
+    );
+    assert_eq!(
+        status.cipher.as_deref(),
+        Some(ssl_cipher(&mut s).await.as_str())
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!(
+        status.not_before.unwrap() < now && status.not_after.unwrap() > now,
+        "{status:?}"
+    );
+
+    let mut plain = MySession::connect_plain(&url)
+        .await
+        .expect("plain connection");
+    assert_eq!(
+        alamo_driver_mysql::tls_status(&mut plain.conn)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
 /// `verify-full` against the container's self-signed certificate: the chain
 /// leads to no trusted root, the connect MUST fail — never a silent
 /// downgrade to unverified.

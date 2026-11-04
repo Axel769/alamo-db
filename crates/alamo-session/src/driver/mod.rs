@@ -23,7 +23,7 @@ use alamo_core::schema_info::{
     ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats,
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
-use alamo_core::tls::{TlsMode, TlsOptions};
+use alamo_core::tls::{TlsInfo, TlsMode, TlsOptions};
 use futures_util::future::BoxFuture;
 
 pub(crate) use pg::PgConn;
@@ -200,9 +200,10 @@ pub trait Connection: Send + Sync + 'static {
     /// server, a net even for statements the classifier cannot read.
     fn set_session_read_only(&self) -> BoxFuture<'_, DbResult<()>>;
 
-    /// Is the channel to the server encrypted, after a possible downgrade
-    /// of `prefer` (§12)?
-    fn channel_encrypted(&self) -> BoxFuture<'_, DbResult<bool>>;
+    /// What protects the channel, measured on the connection (§12.2):
+    /// `None` = plaintext, after a possible downgrade of `prefer`. Fields the
+    /// engine cannot give stay `None` inside.
+    fn tls_info(&self) -> BoxFuture<'_, DbResult<Option<TlsInfo>>>;
 
     /// READ ONLY transaction around a read-only batch, called only when
     /// `Capabilities::read_only_txn` is on.
