@@ -476,14 +476,16 @@ async fn open_profile(
             storage::ssh_host_key_get(&db, sid).map_err(|e| internal(e.to_string()))?
         };
         let cfg = alamo_tunnel::TunnelConfig {
-            ssh_host: sp.host.clone(),
-            ssh_port: sp.port,
-            ssh_user: sp.username.clone(),
-            auth,
+            ssh: alamo_tunnel::SshEndpoint {
+                host: sp.host.clone(),
+                port: sp.port,
+                user: sp.username.clone(),
+                auth,
+                known_hosts: None,
+                trusted_key,
+            },
             target_host: profile.host.clone(),
             target_port: profile.port,
-            known_hosts: None,
-            trusted_key,
         };
         let t = alamo_tunnel::Tunnel::open(cfg.clone())
             .await

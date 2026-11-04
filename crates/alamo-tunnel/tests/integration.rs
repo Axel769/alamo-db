@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use alamo_tunnel::{Tunnel, TunnelAuth, TunnelConfig, TunnelError};
+use alamo_tunnel::{probe, SshEndpoint, Tunnel, TunnelAuth, TunnelConfig, TunnelError};
 use russh::server::{self, Auth, Msg, Session};
 use russh::Channel;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -137,14 +137,16 @@ async fn tunnel_carries_bytes_back_and_forth() {
     let echo_port = spawn_echo().await;
     let (ssh_port, key) = spawn_sshd().await;
     let tunnel = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(known_hosts_file("echo", None)),
+            trusted_key: Some(key.to_openssh().unwrap()),
+        },
         target_host: "127.0.0.1".into(),
         target_port: echo_port,
-        known_hosts: Some(known_hosts_file("echo", None)),
-        trusted_key: Some(key.to_openssh().unwrap()),
     })
     .await
     .expect("opening tunnel");
@@ -183,17 +185,19 @@ async fn rsa_pem_pkcs1_key_authenticates() {
     std::fs::write(&key_path, pem.as_bytes()).unwrap();
 
     let tunnel = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Key {
-            path: key_path.clone(),
-            passphrase: None,
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Key {
+                path: key_path.clone(),
+                passphrase: None,
+            },
+            known_hosts: Some(known_hosts_file("rsa", None)),
+            trusted_key: Some(host_key.to_openssh().unwrap()),
         },
         target_host: "127.0.0.1".into(),
         target_port: echo_port,
-        known_hosts: Some(known_hosts_file("rsa", None)),
-        trusted_key: Some(host_key.to_openssh().unwrap()),
     })
     .await;
     let _ = std::fs::remove_file(&key_path);
@@ -212,14 +216,16 @@ async fn rsa_pem_pkcs1_key_authenticates() {
 async fn wrong_credentials_auth_error() {
     let (ssh_port, key) = spawn_sshd().await;
     let err = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password("wrong".into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password("wrong".into()),
+            known_hosts: Some(known_hosts_file("auth", None)),
+            trusted_key: Some(key.to_openssh().unwrap()),
+        },
         target_host: "127.0.0.1".into(),
         target_port: 1,
-        known_hosts: Some(known_hosts_file("auth", None)),
-        trusted_key: Some(key.to_openssh().unwrap()),
     })
     .await
     .err()
@@ -233,14 +239,16 @@ async fn drop_closes_the_listener() {
     let echo_port = spawn_echo().await;
     let (ssh_port, key) = spawn_sshd().await;
     let tunnel = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(known_hosts_file("echo", None)),
+            trusted_key: Some(key.to_openssh().unwrap()),
+        },
         target_host: "127.0.0.1".into(),
         target_port: echo_port,
-        known_hosts: Some(known_hosts_file("echo", None)),
-        trusted_key: Some(key.to_openssh().unwrap()),
     })
     .await
     .expect("opening tunnel");
@@ -264,14 +272,16 @@ async fn drop_closes_forwarded_connections() {
     let echo_port = spawn_echo().await;
     let (ssh_port, key) = spawn_sshd().await;
     let tunnel = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(known_hosts_file("forwarded", None)),
+            trusted_key: Some(key.to_openssh().unwrap()),
+        },
         target_host: "127.0.0.1".into(),
         target_port: echo_port,
-        known_hosts: Some(known_hosts_file("forwarded", None)),
-        trusted_key: Some(key.to_openssh().unwrap()),
     })
     .await
     .expect("opening tunnel");
@@ -298,14 +308,16 @@ async fn reopened_on_the_same_port_after_drop() {
     let echo_port = spawn_echo().await;
     let (ssh_port, key) = spawn_sshd().await;
     let cfg = TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(known_hosts_file("echo", None)),
+            trusted_key: Some(key.to_openssh().unwrap()),
+        },
         target_host: "127.0.0.1".into(),
         target_port: echo_port,
-        known_hosts: Some(known_hosts_file("echo", None)),
-        trusted_key: Some(key.to_openssh().unwrap()),
     };
     let tunnel = Tunnel::open(cfg.clone()).await.expect("opening tunnel");
     assert!(!tunnel.is_closed());
@@ -331,14 +343,16 @@ async fn registered_matching_host_key_passes() {
     let (ssh_port, key) = spawn_sshd().await;
     let kh = known_hosts_file("same", Some(known_hosts_line(ssh_port, &key)));
     let tunnel = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(kh.clone()),
+            trusted_key: None,
+        },
         target_host: "127.0.0.1".into(),
         target_port: echo_port,
-        known_hosts: Some(kh.clone()),
-        trusted_key: None,
     })
     .await;
     let _ = std::fs::remove_file(&kh);
@@ -357,14 +371,16 @@ async fn changed_host_key_refused() {
         Some(known_hosts_line(ssh_port, other.public_key())),
     );
     let err = Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(kh.clone()),
+            trusted_key: None,
+        },
         target_host: "127.0.0.1".into(),
         target_port: 1,
-        known_hosts: Some(kh.clone()),
-        trusted_key: None,
     })
     .await
     .err();
@@ -384,14 +400,16 @@ async fn open_with(
     trusted_key: Option<String>,
 ) -> Result<Tunnel, TunnelError> {
     Tunnel::open(TunnelConfig {
-        ssh_host: "127.0.0.1".into(),
-        ssh_port,
-        ssh_user: USER.into(),
-        auth: TunnelAuth::Password(PASSWORD.into()),
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(known_hosts),
+            trusted_key,
+        },
         target_host: "127.0.0.1".into(),
         target_port: 1,
-        known_hosts: Some(known_hosts),
-        trusted_key,
     })
     .await
 }
@@ -485,4 +503,52 @@ async fn different_saved_fingerprint_refused() {
         matches!(&err, TunnelError::HostKeyChanged { source } if source.contains("Alamo")),
         "{err:?}"
     );
+}
+
+/// "Test tunnel": the bastion accepts us, nothing is forwarded, and the
+/// same answers as the tunnel when it does not (credentials, host key).
+#[tokio::test]
+async fn probe_answers_like_the_tunnel() {
+    let (ssh_port, key) = spawn_sshd().await;
+    let endpoint = |auth: TunnelAuth, trusted_key: Option<String>| SshEndpoint {
+        host: "127.0.0.1".into(),
+        port: ssh_port,
+        user: USER.into(),
+        auth,
+        known_hosts: Some(known_hosts_file("probe", None)),
+        trusted_key,
+    };
+    let trusted = Some(key.to_openssh().unwrap());
+    probe(&endpoint(
+        TunnelAuth::Password(PASSWORD.into()),
+        trusted.clone(),
+    ))
+    .await
+    .expect("probe");
+    let err = probe(&endpoint(TunnelAuth::Password("wrong".into()), trusted))
+        .await
+        .expect_err("auth should have failed");
+    assert!(matches!(err, TunnelError::Auth(_)), "{err:?}");
+    let err = probe(&endpoint(TunnelAuth::Password(PASSWORD.into()), None))
+        .await
+        .expect_err("never-seen host should be refused");
+    assert!(matches!(err, TunnelError::HostKeyUnknown { .. }), "{err:?}");
+}
+
+#[test]
+fn fingerprint_of_saved_key() {
+    let key =
+        russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).unwrap();
+    let public = key.public_key();
+    let openssh = public.to_openssh().unwrap();
+    assert_eq!(
+        alamo_tunnel::fingerprint_of(&openssh).as_deref(),
+        Some(
+            public
+                .fingerprint(russh::keys::HashAlg::Sha256)
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(alamo_tunnel::fingerprint_of("not a key"), None);
 }

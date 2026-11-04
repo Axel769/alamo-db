@@ -123,16 +123,14 @@ pub enum TunnelAuth {
     },
 }
 
+/// The bastion: where it is, as whom to log in, how to trust its key.
+/// Credentials come from the caller (dialog or keychain, §12).
 #[derive(Clone)]
-pub struct TunnelConfig {
-    pub ssh_host: String,
-    pub ssh_port: u16,
-    pub ssh_user: String,
+pub struct SshEndpoint {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
     pub auth: TunnelAuth,
-    /// The database as the BASTION sees it: name resolution happens on the
-    /// other side of the tunnel.
-    pub target_host: String,
-    pub target_port: u16,
     /// `known_hosts` file for host key verification. `None` =
     /// `~/.ssh/known_hosts`, the one the app uses; an explicit path is for
     /// tests, which must not depend on the user's file.
@@ -141,6 +139,67 @@ pub struct TunnelConfig {
     /// `ssh-ed25519 AAAA…`), saved with the SSH profile. Worth as much as a
     /// `known_hosts` line.
     pub trusted_key: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct TunnelConfig {
+    pub ssh: SshEndpoint,
+    /// The database as the BASTION sees it: name resolution happens on the
+    /// other side of the tunnel.
+    pub target_host: String,
+    pub target_port: u16,
+}
+
+/// Fingerprint (`SHA256:…`, as `ssh-keygen -l`) of a key in OpenSSH format;
+/// `None` if the text is not a key. For showing the saved bastion key.
+pub fn fingerprint_of(openssh: &str) -> Option<String> {
+    ssh_key::PublicKey::from_openssh(openssh)
+        .ok()
+        .map(|k| host_key::fingerprint(&k))
+}
+
+/// "Test tunnel": connects to the bastion, checks its key, authenticates and
+/// disconnects. Says whether the bastion accepts us, without forwarding
+/// anything.
+pub async fn probe(ssh: &SshEndpoint) -> Result<(), TunnelError> {
+    let handle = session(ssh).await?;
+    // Best-effort goodbye: the handshake already answered the question.
+    let _ = handle
+        .disconnect(russh::Disconnect::ByApplication, "", "en")
+        .await;
+    Ok(())
+}
+
+/// Connection to the bastion, host key verified, user authenticated: the
+/// part of the tunnel that can fail for reasons the user can act on.
+async fn session(ssh: &SshEndpoint) -> Result<Handle<HostCheck>, TunnelError> {
+    let config = Arc::new(client::Config {
+        // A tunnel stays up for hours with long silences: the keepalive
+        // prevents NAT/firewall from dropping the idle connection.
+        keepalive_interval: Some(Duration::from_secs(30)),
+        ..Default::default()
+    });
+    // Read BEFORE connecting: an unreadable known_hosts or a broken
+    // saved key stop everything, never "no known host".
+    let known_hosts = match ssh.known_hosts.clone().or_else(default_known_hosts) {
+        Some(path) => host_key::read_known_hosts(&path).map_err(TunnelError::Config)?,
+        None => String::new(),
+    };
+    let pinned = ssh
+        .trusted_key
+        .as_deref()
+        .map(ssh_key::PublicKey::from_openssh)
+        .transpose()
+        .map_err(|e| TunnelError::Config(format!("invalid saved fingerprint: {e}")))?;
+    let checker = HostCheck {
+        host: ssh.host.clone(),
+        port: ssh.port,
+        known_hosts,
+        pinned,
+    };
+    let mut handle = client::connect(config, (ssh.host.as_str(), ssh.port), checker).await?;
+    authenticate(&mut handle, &ssh.user, &ssh.auth).await?;
+    Ok(handle)
 }
 
 /// Active tunnel. Lives as long as the database session that uses it: on
@@ -181,33 +240,7 @@ impl Tunnel {
         cfg: TunnelConfig,
         local_port: Option<u16>,
     ) -> Result<Tunnel, TunnelError> {
-        let config = Arc::new(client::Config {
-            // A tunnel stays up for hours with long silences: the keepalive
-            // prevents NAT/firewall from dropping the idle connection.
-            keepalive_interval: Some(Duration::from_secs(30)),
-            ..Default::default()
-        });
-        // Read BEFORE connecting: an unreadable known_hosts or a broken
-        // saved key stop everything, never "no known host".
-        let known_hosts = match cfg.known_hosts.clone().or_else(default_known_hosts) {
-            Some(path) => host_key::read_known_hosts(&path).map_err(TunnelError::Config)?,
-            None => String::new(),
-        };
-        let pinned = cfg
-            .trusted_key
-            .as_deref()
-            .map(ssh_key::PublicKey::from_openssh)
-            .transpose()
-            .map_err(|e| TunnelError::Config(format!("invalid saved fingerprint: {e}")))?;
-        let checker = HostCheck {
-            host: cfg.ssh_host.clone(),
-            port: cfg.ssh_port,
-            known_hosts,
-            pinned,
-        };
-        let mut handle =
-            client::connect(config, (cfg.ssh_host.as_str(), cfg.ssh_port), checker).await?;
-        authenticate(&mut handle, &cfg.ssh_user, &cfg.auth).await?;
+        let handle = session(&cfg.ssh).await?;
 
         // Random port on loopback: no conflicts, no exposure outside the
         // machine.
