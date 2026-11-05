@@ -113,6 +113,17 @@ setting_enum!(BinaryDisplay {
     Base64 = "base64" => "Base64",
 });
 
+// Copy from the grid (⌘C / Ctrl+C): what goes between the cells.
+setting_enum!(CopySeparator {
+    Tab = "tab" => "Tab",
+    Comma = "comma" => "Comma",
+    Semicolon = "semicolon" => "Semicolon",
+});
+setting_enum!(QuoteMode {
+    Needed = "needed" => "Only when needed",
+    Always = "always" => "Always",
+});
+
 /// Monospace of the editor and the grid: the system's on each platform
 /// (SF Mono, Consolas, DejaVu Sans Mono), the generic family last.
 const MONO: &str = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace";
@@ -245,6 +256,14 @@ settings! {
             "Longer values open in the cell panel. The grid receives at most 4 KB per cell.";
         binary_display: BinaryDisplay = BinaryDisplay::Hex, "Binary values",
             "Copy and export keep the database form (\\x hexadecimal).";
+    }
+    copy: Copy ("Copy") {
+        separator: CopySeparator = CopySeparator::Tab, "Separator between cells (⌘C / Ctrl+C)",
+            "Paste into the grid always reads tabs, as spreadsheets write them.";
+        headers: bool = false, "Column names on the first line",
+            "When more than one cell is copied, also with \"Copy selection as\".";
+        quote: QuoteMode = QuoteMode::Needed, "Quotes around values",
+            "\"Only when needed\": a value with the separator, quotes or a newline.";
     }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";

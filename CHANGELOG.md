@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Settings → Copy: the separator ⌘C (Ctrl+C) puts between the cells (tab, comma or semicolon), the column names as first line when more than one cell is copied, and quotes around every value or only where needed. "Copy selection as" follows the header and quote choices too.
 - Settings → Data: the word shown for NULL, dates and times in ISO or in the language's format, timestamps with time zone in UTC or in this computer's zone, a thousands separator in numbers, how many characters a cell shows before "…" (was fixed at 500) and binary values as hexadecimal or base64. They change what the grid draws, at once; copying, exporting and editing keep the value as the database gives it.
 - Per-connection overrides of the execution settings now survive a change in the settings window: a connection with its own pause or page size kept the global value until a reconnect. The table page size, the idle-rollback message and the DDL confirmation of a connection follow its own values, and the "use the default" line of the connection dialog shows the global value in force, not the built-in one. An appearance or editor change no longer touches the open connections.
 - First start, before any profile: the connections dialog introduces the app with its icon and name in place of the empty list, three pieces in a short cascade; the form on the right is usable at once.

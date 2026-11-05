@@ -22,7 +22,7 @@ import { ColumnOut, DEFAULT_CELL, ExportFormat, ipc, OrderBy, PendingValue, Wind
 import { locale, t } from "./i18n";
 import { BLOCK, cacheFor } from "./rowCache";
 import { NewRowSlot, rowLayout } from "./rowLayout";
-import { pasteValues, toTsv } from "./tsv";
+import { pasteValues, separatorOf, toDelimited } from "./delimited";
 import { tokens } from "./theme";
 import { useSettings } from "./settings";
 import { clampText, DataSettings, displayText, isLong, nullText } from "./display";
@@ -255,6 +255,8 @@ export default function GridView({
   const data = settings.data;
   const loc = locale();
   const nul = nullText(data);
+  // Copy settings (§16): ⌘C separator, quotes and header line.
+  const copy = settings.copy;
 
   // Local sort (decision 10): the permutation lives in Rust, here only the
   // user's choice. `viewRows` is how many rows the view covers — on a still
@@ -1137,11 +1139,11 @@ export default function GridView({
             col_start: r.x,
             col_end: r.x + r.width,
           },
-          { format, headers: false, table_name: exportName ?? "export" }
+          { format, headers: copy.headers, table_name: exportName ?? "export", quote_all: copy.quote === "always" }
         )
         .catch((e) => console.error(e));
     },
-    [connId, resultId, copyRect, layout, displayRows, exportName]
+    [connId, resultId, copyRect, layout, displayRows, exportName, copy]
   );
 
   // Text of the cells of a rectangle, SYNCHRONOUS from the cache: the
@@ -1189,18 +1191,24 @@ export default function GridView({
   // shows them through `pendingAt`.
   useEffect(() => {
     const focused = () => wrapRef.current?.contains(document.activeElement) === true;
+    // More than one cell: the Copy settings decide separator, quotes and
+    // whether the column names of `cols` open the text.
+    const delimited = (lines: string[][], cols: readonly number[]): string => {
+      if (copy.headers) lines.unshift(cols.map((c) => columns[c].name));
+      return toDelimited(lines, separatorOf(copy), copy.quote === "always");
+    };
     const onCopy = (e: ClipboardEvent) => {
       const cur = selection.current;
       if (!focused() || e.clipboardData === null) return;
       // Whole rows selected from the number (no current cell): all the
-      // columns of each one, one TSV line per row.
+      // columns of each one, one line per row.
       if (!cur && selection.rows.length > 0) {
         const lines: string[][] = [];
         for (const row of selection.rows) {
           lines.push(...cellStrings({ x: 0, y: row, width: columns.length, height: 1 }));
         }
         lastSingleCopy = null;
-        e.clipboardData.setData("text/plain", toTsv(lines));
+        e.clipboardData.setData("text/plain", delimited(lines, columns.map((_, i) => i)));
         e.preventDefault();
         return;
       }
@@ -1216,17 +1224,20 @@ export default function GridView({
           lines.push(cols.map((c, i) => (kept[i] ? cellStrings({ x: c, y: r, width: 1, height: 1 })[0][0] : "")));
         }
         lastSingleCopy = null;
-        e.clipboardData.setData("text/plain", toTsv(lines));
+        e.clipboardData.setData("text/plain", delimited(lines, cols));
         e.preventDefault();
         return;
       }
       if (!cur) return;
       const cells = cellStrings(cur.range);
-      // A single cell: the value as it is, without the TSV quotes (a
-      // multi-line JSON must be pasted elsewhere identical). TSV is only for
-      // rectangles, where tabs and newlines separate the cells.
+      // A single cell: the value as it is, without quotes (a multi-line
+      // JSON must be pasted elsewhere identical). The delimited text is
+      // only for rectangles, where separators and newlines part the cells.
       const single = cells.length === 1 && cells[0].length === 1;
-      const text = single ? cells[0][0] : toTsv(cells);
+      const r = cur.range;
+      const text = single
+        ? cells[0][0]
+        : delimited(cells, Array.from({ length: r.width }, (_, i) => r.x + i));
       lastSingleCopy = single ? text : null;
       e.clipboardData.setData("text/plain", text);
       e.preventDefault();
@@ -1257,7 +1268,7 @@ export default function GridView({
       window.removeEventListener("beforepaste", onBeforePaste);
       window.removeEventListener("paste", onPaste);
     };
-  }, [selection, cellStrings, editable, onPasteCells, pasteAt, columns.length, displayRows, cuts]);
+  }, [selection, cellStrings, editable, onPasteCells, pasteAt, columns, displayRows, cuts, copy]);
 
   return (
     <>

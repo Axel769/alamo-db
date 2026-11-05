@@ -389,6 +389,8 @@ export type ExportOptions = {
   /// TSV/CSV: `'` in front of values Excel would read as a formula.
   /// Absent = on (backend default).
   neutralize_formulas?: boolean;
+  /// TSV/CSV: every field between quotes (the Copy setting). Absent = off.
+  quote_all?: boolean;
 };
 
 export type ExportOut = { path: string; rows: number };

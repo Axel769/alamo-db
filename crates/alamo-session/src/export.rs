@@ -45,25 +45,35 @@ impl ExportFormat {
     }
 }
 
+/// What the caller leaves out takes the `Default` below.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ExportOptions {
     pub format: ExportFormat,
     /// Header row (TSV/CSV only).
-    #[serde(default)]
     pub headers: bool,
     /// Table name for the INSERT format ("schema.table" allowed).
-    #[serde(default)]
     pub table_name: String,
     /// TSV/CSV: a `'` in front of values a spreadsheet would read as a
     /// formula (see `neutralize_formula`). On if the caller says nothing: a
     /// `=HYPERLINK(…)` or a DDE command coming from the database must not
     /// execute when the file is opened.
-    #[serde(default = "yes")]
     pub neutralize_formulas: bool,
+    /// TSV/CSV: every field between quotes, not only the ones that need
+    /// them (the Copy setting of §16).
+    pub quote_all: bool,
 }
 
-fn yes() -> bool {
-    true
+impl Default for ExportOptions {
+    fn default() -> Self {
+        ExportOptions {
+            format: ExportFormat::Csv,
+            headers: false,
+            table_name: String::new(),
+            neutralize_formulas: true,
+            quote_all: false,
+        }
+    }
 }
 
 fn delimited_field(v: &str, neutralize: bool) -> std::borrow::Cow<'_, str> {
@@ -120,7 +130,7 @@ pub fn render(
                     .map(|n| delimited_field(n, neutralize))
                     .collect();
                 let names: Vec<&str> = names.iter().map(AsRef::as_ref).collect();
-                write_delimited_row(out, &names, delim).map_err(io)?;
+                write_delimited_row(out, &names, delim, opts.quote_all).map_err(io)?;
             }
             let mut written = 0u64;
             for_each_row(live, &rows, &cols, |cells| {
@@ -129,7 +139,7 @@ pub fn render(
                     .map(|c| delimited_field(c.as_deref().unwrap_or(""), neutralize))
                     .collect();
                 let fields: Vec<&str> = fields.iter().map(AsRef::as_ref).collect();
-                write_delimited_row(out, &fields, delim)?;
+                write_delimited_row(out, &fields, delim, opts.quote_all)?;
                 written += 1;
                 Ok(())
             })
@@ -246,7 +256,7 @@ pub fn render_script(
                     out.write_all(b"\n").map_err(io)?;
                 }
                 let title = format!("[{}] {label}", item.position);
-                write_delimited_row(out, &[&title], delimiter(opts.format)).map_err(io)?;
+                write_delimited_row(out, &[&title], delimiter(opts.format), false).map_err(io)?;
             }
             ExportFormat::Insert => {
                 if i > 0 {
@@ -430,13 +440,19 @@ fn for_each_row(
 }
 
 /// CSV/TSV quoting: quote only when needed (delimiter, quotes, newline),
-/// with doubled quotes (RFC 4180).
-fn write_delimited_row(out: &mut dyn Write, fields: &[&str], delim: char) -> std::io::Result<()> {
+/// or every field with `quote_all`; doubled quotes inside (RFC 4180).
+fn write_delimited_row(
+    out: &mut dyn Write,
+    fields: &[&str],
+    delim: char,
+    quote_all: bool,
+) -> std::io::Result<()> {
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {
             write!(out, "{delim}")?;
         }
-        if f.contains(delim) || f.contains('"') || f.contains('\n') || f.contains('\r') {
+        if quote_all || f.contains(delim) || f.contains('"') || f.contains('\n') || f.contains('\r')
+        {
             write!(out, "\"{}\"", f.replace('"', "\"\""))?;
         } else {
             out.write_all(f.as_bytes())?;
@@ -517,8 +533,7 @@ mod tests {
         let s = render_str(&ExportOptions {
             format: ExportFormat::Csv,
             headers: true,
-            table_name: String::new(),
-            neutralize_formulas: true,
+            ..Default::default()
         });
         assert_eq!(
             s,
@@ -527,12 +542,24 @@ mod tests {
     }
 
     #[test]
+    fn csv_quote_all_quotes_every_field_and_the_headers() {
+        let s = render_str(&ExportOptions {
+            format: ExportFormat::Csv,
+            headers: true,
+            quote_all: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            s,
+            "\"id\",\"note\"\n\"1\",\"hello, \"\"world\"\"\"\n\"2\",\"\"\n\"3\",\"it's\tand tab\"\n"
+        );
+    }
+
+    #[test]
     fn tsv_quotes_on_tab() {
         let s = render_str(&ExportOptions {
             format: ExportFormat::Tsv,
-            headers: false,
-            table_name: String::new(),
-            neutralize_formulas: true,
+            ..Default::default()
         });
         assert!(s.contains("3\t\"it's\tand tab\""), "{s}");
     }
@@ -541,9 +568,7 @@ mod tests {
     fn json_string_values_and_null() {
         let s = render_str(&ExportOptions {
             format: ExportFormat::Json,
-            headers: false,
-            table_name: String::new(),
-            neutralize_formulas: true,
+            ..Default::default()
         });
         assert!(
             s.starts_with("[\n  {\"id\": \"1\", \"note\": \"hello, \\\"world\\\"\"}"),
@@ -557,9 +582,8 @@ mod tests {
     fn insert_quotes_identifiers_and_literals() {
         let s = render_str(&ExportOptions {
             format: ExportFormat::Insert,
-            headers: false,
             table_name: "public.t".into(),
-            neutralize_formulas: true,
+            ..Default::default()
         });
         assert!(
             s.starts_with("INSERT INTO \"public\".\"t\" (\"id\", \"note\") VALUES"),
@@ -600,8 +624,7 @@ mod tests {
         let opts = ExportOptions {
             format,
             headers: true,
-            table_name: String::new(),
-            neutralize_formulas: true,
+            ..Default::default()
         };
         let mut out = Vec::new();
         let n = render_script(&results, &dialect, &opts, &mut out).unwrap();

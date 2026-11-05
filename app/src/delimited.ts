@@ -1,13 +1,27 @@
-// TSV of the grid clipboard, as Excel writes and reads it: a field with a
-// tab, a newline or quotes goes between quotes, with the inner quotes
-// doubled. Text only: no HTML in either direction (see GridView).
+// Delimited text of the grid clipboard (TSV as Excel writes and reads it,
+// or with the separator of the Copy settings, §16): a field with the
+// separator, a newline or quotes goes between quotes, with the inner quotes
+// doubled; "quote always" quotes every field. Text only: no HTML in either
+// direction (see GridView).
+import { Settings } from "./settingsSchema";
 
-export function toTsv(rows: readonly (readonly string[])[]): string {
+export type CopySettings = Settings["copy"];
+
+const SEPARATORS: Record<CopySettings["separator"], string> = { tab: "\t", comma: ",", semicolon: ";" };
+
+export function separatorOf(copy: CopySettings): string {
+  return SEPARATORS[copy.separator];
+}
+
+export function toDelimited(rows: readonly (readonly string[])[], sep = "\t", quoteAll = false): string {
+  const needs = new RegExp(`[${sep === "\t" ? "\\t" : sep}\\n\\r"]`);
   return rows
-    .map((r) => r.map((f) => (/[\t\n\r"]/.test(f) ? `"${f.replace(/"/g, '""')}"` : f)).join("\t"))
+    .map((r) => r.map((f) => (quoteAll || needs.test(f) ? `"${f.replace(/"/g, '""')}"` : f)).join(sep))
     .join("\n");
 }
 
+/// Tab-separated text as rows: what a spreadsheet, or this grid, puts in
+/// the clipboard.
 export function parseTsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];

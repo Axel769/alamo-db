@@ -40,6 +40,11 @@ export type Settings = {
     max_cell_chars: number;
     binary_display: "hex" | "base64";
   };
+  copy: {
+    separator: "tab" | "comma" | "semicolon";
+    headers: boolean;
+    quote: "needed" | "always";
+  };
   updates: {
     skipped_version: string;
   };
@@ -76,6 +81,9 @@ export type SettingValues = {
   "data.thousands_separator": boolean;
   "data.max_cell_chars": number;
   "data.binary_display": "hex" | "base64";
+  "copy.separator": "tab" | "comma" | "semicolon";
+  "copy.headers": boolean;
+  "copy.quote": "needed" | "always";
   "updates.skipped_version": string;
 };
 
@@ -96,6 +104,7 @@ export const SETTING_CATEGORIES: readonly { id: string; label: string; overridab
   { id: "editor", label: "Editor", overridable: false },
   { id: "execution", label: "Execution", overridable: true },
   { id: "data", label: "Data", overridable: false },
+  { id: "copy", label: "Copy", overridable: false },
   { id: "updates", label: "Updates", overridable: false },
 ];
 
@@ -130,6 +139,9 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "data.thousands_separator", category: "data", kind: { kind: "bool" }, label: "Thousands separator in numbers", help: "Grouped as the language does (1.234.567,89 in Italian); copy and export keep the plain number." },
   { key: "data.max_cell_chars", category: "data", kind: { kind: "int", min: 100, max: 4096 }, label: "Characters shown per cell", help: "Longer values open in the cell panel. The grid receives at most 4 KB per cell." },
   { key: "data.binary_display", category: "data", kind: { kind: "enum", values: ["hex", "base64"], labels: ["Hexadecimal (\\x0aff)", "Base64"] }, label: "Binary values", help: "Copy and export keep the database form (\\x hexadecimal)." },
+  { key: "copy.separator", category: "copy", kind: { kind: "enum", values: ["tab", "comma", "semicolon"], labels: ["Tab", "Comma", "Semicolon"] }, label: "Separator between cells (⌘C / Ctrl+C)", help: "Paste into the grid always reads tabs, as spreadsheets write them." },
+  { key: "copy.headers", category: "copy", kind: { kind: "bool" }, label: "Column names on the first line", help: "When more than one cell is copied, also with \"Copy selection as\"." },
+  { key: "copy.quote", category: "copy", kind: { kind: "enum", values: ["needed", "always"], labels: ["Only when needed", "Always"] }, label: "Quotes around values", help: "\"Only when needed\": a value with the separator, quotes or a newline." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -144,6 +156,11 @@ export const DEFAULTS: Settings = {
     "high_contrast_grid": false,
     "language": "it",
     "theme": "system"
+  },
+  "copy": {
+    "headers": false,
+    "quote": "needed",
+    "separator": "tab"
   },
   "data": {
     "binary_display": "hex",
