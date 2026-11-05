@@ -13,6 +13,9 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Tooltips are the app's own: same look on every platform, after half a second, at once on the next button of a toolbar, hidden on a click or a key; they also open on keyboard focus. The text is the one the hover showed before, now in full lines.
+- Dark theme: red text and borders (errors, Delete, failed statements) are brighter and readable on the dark background.
+- Settings can be opened from the connections dialog (gear in its title): at the first start, before any connection, language and theme are one click away; the settings window sits above the dialog.
 - Same look for every control: one focus ring on every text field and select (settings search, settings values, connection page filter, export and import fields had none or a different one), soft borders everywhere, two shadows for the whole app (menus and windows), 12 px corners on every window, a small dip when a button is pressed, hover on the section tabs of the connection dialog and on the segmented switches, settings categories laid out like the profile list.
 - Tree: a schema with thousands of tables opens in a fraction of the time (3000 tables: 0.2 s instead of 1.2 s) and filters faster, because only the rows in view are drawn; scrolling and expanding a table work as before.
 - A profile name is at most 120 characters: the dialog stops there and an import cuts there.

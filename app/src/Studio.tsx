@@ -1810,8 +1810,6 @@ function StudioInner() {
         />
       )}
 
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
-
       {paletteOpen && (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
@@ -1834,6 +1832,7 @@ function StudioInner() {
         initialProfileId={dialogProfileId}
         onTransfer={setTransfer}
         onManageSsh={(id) => setSshManager({ id })}
+        onSettings={() => setSettingsOpen(true)}
         sshPick={sshPick}
         covered={transfer !== null || sshManager !== null}
         profilesVersion={profilesVersion}
@@ -1895,6 +1894,8 @@ function StudioInner() {
           void queryClient.invalidateQueries({ queryKey: ["profiles"] });
         }}
       />
+      {/* After the connections dialog: opened from it, it must sit above it. */}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
 
       {/* After ConnectDialog: it opens from there too and must sit above it. */}
       {transfer === "export" && <ExportConnectionsDialog onClose={() => setTransfer(null)} />}

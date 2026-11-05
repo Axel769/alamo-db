@@ -43,7 +43,7 @@ body,
 }
 
 .msg-error {
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
   white-space: pre-wrap;
 }
 
@@ -301,12 +301,12 @@ body,
 }
 
 .setting-row input.invalid {
-  border-color: oklch(50% 0.19 25);
+  border-color: var(--ui-danger);
 }
 
 .setting-invalid {
   font-size: 11px;
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
   max-width: 240px;
   text-align: right;
 }
@@ -713,7 +713,7 @@ body,
 
 .tree-note.error,
 .catalog-error-label {
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
 }
 
 /* Catalog read failure (CatalogError): label, advice, actions, details. */
@@ -1195,7 +1195,7 @@ body,
 }
 
 .conn-dot.off {
-  background: oklch(55% 0.19 25);
+  background: var(--ui-danger);
 }
 
 .conn-label {
@@ -2036,7 +2036,7 @@ body,
 }
 
 .script-table tr.failed td {
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
 }
 
 .ddl-pane {
@@ -2146,7 +2146,7 @@ body,
 }
 
 .stmt-tab.failed {
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
 }
 
 .banner {
@@ -2331,7 +2331,7 @@ body,
 }
 
 .btn.danger {
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
 }
 
 .profile-pill {
@@ -2743,7 +2743,7 @@ ul.transfer-hint {
 
 .app-update-error {
   font-size: 13px;
-  color: oklch(50% 0.19 25);
+  color: var(--ui-danger);
 }
 
 /* ------------------------------------------------- close dialog (§9.7.2) */
@@ -2958,8 +2958,8 @@ ul.transfer-hint {
   background: linear-gradient(
     to top right,
     transparent 44%,
-    oklch(55% 0.19 25) 46%,
-    oklch(55% 0.19 25) 54%,
+    var(--ui-danger) 46%,
+    var(--ui-danger) 54%,
     transparent 56%
   );
 }
@@ -3769,8 +3769,8 @@ svg.lucide {
 }
 
 .btn.danger:hover:not(:disabled) {
-  background: color-mix(in oklab, oklch(55% 0.19 25) 14%, var(--cell-panel-bg));
-  border-color: color-mix(in oklab, oklch(55% 0.19 25) 55%, transparent);
+  background: color-mix(in oklab, var(--ui-danger) 14%, var(--cell-panel-bg));
+  border-color: color-mix(in oklab, var(--ui-danger) 55%, transparent);
 }
 
 /* Keyboard focus: always visible, never on mouse click. */
@@ -3948,6 +3948,11 @@ select:focus-visible {
   flex: none;
   padding: 14px 18px;
   font-size: 15px;
+}
+
+.dialog-title-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .dialog-sub {
@@ -4809,27 +4814,27 @@ button.profile-pill:hover {
 /* Delete in the modal: it must be noticed (red background and border),
    without shouting as much as the button that really deletes. */
 .btn.danger.strong {
-  color: oklch(62% 0.2 25);
-  background: color-mix(in oklab, oklch(55% 0.2 25) 14%, var(--cell-panel-bg));
-  border-color: color-mix(in oklab, oklch(55% 0.2 25) 55%, transparent);
+  color: var(--ui-danger);
+  background: color-mix(in oklab, var(--ui-danger) 14%, var(--cell-panel-bg));
+  border-color: color-mix(in oklab, var(--ui-danger) 55%, transparent);
   font-weight: 600;
 }
 
 .btn.danger.strong:hover:not(:disabled) {
-  background: color-mix(in oklab, oklch(55% 0.2 25) 26%, var(--cell-panel-bg));
-  border-color: oklch(55% 0.2 25);
+  background: color-mix(in oklab, var(--ui-danger) 26%, var(--cell-panel-bg));
+  border-color: var(--ui-danger);
 }
 
 /* The button that deletes: solid red, disabled until the name is right. */
 .btn.danger.solid {
   color: #fff;
-  background: oklch(52% 0.2 25);
+  background: var(--ui-danger-bg);
   border-color: transparent;
   font-weight: 600;
 }
 
 .btn.danger.solid:hover:not(:disabled) {
-  background: oklch(58% 0.21 25);
+  background: color-mix(in oklab, var(--ui-danger-bg) 88%, white);
   border-color: transparent;
 }
 
@@ -4853,7 +4858,7 @@ button.profile-pill:hover {
   max-width: 90%;
   padding: 18px;
   background: var(--cell-panel-bg);
-  border: 1px solid color-mix(in oklab, oklch(55% 0.2 25) 60%, transparent);
+  border: 1px solid color-mix(in oklab, var(--ui-danger) 60%, transparent);
   border-radius: 10px;
   box-shadow: var(--shadow-modal);
 }
@@ -4864,7 +4869,7 @@ button.profile-pill:hover {
   gap: 8px;
   font-size: 15px;
   font-weight: 600;
-  color: oklch(64% 0.2 25);
+  color: var(--ui-danger);
 }
 
 .confirm-list {
@@ -4901,8 +4906,8 @@ button.profile-pill:hover {
 }
 
 .confirm-label input:focus {
-  border-color: oklch(58% 0.2 25);
-  box-shadow: 0 0 0 3px color-mix(in oklab, oklch(55% 0.2 25) 22%, transparent);
+  border-color: var(--ui-danger);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-danger) 22%, transparent);
 }
 
 .confirm-actions {
@@ -5459,6 +5464,50 @@ button.profile-pill:hover {
   overflow-wrap: anywhere;
 }
 
+/* ---------------------------------------------------------- tooltips */
+
+/* The app's own tooltip (tooltip.ts): panel language, above everything,
+   scales from the edge it hangs from. */
+.tip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 360px;
+  padding: 5px 8px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 6px;
+  background: var(--cell-panel-bg);
+  color: var(--cell-fg);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.97);
+  transition:
+    opacity 125ms var(--ease-out),
+    transform 125ms var(--ease-out);
+}
+
+.tip[data-side="below"] {
+  transform-origin: top center;
+}
+
+.tip[data-side="above"] {
+  transform-origin: bottom center;
+}
+
+.tip[data-open] {
+  opacity: 1;
+  transform: none;
+}
+
+/* The second tooltip of a toolbar comes at once, as the first one was read. */
+.tip[data-instant] {
+  transition-duration: 0ms;
+}
+
 /* ------------------------------------------------------- reduced motion */
 
 /* Drop movement, keep the 120 ms colour fades (they are feedback, not
@@ -5481,5 +5530,8 @@ button.profile-pill:hover {
   }
   .dialog {
     animation-name: overlay-in; /* only the fade, no scale */
+  }
+  .tip {
+    transform: none;
   }
 }

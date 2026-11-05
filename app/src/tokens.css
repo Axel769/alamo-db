@@ -29,6 +29,10 @@
   --cell-focus-ring-inner: oklch(97% 0 0);
   --cell-focus-ring-outer: oklch(12% 0 0);
   --cell-prod: oklch(50% 0.18 340);
+  /* Danger (errors, delete): text and borders, and the solid button. In
+     the dark theme the text one is lifted, a 50% red on black is not read. */
+  --ui-danger: oklch(50% 0.19 25);
+  --ui-danger-bg: oklch(52% 0.2 25);
   /* SQL syntax in the editor (editor.ts). Same hues as the types, so
      keywords / numbers / strings echo the grid. */
   --syn-keyword: oklch(44% 0.17 265);
@@ -65,6 +69,8 @@
   --cell-panel-bg: oklch(18.5% 0.01 260);
   --cell-header-bg: oklch(21% 0.011 260);
   --cell-prod: oklch(72% 0.16 340);
+  --ui-danger: oklch(74% 0.17 25);
+  --ui-danger-bg: oklch(58% 0.2 25);
   --syn-keyword: oklch(78% 0.12 265);
   --syn-type: oklch(78% 0.12 60);
   --syn-builtin: oklch(78% 0.12 215);

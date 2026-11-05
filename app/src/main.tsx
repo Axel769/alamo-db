@@ -5,6 +5,7 @@ import "./tokens.css";
 import "./styles.css";
 import { applyTheme } from "./theme";
 import { bootSettings } from "./settings";
+import { installTooltips } from "./tooltip";
 
 // macOS: integrated title bar (tauri.conf.json, titleBarStyle
 // Overlay) — the toolbar leaves room for the window buttons.
@@ -38,6 +39,7 @@ async function boot() {
     }
   }
   applyTheme();
+  installTooltips();
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <App />

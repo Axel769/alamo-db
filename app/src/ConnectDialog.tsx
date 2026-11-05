@@ -6,7 +6,7 @@ import { t, tMsg } from "./i18n";
 import { CertOut, ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut, TestOut } from "./ipc";
 import { SshPick, sshAuthLabel, sshSummary } from "./SshProfilesDialog";
 import { connInitials } from "./ConnectionPage";
-import { IconLock, IconLockOpen, IconPlus, IconShieldCheck, IconTrash, IconX } from "./icons";
+import { IconLock, IconLockOpen, IconPlus, IconSettings, IconShieldCheck, IconTrash, IconX } from "./icons";
 import { TLS_MODE_ORDER, TlsLevel, tlsMode, verifiesChain } from "./tlsModes";
 import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
@@ -74,6 +74,10 @@ type Props = {
   /// The SSH profiles manager (§12): bastions are created, edited and
   /// deleted there; the SSH tab here only picks one.
   onManageSsh: (id: SshPick) => void;
+  /// Settings from here too: at the first start this dialog covers the
+  /// gear of the activity bar, and language or theme are wanted before any
+  /// connection.
+  onSettings: () => void;
   /// The profile picked in the manager at its closing (`v` grows every
   /// time): it goes into the tab if the profile is being edited.
   sshPick: { id: number | null; v: number } | null;
@@ -93,6 +97,7 @@ export default function ConnectDialog({
   covered,
   profilesVersion,
   onManageSsh,
+  onSettings,
   sshPick,
 }: Props) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -509,11 +514,16 @@ export default function ConnectDialog({
               {connected ? t("open another connection or edit a profile") : t("pick a profile to start")}
             </small>
           </span>
-          {connected && (
-            <button className="btn small dialog-close" onClick={onClose}>
-              <IconX />
+          <div className="dialog-title-actions">
+            <button className="btn small" title={t("Settings")} onClick={onSettings}>
+              <IconSettings />
             </button>
-          )}
+            {connected && (
+              <button className="btn small dialog-close" onClick={onClose}>
+                <IconX />
+              </button>
+            )}
+          </div>
         </div>
         <div className="dialog-body">
           <div className="profile-list">
