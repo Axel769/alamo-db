@@ -830,6 +830,8 @@ body,
   right: 4px;
   z-index: 30;
   min-width: 220px;
+  /* Ten 64-character names would widen it to most of the window. */
+  max-width: min(480px, 60vw);
   max-height: 50vh;
   overflow-y: auto;
   padding: 4px;
@@ -2188,6 +2190,17 @@ body,
   border-bottom: 1px solid var(--cell-divider);
   cursor: pointer;
   font-size: 13px;
+  /* A 2 KB message (a trigger's RAISE, a long DETAIL) must not run past
+     the pane: it shrinks to the pane and scrolls, and leaves half of it to
+     the grid when there is one. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.results-pane:has(.grid-host > *) .error-panel {
+  max-height: 50%;
 }
 
 .error-head {
@@ -2966,6 +2979,7 @@ ul.transfer-hint {
 
 .inspect-panel {
   position: relative;
+  container: inspect / inline-size;
   box-sizing: border-box;
   flex: none;
   height: 180px;
@@ -3008,6 +3022,29 @@ ul.transfer-hint {
 .inspect-col {
   font-weight: 600;
   font-family: ui-monospace, monospace;
+  /* A 64-character column name (the MySQL limit) gives way first: cut
+     with "…", whole in the tooltip; the buttons never leave the panel. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspect-type,
+.inspect-pos,
+.inspect-len,
+.inspect-keys,
+.inspect-head .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Narrow pane (side panel pinned on a 13", row card open): the key hints
+   are the first to go. */
+@container inspect (max-width: 900px) {
+  .inspect-keys {
+    display: none;
+  }
 }
 
 .inspect-type,

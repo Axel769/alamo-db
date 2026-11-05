@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- A long server error (a trigger's message of a few KB) no longer runs past the results pane: it scrolls inside it and leaves half of the pane to the grid. The cell panel cuts a 64-character column name with "…" (whole in the tooltip) and keeps its buttons in sight in a narrow pane. The "all tabs" list no longer widens to most of the window with long names.
 - With "reduce motion" on in the system, buttons and tabs keep their short colour fade on hover and focus; only movement is dropped.
 - Dialogs (connection, settings, export, update and the others) open with a short fade instead of appearing at once; closing stays instant. The command palette and the side panel do not animate. With "reduce motion" on in the system, only the fade remains.
 - While a query runs, the moving thread under the query bar no longer costs the main thread anything: the rows arriving are not slowed down by it, and it moves at a constant speed.

@@ -170,7 +170,9 @@ export default function InspectPanel({
         title={t("Drag to resize, double-click for the default height")}
       />
       <div className="inspect-head">
-        <span className="inspect-col">{meta?.name ?? t("column {n}", { n: col })}</span>
+        <span className="inspect-col" title={meta?.name}>
+          {meta?.name ?? t("column {n}", { n: col })}
+        </span>
         <span className="inspect-type">{meta?.type_display}</span>
         <span className="inspect-pos">
           {fresh ? t("new row") : t("row {n}", { n: (row + 1).toLocaleString(locale()) })}
