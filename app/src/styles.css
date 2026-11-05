@@ -145,10 +145,10 @@ body,
   width: 170px;
   flex: none;
   border-right: 1px solid var(--cell-divider);
-  padding: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   overflow-y: auto;
 }
 
@@ -160,9 +160,9 @@ body,
   font: inherit;
   font-size: 13px;
   text-align: left;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: none;
   color: var(--cell-fg);
   cursor: pointer;
@@ -838,7 +838,7 @@ body,
   border: 1px solid var(--cell-border);
   border-radius: 6px;
   background: var(--cell-panel-bg);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-pop);
 }
 
 .tab-list-item {
@@ -900,7 +900,7 @@ body,
   border: 1px solid var(--cell-border);
   border-radius: 6px;
   background: var(--cell-panel-bg);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-pop);
 }
 
 .tab-menu-item {
@@ -2800,8 +2800,8 @@ ul.transfer-hint {
   overflow: auto;
   background: var(--cell-panel-bg);
   border: 1px solid var(--cell-divider);
-  border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  box-shadow: var(--shadow-modal);
 }
 
 /* Occasional surfaces get a 180 ms entrance (fade + scale from 0.97, centre
@@ -3217,8 +3217,8 @@ ul.transfer-hint {
   flex-direction: column;
   background: var(--cell-panel-bg);
   border: 1px solid var(--cell-divider);
-  border-radius: 10px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -3391,12 +3391,8 @@ ul.transfer-hint {
   color: var(--cell-fg);
   background: var(--state-normal);
   border: 1px solid var(--cell-divider);
-  border-radius: 5px;
+  border-radius: 6px;
   outline: none;
-}
-
-.conn-page-filter:focus {
-  border-color: var(--conn);
 }
 
 .conn-page-filter.small {
@@ -3436,7 +3432,7 @@ ul.transfer-hint {
 .seg {
   display: inline-flex;
   border: 1px solid var(--cell-divider);
-  border-radius: 5px;
+  border-radius: 6px;
   overflow: hidden;
 }
 
@@ -3448,6 +3444,11 @@ ul.transfer-hint {
   padding: 3px 10px;
   color: var(--cell-muted-fg);
   cursor: pointer;
+}
+
+.seg button:hover:not(.on) {
+  color: var(--cell-fg);
+  background: var(--ui-hover);
 }
 
 .seg button.on {
@@ -3646,6 +3647,10 @@ ul.transfer-hint {
   cursor: pointer;
 }
 
+.form-section:hover:not(.active) {
+  color: var(--cell-fg);
+}
+
 .form-section.active {
   color: var(--cell-fg);
   font-weight: 600;
@@ -3726,6 +3731,10 @@ svg.lucide {
   --ui-focus: color-mix(in oklab, var(--cell-selection-border) 55%, transparent);
   --ui-ease: 120ms ease-out;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* strong ease-out: entrances */
+  /* Two shadows for the whole app: a contact line plus a soft spread.
+     Menus and popovers sit close to the page, modals float above it. */
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.12), 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-modal: 0 1px 3px rgba(0, 0, 0, 0.16), 0 16px 48px rgba(0, 0, 0, 0.3);
 }
 
 .btn {
@@ -3738,7 +3747,8 @@ svg.lucide {
   transition:
     background-color var(--ui-ease),
     border-color var(--ui-ease),
-    color var(--ui-ease);
+    color var(--ui-ease),
+    transform var(--ui-ease);
   white-space: nowrap;
 }
 
@@ -3749,6 +3759,8 @@ svg.lucide {
 
 .btn:active:not(:disabled) {
   background: color-mix(in oklab, var(--cell-fg) 14%, var(--cell-panel-bg));
+  /* The press is felt, not only seen: a 3% dip, back on release. */
+  transform: scale(0.97);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -3785,7 +3797,13 @@ select:focus-visible {
 .db-select,
 .filter-add,
 .query-chip input,
-.query-chip select {
+.query-chip select,
+.settings-search,
+.setting-row input,
+.setting-row select,
+.export-dialog input,
+.export-dialog select,
+.transfer-pass input {
   border-color: var(--ui-border);
   transition:
     border-color var(--ui-ease),
@@ -3795,7 +3813,14 @@ select:focus-visible {
 .profile-form input:focus,
 .profile-form select:focus,
 .tree-filter input:focus,
-.query-chip input:focus {
+.query-chip input:focus,
+.conn-page-filter:focus,
+.settings-search:focus-within,
+.setting-row input:focus,
+.setting-row select:focus,
+.export-dialog input:focus,
+.export-dialog select:focus,
+.transfer-pass input:focus {
   outline: none;
   border-color: var(--cell-selection-border);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--cell-selection-border) 22%, transparent);
@@ -3888,10 +3913,6 @@ select:focus-visible {
 .cmdk,
 .dialog {
   border-color: var(--ui-border-strong);
-}
-
-.tab-menu {
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
 }
 
 /* Sub-tabs (Data / Structure / DDL) and sections: transition on change. */
@@ -4698,7 +4719,7 @@ button.profile-pill:hover {
   border: 1px solid var(--cell-border);
   border-radius: 6px;
   background: var(--cell-panel-bg);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-pop);
 }
 
 .run-menu .tab-menu-item {
@@ -4834,7 +4855,7 @@ button.profile-pill:hover {
   background: var(--cell-panel-bg);
   border: 1px solid color-mix(in oklab, oklch(55% 0.2 25) 60%, transparent);
   border-radius: 10px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-modal);
 }
 
 .confirm-title {
@@ -5043,7 +5064,7 @@ button.profile-pill:hover {
   border: 1px solid var(--cell-border);
   border-radius: 8px;
   background: var(--cell-panel-bg);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-pop);
   overflow: hidden;
 }
 .db-picker-filter {
@@ -5446,7 +5467,8 @@ button.profile-pill:hover {
   .conn-av {
     transition: box-shadow var(--ui-ease);
   }
-  .conn-av:hover {
+  .conn-av:hover,
+  .btn:active:not(:disabled) {
     transform: none;
   }
   .spinner {

@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Same look for every control: one focus ring on every text field and select (settings search, settings values, connection page filter, export and import fields had none or a different one), soft borders everywhere, two shadows for the whole app (menus and windows), 12 px corners on every window, a small dip when a button is pressed, hover on the section tabs of the connection dialog and on the segmented switches, settings categories laid out like the profile list.
 - Tree: a schema with thousands of tables opens in a fraction of the time (3000 tables: 0.2 s instead of 1.2 s) and filters faster, because only the rows in view are drawn; scrolling and expanding a table work as before.
 - A profile name is at most 120 characters: the dialog stops there and an import cuts there.
 - Tree, connections panel and tab bar: a name cut with "…" is whole in its tooltip (table, schema, column, connection); the column tooltip shows the type and a short default, not a 2 KB one; MySQL views no longer show "VIEW" as their comment; a tab title in Japanese or Chinese keeps a readable tail; names written right to left are cut on the right side.
