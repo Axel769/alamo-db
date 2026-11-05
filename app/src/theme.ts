@@ -2,7 +2,7 @@
 // oklch() on every webview, so the hex values of the approved table live
 // here. Conversion done as a build step of the document, not at runtime.
 
-import { patchSettings, setting, useSettings } from "./settings";
+import { setting, useSettings } from "./settings";
 import { SettingValues } from "./settingsSchema";
 
 export type Tokens = {
@@ -103,11 +103,6 @@ export function applyTheme(): void {
   useSettings.subscribe((s, prev) => {
     if (s.settings.appearance.theme !== prev.settings.appearance.theme) set();
   });
-}
-
-/// Saves the choice (settings.json); rejects with the backend's message.
-export function setThemePref(pref: ThemePref): Promise<void> {
-  return patchSettings({ "appearance.theme": pref });
 }
 
 export function tokens(): Tokens {

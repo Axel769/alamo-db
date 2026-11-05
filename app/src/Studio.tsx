@@ -301,6 +301,13 @@ function StudioInner() {
     return () => window.removeEventListener("alamo:quit-blocked", onBlocked);
   }, []);
 
+  // macOS menu "Settings…" (⌘,): the native item signals the webview (§16).
+  useEffect(() => {
+    const onOpen = () => setSettingsOpen(true);
+    window.addEventListener("alamo:open-settings", onOpen);
+    return () => window.removeEventListener("alamo:open-settings", onOpen);
+  }, []);
+
   // §9.7.2: the backend rolled back a transaction left idle.
   useEffect(() => {
     const onRollback = (e: Event) => {
@@ -883,6 +890,11 @@ function StudioInner() {
         if (tab && !tab.pinned && !tab.running && !document.querySelector(".dialog-overlay, .cmdk-overlay, #portal textarea")) {
           void closeTabsGuarded([tab.id]);
         }
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key === ",") {
+        // Ctrl+, on Windows and Linux opens Settings, as in VSCode; on
+        // macOS ⌘, is the menu accelerator and never reaches the DOM.
+        e.preventDefault();
+        setSettingsOpen(true);
       } else if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "z") {
         // macOS: the native menu has no Undo/Redo (the Cmd+Z fix for
         // CodeMirror, see main.rs) — but input/textarea fields relied on

@@ -25,17 +25,29 @@ export const useSettings = create<State>(() => ({
   issues: [],
 }));
 
+/// One setting by its `category.field` key, from the given values.
+export function settingOf<K extends SettingKey>(settings: Settings, key: K): SettingValues[K] {
+  const [cat, field] = key.split(".") as [keyof Settings, string];
+  return (settings[cat] as Record<string, unknown>)[field] as SettingValues[K];
+}
+
 /// One setting, outside React (editor, i18n, theme). Inside a component
 /// read `useSettings` instead, so the change re-renders it.
 export function setting<K extends SettingKey>(key: K): SettingValues[K] {
-  const [cat, field] = key.split(".") as [keyof Settings, string];
-  return (useSettings.getState().settings[cat] as Record<string, unknown>)[field] as SettingValues[K];
+  return settingOf(useSettings.getState().settings, key);
 }
 
 /// Writes the given settings; all or none. Rejects with the backend's
 /// message (for `tMsg`).
 export async function patchSettings(patch: Partial<SettingValues>): Promise<void> {
   const out = await ipc.settingsSet(patch);
+  useSettings.setState((s) => ({ settings: out.settings, version: s.version + 1 }));
+}
+
+/// Back to the defaults of one category (or of everything with `null`):
+/// the keys leave settings.json. Rejects with the backend's message.
+export async function resetSettings(category: string | null): Promise<void> {
+  const out = await ipc.settingsReset(category);
   useSettings.setState((s) => ({ settings: out.settings, version: s.version + 1 }));
 }
 

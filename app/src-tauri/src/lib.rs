@@ -108,14 +108,20 @@ fn writes_pending(state: &AppState) -> bool {
             .any(|s| s.txn_state().has_writes)
 }
 
-/// Close stopped by the gate: tells the frontend, which shows the dialog
-/// (§9.7.2). DOM event via `eval`, not `emit`: the app has no capability ACL
-/// and without `core:event:allow-listen` the JS `listen` is refused — the
-/// signal would never arrive and the red button would stay mute.
-fn signal_quit_blocked(app: &AppHandle) {
+/// A signal to the frontend as a DOM event (`alamo:*`) via `eval`, not
+/// `emit`: the app has no capability ACL and without
+/// `core:event:allow-listen` the JS `listen` is refused — the signal would
+/// never arrive.
+fn dom_event(app: &AppHandle, name: &str) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval("window.dispatchEvent(new Event('alamo:quit-blocked'))");
+        let _ = w.eval(format!("window.dispatchEvent(new Event('{name}'))"));
     }
+}
+
+/// Close stopped by the gate: tells the frontend, which shows the dialog
+/// (§9.7.2) — otherwise the red button would stay mute.
+fn signal_quit_blocked(app: &AppHandle) {
+    dom_event(app, "alamo:quit-blocked");
 }
 
 /// §9.7.2: every 15 s, ROLLBACK of the transactions idle for
@@ -2804,8 +2810,22 @@ fn build_menu(app: &AppHandle, italian: bool) -> tauri::Result<tauri::menu::Menu
     )
     .accelerator("CmdOrCtrl+Q")
     .build(app)?;
+    // Settings… ⌘, in the app menu, as every macOS app: the webview opens
+    // the window on the DOM event (`on_menu_event`).
+    let settings = MenuItemBuilder::with_id(
+        "settings",
+        if italian {
+            "Impostazioni…"
+        } else {
+            "Settings…"
+        },
+    )
+    .accelerator("Cmd+,")
+    .build(app)?;
     let app_menu = SubmenuBuilder::new(app, "Alamo")
         .about(None)
+        .separator()
+        .item(&settings)
         .separator()
         .services()
         .separator()
@@ -3023,11 +3043,12 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             }
         })
         // "Quit" menu item (Cmd+Q): requests the exit, which goes through the
-        // ExitRequested gate like the red button.
-        .on_menu_event(|app, ev| {
-            if ev.id().as_ref() == "quit" {
-                app.exit(0);
-            }
+        // ExitRequested gate like the red button. "Settings…" (Cmd+,) opens
+        // the window in the webview.
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "quit" => app.exit(0),
+            "settings" => dom_event(app, "alamo:open-settings"),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             settings_get,

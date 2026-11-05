@@ -128,16 +128,149 @@ body,
   margin-top: auto;
 }
 
-/* Settings dialog: compact column, form like the export one. */
-.settings-dialog label {
+/* Settings window (§16): categories on the left, settings on the right. */
+.dialog.settings-dialog {
+  width: 760px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  font-size: 12px;
+}
+
+.settings-dialog .dialog-body {
+  height: 480px;
+  max-height: 70vh;
+  min-height: 0;
+}
+
+.settings-nav {
+  width: 170px;
+  flex: none;
+  border-right: 1px solid var(--cell-divider);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cell-fg);
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--state-alt);
+}
+
+.settings-nav-item.active {
+  background: var(--state-selection);
+}
+
+.settings-nav-item.dim {
   color: var(--cell-muted-fg);
 }
 
-.settings-dialog select {
+.settings-nav-count {
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-normal);
+  color: var(--cell-muted-fg);
+}
+
+.settings-search input {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: var(--cell-fg);
+  outline: none;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--cell-divider);
+}
+
+.settings-section-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* One setting: label (and the default, when the value differs) on the
+   left, the control on the right. The changed ones get a bar, like the
+   modified lines of an editor. */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 10px;
+  border-left: 3px solid transparent;
+  border-radius: 4px;
+}
+
+.setting-row.modified {
+  border-left-color: var(--cell-selection-border);
+  background: var(--state-alt);
+}
+
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.setting-default {
+  font-size: 11px;
+  color: var(--cell-muted-fg);
+}
+
+.setting-row select,
+.setting-row input {
   font: inherit;
   font-size: 13px;
   padding: 5px 8px;
@@ -145,7 +278,14 @@ body,
   border-radius: 6px;
   background: var(--state-normal);
   color: var(--cell-fg);
-  max-width: 320px;
+  width: 240px;
+  flex: none;
+}
+
+.settings-empty {
+  font-size: 13px;
+  color: var(--cell-muted-fg);
+  padding: 12px 0;
 }
 
 /* Values of settings.json this build could not take (§16): told once. */

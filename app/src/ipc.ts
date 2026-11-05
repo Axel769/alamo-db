@@ -671,6 +671,8 @@ export const ipc = {
   /// Settings (§16): the file is Rust's; `issues` only on the first read.
   settingsGet: () => invoke<SettingsOut>("settings_get"),
   settingsSet: (patch: Partial<SettingValues>) => invoke<SettingsOut>("settings_set", { patch }),
+  /// Back to the defaults of one category, or of everything with `null`.
+  settingsReset: (category: string | null) => invoke<SettingsOut>("settings_reset", { category }),
   /// Alpha updates: new version published (null = none).
   updateCheck: () => invoke<{ version: string; current_version: string; notes: string | null } | null>("update_check"),
   /// Downloads, installs and restarts: if it succeeds it does not return.

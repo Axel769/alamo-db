@@ -26,8 +26,9 @@ use serde_json::{json, Map, Value};
 /// window needs to draw the control and what `validate` needs to check.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
-    /// One of a fixed list of names (a `<select>`).
-    Enum(&'static [&'static str]),
+    /// One of a fixed list of names (a `<select>`): `(name, label)`, the
+    /// name is what the file holds, the label what the window shows.
+    Enum(&'static [(&'static str, &'static str)]),
     /// Free text.
     Str,
 }
@@ -41,21 +42,27 @@ impl SettingType for String {
     const KIND: Kind = Kind::Str;
 }
 
-/// An enum setting: the serde names and the Rust variants from one list.
+/// An enum setting: the serde names, the Rust variants and the labels of
+/// the window from one list.
 macro_rules! setting_enum {
-    ($Name:ident { $( $Variant:ident = $name:literal ),+ $(,)? }) => {
+    ($Name:ident { $( $Variant:ident = $name:literal => $label:literal ),+ $(,)? }) => {
         #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
         pub enum $Name {
             $( #[serde(rename = $name)] $Variant, )+
         }
         impl SettingType for $Name {
-            const KIND: Kind = Kind::Enum(&[$( $name ),+]);
+            const KIND: Kind = Kind::Enum(&[$( ($name, $label) ),+]);
         }
     };
 }
 
-setting_enum!(Language { It = "it", En = "en" });
-setting_enum!(ThemePref { System = "system", Light = "light", Dark = "dark" });
+// Language names stay in their own language, as every language picker does.
+setting_enum!(Language { It = "it" => "Italiano", En = "en" => "English" });
+setting_enum!(ThemePref {
+    System = "system" => "Same as system",
+    Light = "light" => "Light",
+    Dark = "dark" => "Dark",
+});
 
 /// One setting as the window and the validation see it. `label` is
 /// English and is the i18n key (`t()`), like every string of the UI.
@@ -69,7 +76,7 @@ pub struct SettingDef {
 
 macro_rules! settings {
     ($(
-        $cat:ident : $Cat:ident {
+        $cat:ident : $Cat:ident ($cat_label:literal) {
             $( $field:ident : $ty:ty = $default:expr, $label:literal; )*
         }
     )*) => {
@@ -93,6 +100,12 @@ macro_rules! settings {
             $( pub $cat: $Cat, )*
         }
 
+        /// The categories in declaration order: `(id, label)`, the label
+        /// English and an i18n key (the heading in the window).
+        pub static CATEGORIES: &[(&str, &str)] = &[
+            $( (stringify!($cat), $cat_label), )*
+        ];
+
         /// All the settings, declared: what the window and `validate` read.
         pub static DEFS: &[SettingDef] = &[
             $( $(
@@ -108,11 +121,11 @@ macro_rules! settings {
 }
 
 settings! {
-    appearance: Appearance {
+    appearance: Appearance ("Appearance") {
         language: Language = Language::It, "Language";
         theme: ThemePref = ThemePref::System, "Theme";
     }
-    updates: Updates {
+    updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
     }
 }
@@ -126,17 +139,22 @@ fn typescript() -> String {
     let ts_type = |kind: Kind| match kind {
         Kind::Enum(values) => values
             .iter()
-            .map(|v| format!("{v:?}"))
+            .map(|(name, _)| format!("{name:?}"))
             .collect::<Vec<_>>()
             .join(" | "),
         Kind::Str => "string".into(),
     };
     let ts_kind = |kind: Kind| match kind {
         Kind::Enum(values) => format!(
-            "{{ kind: \"enum\", values: [{}] }}",
+            "{{ kind: \"enum\", values: [{}], labels: [{}] }}",
             values
                 .iter()
-                .map(|v| format!("{v:?}"))
+                .map(|(name, _)| format!("{name:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            values
+                .iter()
+                .map(|(_, label)| format!("{label:?}"))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -148,13 +166,7 @@ fn typescript() -> String {
          /// The settings as `settings_get` returns them.\n\
          export type Settings = {\n",
     );
-    let mut categories: Vec<&str> = Vec::new();
-    for def in DEFS {
-        if !categories.contains(&def.category) {
-            categories.push(def.category);
-        }
-    }
-    for cat in &categories {
+    for (cat, _) in CATEGORIES {
         out.push_str(&format!("  {cat}: {{\n"));
         for def in DEFS.iter().filter(|d| d.category == *cat) {
             let field = def.key.rsplit('.').next().unwrap_or(def.key);
@@ -171,8 +183,16 @@ fn typescript() -> String {
     out.push_str(
         "};\n\n\
          export type SettingKey = keyof SettingValues;\n\n\
-         export type SettingKind = { kind: \"enum\"; values: readonly string[] } | { kind: \"str\" };\n\n\
+         export type SettingKind = { kind: \"enum\"; values: readonly string[]; labels: readonly string[] } | { kind: \"str\" };\n\n\
          export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string };\n\n\
+         /// The categories, in declaration order, with the English label (i18n key).\n\
+         export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [\n",
+    );
+    for (cat, label) in CATEGORIES {
+        out.push_str(&format!("  {{ id: {cat:?}, label: {label:?} }},\n"));
+    }
+    out.push_str(
+        "];\n\n\
          /// Every setting, in declaration order: what the window renders.\n\
          export const SETTING_DEFS: readonly SettingDef[] = [\n",
     );
@@ -283,7 +303,7 @@ impl SettingsStore {
     /// Back to the defaults: of one category, or of everything.
     pub fn reset(&self, category: Option<&str>) -> Result<Settings, String> {
         if let Some(c) = category {
-            if !DEFS.iter().any(|d| d.category == c) {
+            if !CATEGORIES.iter().any(|(id, _)| *id == c) {
                 return Err(format!("Unknown settings category {c}"));
             }
         }
@@ -375,11 +395,15 @@ fn shorten(s: &str) -> String {
 fn validate(def: &SettingDef, v: &Value) -> Result<(), String> {
     match def.kind {
         Kind::Enum(values) => match v.as_str() {
-            Some(s) if values.contains(&s) => Ok(()),
+            Some(s) if values.iter().any(|(name, _)| *name == s) => Ok(()),
             _ => Err(format!(
                 "{} must be one of {}",
                 def.label,
-                values.join(", ")
+                values
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )),
         },
         Kind::Str => v
@@ -652,7 +676,7 @@ mod tests {
         assert_eq!(keys, leaves, "every field has a def and vice versa");
         for def in DEFS {
             if let Kind::Enum(values) = def.kind {
-                for v in values {
+                for (v, _) in values {
                     let mut t = tree.clone();
                     set_leaf(&mut t, def.key, json!(v));
                     serde_json::from_value::<Settings>(t)
@@ -695,14 +719,21 @@ mod tests {
         );
     }
 
-    /// Every label of `DEFS` has its Italian string: the window shows them
-    /// through `t()`, which falls back to English in silence.
+    /// Every label of `DEFS` (setting, category, enum option) has its
+    /// Italian string: the window shows them through `t()`, which falls
+    /// back to English in silence.
     #[test]
     fn labels_are_translated() {
         let i18n =
             std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/i18n.ts"))
                 .unwrap();
-        let mut texts: Vec<&str> = DEFS.iter().map(|d| d.label).collect();
+        let mut texts: Vec<&str> = CATEGORIES.iter().map(|(_, label)| *label).collect();
+        for def in DEFS {
+            texts.push(def.label);
+            if let Kind::Enum(values) = def.kind {
+                texts.extend(values.iter().map(|(_, label)| *label));
+            }
+        }
         texts.sort_unstable();
         texts.dedup();
         let missing: Vec<&str> = texts

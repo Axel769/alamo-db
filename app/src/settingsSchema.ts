@@ -21,14 +21,20 @@ export type SettingValues = {
 
 export type SettingKey = keyof SettingValues;
 
-export type SettingKind = { kind: "enum"; values: readonly string[] } | { kind: "str" };
+export type SettingKind = { kind: "enum"; values: readonly string[]; labels: readonly string[] } | { kind: "str" };
 
 export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string };
 
+/// The categories, in declaration order, with the English label (i18n key).
+export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [
+  { id: "appearance", label: "Appearance" },
+  { id: "updates", label: "Updates" },
+];
+
 /// Every setting, in declaration order: what the window renders.
 export const SETTING_DEFS: readonly SettingDef[] = [
-  { key: "appearance.language", category: "appearance", kind: { kind: "enum", values: ["it", "en"] }, label: "Language" },
-  { key: "appearance.theme", category: "appearance", kind: { kind: "enum", values: ["system", "light", "dark"] }, label: "Theme" },
+  { key: "appearance.language", category: "appearance", kind: { kind: "enum", values: ["it", "en"], labels: ["Italiano", "English"] }, label: "Language" },
+  { key: "appearance.theme", category: "appearance", kind: { kind: "enum", values: ["system", "light", "dark"], labels: ["Same as system", "Light", "Dark"] }, label: "Theme" },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version" },
 ];
 

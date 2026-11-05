@@ -11,18 +11,13 @@
 // change applies at once — the Studio root re-renders on the settings
 // `version`, the editor reconfigures its search phrases.
 
-import { patchSettings, setting, useSettings } from "./settings";
+import { setting, useSettings } from "./settings";
 import { SettingValues } from "./settingsSchema";
 
 export type Lang = SettingValues["appearance.language"];
 
 export function lang(): Lang {
   return setting("appearance.language");
-}
-
-/// Saves the choice (settings.json); rejects with the backend's message.
-export function setLang(l: Lang): Promise<void> {
-  return patchSettings({ "appearance.language": l });
 }
 
 /// The settings `version`, for a memoized component that shows translated
@@ -44,6 +39,12 @@ export function t(s: string, params?: Record<string, string | number>): string {
     }
   }
   return out;
+}
+
+/// The text in both languages, lowercased, for a search that must find a
+/// setting by its Italian or its English name whatever the UI language.
+export function searchText(s: string): string {
+  return `${s} ${IT[s] ?? ""}`.toLowerCase();
 }
 
 /// Italian strings of an extension build (architecture §13), registered
@@ -784,10 +785,22 @@ const IT: Record<string, string> = {
   "Delete row": "Elimina riga",
   "Delete rows": "Elimina righe",
   "Del": "Canc",
-  // Settings (§16): labels of `settings.rs` DEFS. A Rust test fails when
-  // one is missing here.
+  // Settings (§16): labels of `settings.rs` DEFS (settings, categories,
+  // enum options). A Rust test fails when one is missing here. Language
+  // names stay in their own language.
+  "Appearance": "Aspetto",
+  "Updates": "Aggiornamenti",
   "Skipped version": "Versione saltata",
+  "Italiano": "Italiano",
+  "English": "English",
   "Some values in settings.json could not be used and are back to the default:": "Alcuni valori di settings.json non si sono potuti usare e sono tornati al predefinito:",
+  "Search settings": "Cerca nelle impostazioni",
+  "Restore defaults": "Ripristina predefiniti",
+  "Back to the defaults of this section: the saved values are removed from settings.json.": "Riporta questa sezione ai predefiniti: i valori salvati vengono tolti da settings.json.",
+  "No setting matches \"{q}\".": "Nessuna impostazione corrisponde a \"{q}\".",
+  "Default: {value}": "Predefinito: {value}",
+  "Changed from the default": "Diverso dal predefinito",
+  "(empty)": "(vuoto)",
 };
 
 /// Backend (Rust) messages EN -> IT, used only by `tMsg`. Keys are the Rust

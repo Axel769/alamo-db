@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Settings window: categories on the left (Appearance, Updates), a search box that finds a setting by its name in Italian or English, every value that differs from the default marked with the default next to it, and "Restore defaults" per section. It opens from the gear, the command palette, "Settings…" in the macOS menu (⌘,) or Ctrl+, on Windows and Linux.
 - Settings: language and theme change at once, without reloading the app. They are saved in settings.json in the app's configuration folder (with the skipped update version), no longer in the browser storage: the choices made so far are carried over at the first start.
 
 ## [0.1.0-alpha.13] - 2026-11-05
