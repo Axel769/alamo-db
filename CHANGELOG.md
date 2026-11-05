@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Tree: a schema with thousands of tables opens in a fraction of the time (3000 tables: 0.2 s instead of 1.2 s) and filters faster, because only the rows in view are drawn; scrolling and expanding a table work as before.
 - A profile name is at most 120 characters: the dialog stops there and an import cuts there.
 - Tree, connections panel and tab bar: a name cut with "…" is whole in its tooltip (table, schema, column, connection); the column tooltip shows the type and a short default, not a 2 KB one; MySQL views no longer show "VIEW" as their comment; a tab title in Japanese or Chinese keeps a readable tail; names written right to left are cut on the right side.
 - A long server error (a trigger's message of a few KB) no longer runs past the results pane: it scrolls inside it and leaves half of the pane to the grid. The cell panel cuts a 64-character column name with "…" (whole in the tooltip) and keeps its buttons in sight in a narrow pane. The "all tabs" list no longer widens to most of the window with long names.

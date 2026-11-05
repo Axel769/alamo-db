@@ -22,6 +22,12 @@ import { makePermanent, openTablePreview } from "./tabs";
 import { IconChevronDown, IconChevronRight, IconRefresh, IconStar, IconX, RelIcon } from "./icons";
 import { connColor } from "./connColor";
 import { dbHasFavs, Favs, FavStar, scopeFavs, useFavorites } from "./favorites";
+import { VirtualRows } from "./virtualRows";
+
+/// Height of a tree row before it is measured (`.tree-node`: 12.5 px font,
+/// 2 px of padding each side).
+const ROW_HEIGHT = 19;
+const relKey = (r: RelationOut) => r.name;
 
 /// "Favorites only": local preference, remembered across launches.
 const FAV_ONLY_KEY = "alamo.treeFavOnly";
@@ -475,7 +481,14 @@ const SchemaNode = memo(function SchemaNode({
       {effOpen && shown?.length === 0 && !loading && (
         <div className="tree-note nested">{t("empty")}</div>
       )}
-      {effOpen && shown?.map((r) => <RelationNode key={r.name} connId={connId} rel={r} favs={favs} />)}
+      {effOpen && shown && (
+        <VirtualRows
+          items={shown}
+          keyOf={relKey}
+          rowHeight={ROW_HEIGHT}
+          render={(r) => <RelationNode key={r.name} connId={connId} rel={r} favs={favs} />}
+        />
+      )}
     </>
   );
 });
