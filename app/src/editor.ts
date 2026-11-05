@@ -20,6 +20,7 @@ import { completionSpace } from "./completionSpace";
 import { sqlSyntax } from "./sqlSyntax";
 import { lang } from "./i18n";
 import { useSettings } from "./settings";
+import { editorFont } from "./appearance";
 import {
   Compartment,
   countColumn,
@@ -381,6 +382,15 @@ function columnSource(context: CompletionContext): CompletionResult | null {
   return { from, options, validFor: /^[\w$]*$/ };
 }
 
+/// Font and text size of the editor from the settings.
+function appearanceExt(): Extension {
+  const s = useSettings.getState().settings;
+  return EditorView.theme({
+    "&": { fontSize: `${s.appearance.editor_font_size}px` },
+    ".cm-scroller": { fontFamily: editorFont(s) },
+  });
+}
+
 export class SqlEditor {
   view: EditorView;
   private themeCompartment = new Compartment();
@@ -388,6 +398,8 @@ export class SqlEditor {
   /// Search-panel texts in the UI language (§16): reconfigured on a
   /// language change, and on a tab switch (per-state, like the schema).
   private phrasesCompartment = new Compartment();
+  /// Font and text size from the settings (§16), applied at once.
+  private appearanceCompartment = new Compartment();
 
   /// Who computes the statement boundaries (the Studio, via IPC on the
   /// tab's connection); null = not available (disconnected tab).
@@ -404,6 +416,12 @@ export class SqlEditor {
     });
     useSettings.subscribe((s, prev) => {
       if (s.settings.appearance.language !== prev.settings.appearance.language) this.applyPhrases();
+      if (
+        s.settings.appearance.editor_font !== prev.settings.appearance.editor_font ||
+        s.settings.appearance.editor_font_size !== prev.settings.appearance.editor_font_size
+      ) {
+        this.view.dispatch({ effects: this.appearanceCompartment.reconfigure(appearanceExt()) });
+      }
     });
   }
 
@@ -433,6 +451,7 @@ export class SqlEditor {
         search({ top: true }),
         highlightSelectionMatches(),
         this.phrasesCompartment.of(phrasesExt()),
+        this.appearanceCompartment.of(appearanceExt()),
         // Completion keymap without the mac shortcuts `Alt-\`` and `Alt-i`:
         // on non-US layouts `Alt-\`` IS how you type the backtick (MySQL
         // quoting) and CodeMirror would eat it. Ctrl-Space remains — which
@@ -469,8 +488,7 @@ export class SqlEditor {
           ...searchKeymap,
         ]),
         EditorView.theme({
-          "&": { height: "100%", fontSize: "14px" },
-          ".cm-scroller": { fontFamily: "ui-monospace, monospace" },
+          "&": { height: "100%" },
           // The default caret is black: in dark mode it disappears (black on black).
           ".cm-content": { caretColor: "var(--cell-fg)" },
           // Line-number gutter: CodeMirror's default is a fixed light gray,

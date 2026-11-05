@@ -31,6 +31,10 @@ pub enum Kind {
     Enum(&'static [(&'static str, &'static str)]),
     /// Free text.
     Str,
+    /// On or off (a checkbox).
+    Bool,
+    /// A whole number within the range, both ends included.
+    Int { min: i64, max: i64 },
 }
 
 /// A type usable as a setting: says which `Kind` it is.
@@ -40,6 +44,24 @@ pub trait SettingType {
 
 impl SettingType for String {
     const KIND: Kind = Kind::Str;
+}
+
+impl SettingType for bool {
+    const KIND: Kind = Kind::Bool;
+}
+
+/// The `Kind` of a field: from its range when declared (`u32 [9..=32]`,
+/// the only way to get an `Int`), otherwise from the type.
+macro_rules! kind {
+    ($ty:ty;) => {
+        <$ty as SettingType>::KIND
+    };
+    ($ty:ty; $min:literal, $max:literal) => {
+        Kind::Int {
+            min: $min,
+            max: $max,
+        }
+    };
 }
 
 /// An enum setting: the serde names, the Rust variants and the labels of
@@ -63,6 +85,16 @@ setting_enum!(ThemePref {
     Light = "light" => "Light",
     Dark = "dark" => "Dark",
 });
+// Row heights of §9.6.2: 26 px is the compact default, 30 px the roomier
+// preset; the text size is a separate setting on purpose (§9.6.2).
+setting_enum!(GridDensity {
+    Compact = "compact" => "Compact (26 px rows)",
+    Comfortable = "comfortable" => "Comfortable (30 px rows)",
+});
+
+/// Monospace of the editor and the grid: the system's on each platform
+/// (SF Mono, Consolas, DejaVu Sans Mono), the generic family last.
+const MONO: &str = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace";
 
 /// One setting as the window and the validation see it. `label` is
 /// English and is the i18n key (`t()`), like every string of the UI.
@@ -77,7 +109,7 @@ pub struct SettingDef {
 macro_rules! settings {
     ($(
         $cat:ident : $Cat:ident ($cat_label:literal) {
-            $( $field:ident : $ty:ty = $default:expr, $label:literal; )*
+            $( $field:ident : $ty:ty $( [ $min:literal ..= $max:literal ] )? = $default:expr, $label:literal; )*
         }
     )*) => {
         $(
@@ -112,7 +144,7 @@ macro_rules! settings {
                 SettingDef {
                     key: concat!(stringify!($cat), ".", stringify!($field)),
                     category: stringify!($cat),
-                    kind: <$ty as SettingType>::KIND,
+                    kind: kind!($ty; $( $min, $max )?),
                     label: $label,
                 },
             )* )*
@@ -124,6 +156,12 @@ settings! {
     appearance: Appearance ("Appearance") {
         language: Language = Language::It, "Language";
         theme: ThemePref = ThemePref::System, "Theme";
+        editor_font: String = MONO.into(), "Editor font";
+        editor_font_size: u32 [9..=32] = 14, "Editor text size (px)";
+        grid_font: String = MONO.into(), "Grid font";
+        grid_font_size: u32 [9..=24] = 13, "Grid text size (px)";
+        grid_density: GridDensity = GridDensity::Compact, "Grid density";
+        high_contrast_grid: bool = false, "High-contrast grid lines";
     }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
@@ -143,6 +181,8 @@ fn typescript() -> String {
             .collect::<Vec<_>>()
             .join(" | "),
         Kind::Str => "string".into(),
+        Kind::Bool => "boolean".into(),
+        Kind::Int { .. } => "number".into(),
     };
     let ts_kind = |kind: Kind| match kind {
         Kind::Enum(values) => format!(
@@ -159,6 +199,8 @@ fn typescript() -> String {
                 .join(", ")
         ),
         Kind::Str => "{ kind: \"str\" }".into(),
+        Kind::Bool => "{ kind: \"bool\" }".into(),
+        Kind::Int { min, max } => format!("{{ kind: \"int\", min: {min}, max: {max} }}"),
     };
     let mut out = String::from(
         "// Generated from app/src-tauri/src/settings.rs by `cargo xtask gen-settings`:\n\
@@ -183,7 +225,11 @@ fn typescript() -> String {
     out.push_str(
         "};\n\n\
          export type SettingKey = keyof SettingValues;\n\n\
-         export type SettingKind = { kind: \"enum\"; values: readonly string[]; labels: readonly string[] } | { kind: \"str\" };\n\n\
+         export type SettingKind =\n\
+         \x20 | { kind: \"enum\"; values: readonly string[]; labels: readonly string[] }\n\
+         \x20 | { kind: \"str\" }\n\
+         \x20 | { kind: \"bool\" }\n\
+         \x20 | { kind: \"int\"; min: number; max: number };\n\n\
          export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string };\n\n\
          /// The categories, in declaration order, with the English label (i18n key).\n\
          export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [\n",
@@ -410,6 +456,17 @@ fn validate(def: &SettingDef, v: &Value) -> Result<(), String> {
             .is_string()
             .then_some(())
             .ok_or_else(|| format!("{} must be text", def.label)),
+        Kind::Bool => v
+            .is_boolean()
+            .then_some(())
+            .ok_or_else(|| format!("{} must be true or false", def.label)),
+        Kind::Int { min, max } => match v.as_i64() {
+            Some(n) if (min..=max).contains(&n) => Ok(()),
+            _ => Err(format!(
+                "{} must be a whole number between {min} and {max}",
+                def.label
+            )),
+        },
     }
 }
 
@@ -578,6 +635,28 @@ mod tests {
                 .unwrap_err(),
             "Skipped version must be text"
         );
+        for bad in [json!(8), json!(33), json!(12.5), json!("12")] {
+            assert_eq!(
+                store
+                    .apply(&patch(&[("appearance.editor_font_size", bad)]))
+                    .unwrap_err(),
+                "Editor text size (px) must be a whole number between 9 and 32"
+            );
+        }
+        assert_eq!(
+            store
+                .apply(&patch(&[("appearance.high_contrast_grid", json!("yes"))]))
+                .unwrap_err(),
+            "High-contrast grid lines must be true or false"
+        );
+        let s = store
+            .apply(&patch(&[
+                ("appearance.editor_font_size", json!(32)),
+                ("appearance.high_contrast_grid", json!(true)),
+            ]))
+            .unwrap();
+        assert_eq!(s.appearance.editor_font_size, 32);
+        assert!(s.appearance.high_contrast_grid);
     }
 
     #[test]

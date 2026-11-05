@@ -25,9 +25,9 @@ import { NewRowSlot, rowLayout } from "./rowLayout";
 import { pasteValues, toTsv } from "./tsv";
 import { tokens } from "./theme";
 import { useSettings } from "./settings";
+import { gridFont, gridRowHeight } from "./appearance";
 import { ExportDialog } from "./ExportDialog";
 
-const ROW_HEIGHT = 26; // compact density §9.6.2
 const HEADER_HEIGHT = 28;
 /// Right end of the header that sorts (like DBeaver's arrows): a click
 /// there sorts, a click on the rest of the header selects the column.
@@ -243,6 +243,12 @@ export default function GridView({
   // changes (§16), the Glide theme below follows.
   const resolvedTheme = useSettings((s) => s.resolvedTheme);
   const tok = useMemo(() => tokens(), [resolvedTheme]);
+  // Appearance settings (§16): density is the row height (§9.6.2), the
+  // font goes into the Glide theme and into the width measurement.
+  const appearance = useSettings((s) => s.settings.appearance);
+  const settings = useSettings((s) => s.settings);
+  const rowHeight = gridRowHeight(settings);
+  const font = `${appearance.grid_font_size}px ${gridFont(settings)}`;
 
   // Local sort (decision 10): the permutation lives in Rust, here only the
   // user's choice. `viewRows` is how many rows the view covers — on a still
@@ -294,8 +300,9 @@ export default function GridView({
   // widened after the UPDATE that reloads the grid.
   const savedWidths = widthsFor(widthKey ?? `conn:${connId}`);
   // Content-fitted widths (first rows): like the manual ones, per column
-  // name and outside React — a reload does not make the grid jump.
-  const fitWidths = fitWidthsFor(widthKey ?? `conn:${connId}`);
+  // name and outside React — a reload does not make the grid jump. Per
+  // font too: a new text size measures again.
+  const fitWidths = fitWidthsFor(`${widthKey ?? `conn:${connId}`}@${font}`);
   const [widthEpoch, setWidthEpoch] = useState(0);
   const gridColumns = useMemo<GridColumn[]>(
     () =>
@@ -556,12 +563,12 @@ export default function GridView({
   // not yet have a fitted width are measured.
   useEffect(() => {
     const w = cache.peekBlock(0);
-    if (w && fitColumns(columns, w, fitWidths)) setWidthEpoch((e) => e + 1);
-  }, [cache, columns, fitWidths]);
+    if (w && fitColumns(columns, w, fitWidths, font)) setWidthEpoch((e) => e + 1);
+  }, [cache, columns, fitWidths, font]);
 
   useEffect(() => {
     cache.onBlock = (_b, w) => {
-      if (w.row_start === 0 && fitColumns(columns, w, fitWidths)) setWidthEpoch((e) => e + 1);
+      if (w.row_start === 0 && fitColumns(columns, w, fitWidths, font)) setWidthEpoch((e) => e + 1);
       // A block may arrive again with changed values (rows re-read after a
       // save): the memo of those rows is no longer valid.
       // Memo and Glide count screen rows, the block view rows.
@@ -588,7 +595,7 @@ export default function GridView({
     const cell = selection.current?.cell;
     if (height >= was || !cell) return;
     const top = regionRef.current.y;
-    const rowsBefore = Math.floor((was - HEADER_HEIGHT) / ROW_HEIGHT);
+    const rowsBefore = Math.floor((was - HEADER_HEIGHT) / rowHeight);
     if (cell[1] < top || cell[1] >= top + rowsBefore) return;
     requestAnimationFrame(() => gridRef.current?.scrollTo(cell[0], cell[1], "vertical"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -613,14 +620,17 @@ export default function GridView({
       bgHeaderHasFocus: tok.cellHeaderBg,
       bgHeaderHovered: tok.stateAlt,
       textHeader: tok.cellFg,
-      borderColor: tok.cellBorder,
-      horizontalBorderColor: tok.cellBorder,
-      fontFamily: "ui-monospace, SFMono-Regular, monospace",
-      baseFontStyle: "13px",
-      headerFontStyle: "500 13px",
+      // Decorative border by default (§9.6.1: the structure is carried by
+      // alignment and zebra); the divider token when the user asks for a
+      // visible lattice.
+      borderColor: appearance.high_contrast_grid ? tok.cellDivider : tok.cellBorder,
+      horizontalBorderColor: appearance.high_contrast_grid ? tok.cellDivider : tok.cellBorder,
+      fontFamily: gridFont(settings),
+      baseFontStyle: `${appearance.grid_font_size}px`,
+      headerFontStyle: `500 ${appearance.grid_font_size}px`,
       cellVerticalPadding: 3,
     }),
-    [tok]
+    [tok, appearance, settings]
   );
 
   const getCellContent = useCallback(
@@ -1279,7 +1289,7 @@ export default function GridView({
             onHeaderContext(col, e.bounds.x, e.bounds.y + e.bounds.height);
           })
         }
-        rowHeight={ROW_HEIGHT}
+        rowHeight={rowHeight}
         headerHeight={HEADER_HEIGHT}
         smoothScrollX
         smoothScrollY
@@ -1666,27 +1676,30 @@ function fitWidthsFor(key: string): Map<string, number> {
 }
 
 /// Width of one character of the grid font (monospace: the same for all).
-/// Measured once, in bold like the header.
-let charWidth: number | null = null;
+/// Measured once per font (`size family`, the setting), in bold like the
+/// header.
+const charWidths = new Map<string, number>();
 
-function monoCharWidth(): number {
-  if (charWidth === null) {
+function monoCharWidth(font: string): number {
+  let w = charWidths.get(font);
+  if (w === undefined) {
     const ctx = document.createElement("canvas").getContext("2d");
     if (ctx) {
-      ctx.font = "500 13px ui-monospace, SFMono-Regular, monospace";
-      charWidth = ctx.measureText("0".repeat(20)).width / 20;
+      ctx.font = `500 ${font}`;
+      w = ctx.measureText("0".repeat(20)).width / 20;
     } else {
-      charWidth = 8;
+      w = 8;
     }
+    charWidths.set(font, w);
   }
-  return charWidth;
+  return w;
 }
 
 /// Measures the columns without a fitted width from block `w`. Returns
 /// whether it added any (a re-render is needed).
-function fitColumns(columns: ColumnOut[], w: WindowOut, into: Map<string, number>): boolean {
+function fitColumns(columns: ColumnOut[], w: WindowOut, into: Map<string, number>, font: string): boolean {
   if (w.row_end <= w.row_start) return false;
-  const cw = monoCharWidth();
+  const cw = monoCharWidth(font);
   let added = false;
   for (const col of w.columns) {
     const meta = columns[col.index];

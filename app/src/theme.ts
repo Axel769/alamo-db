@@ -24,6 +24,8 @@ export type Tokens = {
   cellMutedFg: string;
   cellNullFg: string;
   cellBorder: string;
+  /// --cell-divider (≥3:1): the grid lines of the high-contrast grid (§16).
+  cellDivider: string;
   cellPanelBg: string;
   cellHeaderBg: string;
   cellSelectionBorder: string;
@@ -45,6 +47,7 @@ export const LIGHT: Tokens = {
   cellMutedFg: "#565B63",
   cellNullFg: "#565B63",
   cellBorder: "#DCDEE2",
+  cellDivider: "#BABEC4",
   cellPanelBg: "#FBFCFD",
   cellHeaderBg: "#F3F5F8",
   cellSelectionBorder: "#3760C9",
@@ -66,6 +69,7 @@ export const DARK: Tokens = {
   cellMutedFg: "#A0A5AC",
   cellNullFg: "#A0A5AC",
   cellBorder: "#25292F",
+  cellDivider: "#3B4047",
   cellPanelBg: "#101317",
   cellHeaderBg: "#15181D",
   cellSelectionBorder: "#739BF5",

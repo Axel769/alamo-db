@@ -10,7 +10,9 @@
 import { useEffect, useRef, useState } from "react";
 import { searchText, t, tMsg } from "./i18n";
 import { patchSettings, resetSettings, settingOf, useSettings } from "./settings";
-import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingValues } from "./settingsSchema";
+import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingKey, SettingValues } from "./settingsSchema";
+
+type Value = SettingValues[SettingKey];
 import { IconSearch, IconX } from "./icons";
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -154,17 +156,24 @@ function categoryLabel(id: string): string {
 }
 
 /// The default of a setting as the user reads it: the option's label for
-/// an enum, the text itself otherwise.
+/// an enum, yes/no for a switch, the text or number itself otherwise.
 function defaultText(def: SettingDef): string {
   const v = settingOf(DEFAULTS, def.key);
-  if (def.kind.kind === "enum") {
-    const i = def.kind.values.indexOf(v);
-    return i >= 0 ? t(def.kind.labels[i]) : v;
+  switch (def.kind.kind) {
+    case "enum": {
+      const i = def.kind.values.indexOf(String(v));
+      return i >= 0 ? t(def.kind.labels[i]) : String(v);
+    }
+    case "bool":
+      return v ? t("Yes") : t("No");
+    case "int":
+      return String(v);
+    case "str":
+      return v === "" ? t("(empty)") : String(v);
   }
-  return v === "" ? t("(empty)") : v;
 }
 
-function SettingRow({ def, value, modified, onChange }: { def: SettingDef; value: string; modified: boolean; onChange: (v: string) => void }) {
+function SettingRow({ def, value, modified, onChange }: { def: SettingDef; value: Value; modified: boolean; onChange: (v: Value) => void }) {
   return (
     <div className={"setting-row" + (modified ? " modified" : "")} data-key={def.key} title={modified ? t("Changed from the default") : undefined}>
       <div className="setting-label">
@@ -176,12 +185,12 @@ function SettingRow({ def, value, modified, onChange }: { def: SettingDef; value
   );
 }
 
-function SettingControl({ def, value, onChange }: { def: SettingDef; value: string; onChange: (v: string) => void }) {
+function SettingControl({ def, value, onChange }: { def: SettingDef; value: Value; onChange: (v: Value) => void }) {
   switch (def.kind.kind) {
     case "enum": {
       const { values, labels } = def.kind;
       return (
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <select value={String(value)} onChange={(e) => onChange(e.target.value)}>
           {values.map((v, i) => (
             <option key={v} value={v}>
               {t(labels[i])}
@@ -191,8 +200,48 @@ function SettingControl({ def, value, onChange }: { def: SettingDef; value: stri
       );
     }
     case "str":
-      return <TextSetting value={value} onChange={onChange} />;
+      return <TextSetting value={String(value)} onChange={onChange} />;
+    case "bool":
+      return <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />;
+    case "int":
+      return <NumberSetting def={def} min={def.kind.min} max={def.kind.max} value={Number(value)} onChange={onChange} />;
   }
+}
+
+/// A whole number within the declared range, written when the field is
+/// left or Enter is pressed; out of range, the field says so with the same
+/// words the backend would use and writes nothing.
+function NumberSetting({ def, min, max, value, onChange }: { def: SettingDef; min: number; max: number; value: number; onChange: (v: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  const [invalid, setInvalid] = useState(false);
+  useEffect(() => {
+    setDraft(String(value));
+    setInvalid(false);
+  }, [value]);
+  const commit = () => {
+    const n = Number(draft);
+    const ok = /^-?\d+$/.test(draft.trim()) && n >= min && n <= max;
+    setInvalid(!ok);
+    if (ok && n !== value) onChange(n);
+  };
+  return (
+    <span className="setting-number">
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={1}
+        className={invalid ? "invalid" : undefined}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+        }}
+      />
+      {invalid && <span className="setting-invalid">{tMsg(`${def.label} must be a whole number between ${min} and ${max}`)}</span>}
+    </span>
+  );
 }
 
 /// Free text is written when the field is left or Enter is pressed, not

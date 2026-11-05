@@ -282,6 +282,33 @@ body,
   flex: none;
 }
 
+.setting-row input[type="number"] {
+  width: 90px;
+}
+
+.setting-row input[type="checkbox"] {
+  width: auto;
+  margin: 0 8px;
+}
+
+.setting-number {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.setting-row input.invalid {
+  border-color: oklch(50% 0.19 25);
+}
+
+.setting-invalid {
+  font-size: 11px;
+  color: oklch(50% 0.19 25);
+  max-width: 240px;
+  text-align: right;
+}
+
 .settings-empty {
   font-size: 13px;
   color: var(--cell-muted-fg);
