@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ipc, AutocompleteOut, ErrorOut, Profile, ScriptItem, StatementClassOut } from "./ipc";
 import { RunContext, RunMode, SqlEditor } from "./editor";
-import { setting, useSettings } from "./settings";
+import { executionFor, setEffective, setting, useSettings } from "./settings";
 import {
   useStore,
   activeTab,
@@ -321,7 +321,7 @@ function StudioInner() {
         .then((st) => useStore.getState().setTxnState(connId, st))
         .catch(() => {});
       const name = connById(useStore.getState(), connId)?.profile.name ?? "";
-      const min = setting("execution.idle_rollback_minutes");
+      const min = executionFor(connId).idle_rollback_minutes;
       setConnNote({
         warn: writes,
         text: writes
@@ -732,7 +732,7 @@ function StudioInner() {
         } else {
           const irreversible = classes.filter((c) => c.irreversible);
           // DDL a Rollback could undo: confirmed only when the setting asks.
-          const ddl = setting("execution.confirm_ddl_on_production")
+          const ddl = executionFor(connId).confirm_ddl_on_production
             ? classes.filter((c) => c.class === "ddl" && !c.irreversible)
             : [];
           const firstWrite = classes.some((c) => c.is_write) && !conn.txn?.hasWrites;
@@ -1843,6 +1843,7 @@ function StudioInner() {
           void queryClient.invalidateQueries({ queryKey: ["profiles"] });
         }}
         onConnected={(out) => {
+          setEffective(out.conn_id, out.execution);
           // M3.5: the connection is ADDED, the others stay open. The
           // introspection queries are keyed per connId: no clear.
           useStore.getState().addConnection({

@@ -206,15 +206,16 @@ impl AppState {
     /// string, on every lane.
     /// Opens a session with the effective Execution settings (§16): the
     /// global ones with the profile's overrides applied. Returns the
-    /// session and the override problems (unknown or not overridable),
-    /// which the caller shows once at connect.
+    /// session, those settings (the frontend shows them, never merges) and
+    /// the override problems (unknown or not overridable), which the
+    /// caller shows once at connect.
     async fn open_session(
         &self,
         profile: &storage::Profile,
         password: &str,
         tunnel_port: Option<u16>,
         global: &settings::Settings,
-    ) -> Result<(Session, Vec<settings::Issue>), ErrorOut> {
+    ) -> Result<(Session, settings::Execution, Vec<settings::Issue>), ErrorOut> {
         let driver = self
             .drivers
             .get(&profile.dialect)
@@ -243,7 +244,7 @@ impl AppState {
                 .set_manual_commit(true)
                 .map_err(|e| ErrorOut::from(&*e))?;
         }
-        Ok((session, warnings))
+        Ok((session, exec, warnings))
     }
 
     fn insert(&self, session: Session) -> u64 {
@@ -359,6 +360,9 @@ struct ConnectOut {
     /// PG (§3.3): one database per connection, the others are opened with
     /// `open_database`.
     one_db_per_conn: bool,
+    /// The Execution settings in force on this connection (§16): the global
+    /// ones with the profile's overrides. The frontend reads, never merges.
+    execution: settings::Execution,
     /// Per-connection overrides (§16) the profile asked for that this build
     /// could not apply (unknown or not overridable): told once at connect.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -443,7 +447,9 @@ impl TunnelSlot {
 struct OpenedProfile {
     profile: storage::Profile,
     session: Session,
-    /// Override problems found at connect (§16), shown once.
+    /// Execution settings in force (§16) and the override problems found at
+    /// connect, shown once.
+    execution: settings::Execution,
     warnings: Vec<settings::Issue>,
     tunnel: Option<TunnelSlot>,
     service: String,
@@ -554,12 +560,13 @@ async fn open_profile(
         None
     };
     let global = app.state::<settings::SettingsStore>().snapshot();
-    let (session, warnings) = app
+    let (session, execution, warnings) = app
         .state::<AppState>()
         .open_session(&profile, &password, tunnel_port, &global)
         .await?;
     Ok(OpenedProfile {
         profile,
+        execution,
         warnings,
         session,
         tunnel,
@@ -744,6 +751,7 @@ async fn connect_profile(
         ssh_typed,
         db_account,
         ssh_account,
+        execution,
         warnings,
     } = open_profile(&app, &db, id, password, ssh_secret).await?;
     let one_db_per_conn = !session.capabilities().can_change_database_in_session;
@@ -819,6 +827,7 @@ async fn connect_profile(
         profile,
         security,
         one_db_per_conn,
+        execution,
         warnings,
     })
 }
@@ -879,13 +888,16 @@ async fn open_database(
     } else {
         existing(&state)
     };
+    // The same overrides as the profile's connection (§16): the problems
+    // were already told at its connect.
+    let global = settings.snapshot();
+    let execution = settings::effective(&global, &profile.settings).0.execution;
     let id = match target {
         Some(id) => id,
         None => {
             let port = locked(&state.tunnels).get(&root).map(|t| t.port);
             profile.database = db.clone();
-            let global = settings.snapshot();
-            let (session, _) = state
+            let (session, _, _) = state
                 .open_session(&profile, &password, port, &global)
                 .await?;
             // Two opens of the same database at once (tree and page): the
@@ -911,6 +923,7 @@ async fn open_database(
         profile,
         security,
         one_db_per_conn: true,
+        execution,
         warnings: Vec::new(),
     })
 }
@@ -989,13 +1002,21 @@ fn profiles_list(db: State<'_, Db>) -> Result<Vec<storage::Profile>, String> {
 
 /// Server changed = new keychain entry (`storage::profile_save`): the old
 /// one is deleted here, it was the password of another server.
+#[derive(Serialize)]
+struct ProfileSaveOut {
+    id: i64,
+    /// The profile's open connections with their Execution settings after
+    /// the save (§16): its overrides may have changed.
+    effective: Vec<EffectiveOut>,
+}
+
 #[tauri::command]
 async fn profile_save(
     app: AppHandle,
     db: State<'_, Db>,
     settings: State<'_, settings::SettingsStore>,
     profile: storage::Profile,
-) -> Result<i64, String> {
+) -> Result<ProfileSaveOut, String> {
     let id = {
         let db = locked(&db.0);
         let before = profile.id.map(|id| db_account(&db, id)).transpose()?;
@@ -1009,34 +1030,70 @@ async fn profile_save(
     };
     // Its overrides may have changed (§16): reapply to this profile's open
     // connections so the limits take effect without a reconnect.
-    apply_profile_limits(&app, &settings.snapshot(), id, &profile.settings).await;
-    Ok(id)
+    let mut effective = Vec::new();
+    for (conn_id, session, execution) in effective_executions(&app, &settings.snapshot(), Some(id))
+    {
+        push_execution(&session, &execution).await;
+        effective.push(EffectiveOut { conn_id, execution });
+    }
+    Ok(ProfileSaveOut { id, effective })
 }
 
-/// Reapplies the effective Execution limits (§16) to every open connection
-/// of profile `id`, after its overrides changed.
-async fn apply_profile_limits(
+/// The Execution settings in force (§16) on every open connection: the
+/// global ones with the overrides of its profile, read from the profile
+/// store (the connections to the other databases of a PG server take their
+/// profile's). `only`: the connections of that profile alone. A connection
+/// without a profile (bench) takes the global ones.
+fn effective_executions(
     app: &AppHandle,
     global: &settings::Settings,
-    id: i64,
-    overrides: &serde_json::Map<String, serde_json::Value>,
-) {
-    let (eff, _) = settings::effective(global, overrides);
-    let limits = eff.execution.limits();
+    only: Option<i64>,
+) -> Vec<(u64, Arc<Session>, settings::Execution)> {
     let state = app.state::<AppState>();
-    let sessions: Vec<Arc<Session>> = {
-        let profiles = locked(&state.profiles);
+    let conns: Vec<(u64, Arc<Session>, Option<i64>)> = {
         let sessions = locked(&state.sessions);
-        profiles
+        let profiles = locked(&state.profiles);
+        let siblings = locked(&state.siblings);
+        sessions
             .iter()
-            .filter(|(_, pid)| **pid == id)
-            .filter_map(|(conn_id, _)| sessions.get(conn_id).cloned())
+            .map(|(id, s)| {
+                let root = siblings.get(id).map(|(root, _)| *root).unwrap_or(*id);
+                (*id, s.clone(), profiles.get(&root).copied())
+            })
+            .filter(|(_, _, pid)| only.map_or(true, |only| *pid == Some(only)))
             .collect()
     };
-    for session in sessions {
-        session.set_limits(limits);
-        let _ = session.apply_query_timeout().await;
-    }
+    let db = app.state::<Db>();
+    let db = locked(&db.0);
+    let mut by_profile: HashMap<i64, settings::Execution> = HashMap::new();
+    conns
+        .into_iter()
+        .map(|(id, session, pid)| {
+            let execution = match pid {
+                None => global.execution.clone(),
+                Some(pid) => by_profile
+                    .entry(pid)
+                    .or_insert_with(|| {
+                        let overrides = storage::profile_get(&db, pid)
+                            .ok()
+                            .flatten()
+                            .map(|p| p.settings)
+                            .unwrap_or_default();
+                        settings::effective(global, &overrides).0.execution
+                    })
+                    .clone(),
+            };
+            (id, session, execution)
+        })
+        .collect()
+}
+
+/// Pushes Execution settings (§16) into an open session: the limits are
+/// atomics, so a fetch already running sees them; the statement timeout is
+/// a server SET (best-effort: a dead connection gets it at reconnect).
+async fn push_execution(session: &Session, execution: &settings::Execution) {
+    session.set_limits(execution.limits());
+    let _ = session.apply_query_timeout().await;
 }
 
 #[tauri::command]
@@ -2930,35 +2987,54 @@ fn menu_follow_language(
     Ok(())
 }
 
-/// The Execution settings (§16) pushed into every open session: after a
-/// settings change, so a fetch already running sees the new limits. The
-/// statement timeout is a server SET (async, best-effort per session); the
-/// rest are atomics.
-async fn apply_limits(app: &AppHandle, settings: &settings::Settings) {
-    let limits = settings.execution.limits();
-    let sessions: Vec<Arc<Session>> = locked(&app.state::<AppState>().sessions)
-        .values()
-        .cloned()
-        .collect();
-    for session in sessions {
-        session.set_limits(limits);
-        let _ = session.apply_query_timeout().await;
+/// After a settings change (§16): the Execution settings in force on every
+/// open connection, pushed into the sessions when an Execution value
+/// changed (each one keeps its profile's overrides), and returned for the
+/// frontend either way.
+async fn apply_limits(
+    app: &AppHandle,
+    before: &settings::Settings,
+    after: &settings::Settings,
+) -> Vec<EffectiveOut> {
+    let changed = before.execution != after.execution;
+    let mut out = Vec::new();
+    for (conn_id, session, execution) in effective_executions(app, after, None) {
+        if changed {
+            push_execution(&session, &execution).await;
+        }
+        out.push(EffectiveOut { conn_id, execution });
     }
+    out
+}
+
+/// The Execution settings in force on one open connection (§16).
+#[derive(Serialize)]
+struct EffectiveOut {
+    conn_id: u64,
+    execution: settings::Execution,
 }
 
 /// The settings (§16) as the frontend receives them, with the problems
-/// found in the file at load: only the first `settings_get` carries them.
+/// found in the file at load (only the first `settings_get` carries them)
+/// and the Execution settings in force on each open connection.
 #[derive(Serialize)]
 struct SettingsOut {
     settings: settings::Settings,
     issues: Vec<settings::Issue>,
+    effective: Vec<EffectiveOut>,
 }
 
 #[tauri::command]
-fn settings_get(store: State<'_, settings::SettingsStore>) -> SettingsOut {
+fn settings_get(app: AppHandle, store: State<'_, settings::SettingsStore>) -> SettingsOut {
+    let settings = store.snapshot();
+    let effective = effective_executions(&app, &settings, None)
+        .into_iter()
+        .map(|(conn_id, _, execution)| EffectiveOut { conn_id, execution })
+        .collect();
     SettingsOut {
-        settings: store.snapshot(),
+        settings,
         issues: store.take_issues(),
+        effective,
     }
 }
 
@@ -2969,13 +3045,14 @@ async fn settings_set(
     store: State<'_, settings::SettingsStore>,
     patch: serde_json::Map<String, serde_json::Value>,
 ) -> Result<SettingsOut, String> {
-    let before = store.snapshot().appearance.language;
+    let before = store.snapshot();
     let settings = store.apply(&patch)?;
-    menu_follow_language(&app, before, &settings)?;
-    apply_limits(&app, &settings).await;
+    menu_follow_language(&app, before.appearance.language, &settings)?;
+    let effective = apply_limits(&app, &before, &settings).await;
     Ok(SettingsOut {
         settings,
         issues: Vec::new(),
+        effective,
     })
 }
 
@@ -2986,13 +3063,14 @@ async fn settings_reset(
     store: State<'_, settings::SettingsStore>,
     category: Option<String>,
 ) -> Result<SettingsOut, String> {
-    let before = store.snapshot().appearance.language;
+    let before = store.snapshot();
     let settings = store.reset(category.as_deref())?;
-    menu_follow_language(&app, before, &settings)?;
-    apply_limits(&app, &settings).await;
+    menu_follow_language(&app, before.appearance.language, &settings)?;
+    let effective = apply_limits(&app, &before, &settings).await;
     Ok(SettingsOut {
         settings,
         issues: Vec::new(),
+        effective,
     })
 }
 

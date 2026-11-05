@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Per-connection overrides of the execution settings now survive a change in the settings window: a connection with its own pause or page size kept the global value until a reconnect. The table page size, the idle-rollback message and the DDL confirmation of a connection follow its own values, and the "use the default" line of the connection dialog shows the global value in force, not the built-in one. An appearance or editor change no longer touches the open connections.
 - First start, before any profile: the connections dialog introduces the app with its icon and name in place of the empty list, three pieces in a short cascade; the form on the right is usable at once.
 - Tooltips are the app's own: same look on every platform, after half a second, at once on the next button of a toolbar, hidden on a click or a key; they also open on keyboard focus. The text is the one the hover showed before, now in full lines.
 - Dark theme: red text and borders (errors, Delete, failed statements) are brighter and readable on the dark background.

@@ -1821,7 +1821,14 @@ configuration file of a professional tool must be (DataGrip, DBeaver).
 - **Per-connection overrides** of the execution settings live on the
   profile (`profiles.settings_json`, a partial object of the overridable
   keys only) and are merged over the global values in Rust at connect and on
-  every settings change; the frontend never merges.
+  every settings change (each open session gets its own profile's merge,
+  read from the profile store, never the global values); the frontend never
+  merges. It needs some of them (page size, idle-rollback message, DDL
+  confirmation), so the answers of the commands that change them carry the
+  values in force per connection: `connect_profile` and `open_database`
+  for the new connection, `settings_set`/`settings_reset`/`settings_get` and
+  `profile_save` for every open one. No Tauri event: the app has none, and a
+  reply reaches the one caller that must react.
 - **What is not a setting**: anything that rewrites the user's SQL or adds a
   `COUNT(*)` (§5.2); the confirmation of irreversible operations on
   production (§9.7 point 3), which no setting can turn off; telemetry.

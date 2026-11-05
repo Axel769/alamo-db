@@ -2,6 +2,7 @@
 // connection of its own, opened the first time it is used and kept as a
 // child of the profile's connection.
 import { ipc } from "./ipc";
+import { setEffective } from "./settings";
 import { ConnUi, pgDbEntered, profileDatabase, useStore } from "./store";
 
 /// Connection already open on `db` for the profile's connection `rootId`,
@@ -20,6 +21,7 @@ export async function connForDatabase(rootId: number, db: string): Promise<numbe
   const open = openConnFor(useStore.getState().connections, rootId, db);
   if (open !== undefined) return open;
   const out = await ipc.openDatabase(rootId, db);
+  setEffective(out.conn_id, out.execution);
   const s = useStore.getState();
   // Opened twice at once (tree and page): the backend gives back the same
   // connection, added once.

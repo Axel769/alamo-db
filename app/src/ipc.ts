@@ -4,7 +4,10 @@ import { Settings, SettingValues } from "./settingsSchema";
 
 /// A value of settings.json this build could not take (§16): default used.
 export type SettingsIssue = { key: string; found: string; message: string };
-export type SettingsOut = { settings: Settings; issues: SettingsIssue[] };
+/// The Execution settings in force on one open connection (§16): the
+/// global ones with its profile's overrides, merged by the backend.
+export type EffectiveExecution = { conn_id: number; execution: Settings["execution"] };
+export type SettingsOut = { settings: Settings; issues: SettingsIssue[]; effective: EffectiveExecution[] };
 
 export type SemanticClass = "numeric" | "temporal" | "text" | "boolean" | "structured";
 
@@ -409,6 +412,8 @@ export type ConnectOut = {
   security: ConnSecurity;
   /// PG (§3.3): one database per connection, the others via `openDatabase`.
   one_db_per_conn: boolean;
+  /// Execution settings in force on this connection (§16).
+  execution: Settings["execution"];
   /// Per-connection overrides this build could not apply (§16): shown once.
   warnings?: SettingsIssue[];
 };
@@ -495,7 +500,10 @@ export const ipc = {
   sshHostKeyTrust: (id: number, fingerprint: string) =>
     invoke<void>("ssh_host_key_trust", { id, fingerprint }),
   profilesList: () => invoke<Profile[]>("profiles_list"),
-  profileSave: (profile: Profile) => invoke<number>("profile_save", { profile }),
+  /// `effective`: the profile's open connections with their Execution
+  /// settings after the save (§16), its overrides may have changed.
+  profileSave: (profile: Profile) =>
+    invoke<{ id: number; effective: EffectiveExecution[] }>("profile_save", { profile }),
   /// Databases of the server (PG: each one opened with `openDatabase`).
   serverDatabases: (connId: number) => invoke<SchemaOut[]>("server_databases", { connId }),
   /// Another database of the profile's PG server, on a connection of its

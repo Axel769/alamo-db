@@ -25,7 +25,7 @@ import {
   TxnState,
 } from "./ipc";
 import { canSwitchDb } from "./engines";
-import { setting } from "./settings";
+import { dropEffective, executionFor } from "./settings";
 
 export type StatementUi = {
   index: number;
@@ -594,6 +594,7 @@ export const useStore = create<Store>((set, get) => ({
       // The connections to the profile's other databases close with it
       // (§3.3, the backend closes them too).
       const gone = connFamily(s.connections, connId);
+      dropEffective(gone);
       const connections = s.connections.filter((c) => !gone.has(c.connId));
       const roots = profileConns(connections);
       return {
@@ -1080,7 +1081,8 @@ export function tableMayHaveMore(tab: TabUi): boolean {
   const st = tab.statements[0];
   if (tab.kind !== "table" || !st || st.resultId === null) return false;
   if (st.outcome?.kind !== "row_set" || st.outcome.state !== "complete") return false;
-  // A first page shorter than the page size (a setting, §16) is the whole table.
-  if (st.rows < setting("execution.table_page_rows")) return false;
+  // A first page shorter than the page size (a setting, §16, the
+  // connection's own) is the whole table.
+  if (st.rows < executionFor(tab.connId).table_page_rows) return false;
   return !(tab.more?.resultId === st.resultId && tab.more.done);
 }

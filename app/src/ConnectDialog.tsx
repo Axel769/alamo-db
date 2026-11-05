@@ -12,8 +12,8 @@ import { TLS_MODE_ORDER, TlsLevel, tlsMode, verifiesChain } from "./tlsModes";
 import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
 import { connColor } from "./connColor";
-import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingValues } from "./settingsSchema";
-import { settingOf } from "./settings";
+import { SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingValues } from "./settingsSchema";
+import { applyEffective, settingOf, useSettings } from "./settings";
 
 /// The settings a connection profile may override (§16): the overridable
 /// categories, in schema order. Phase 1 is the Execution ones.
@@ -350,7 +350,8 @@ export default function ConnectDialog({
   const friendly = error ? friendlyHint(error.message) : null;
 
   const save = async (): Promise<number> => {
-    const id = await ipc.profileSave(draft);
+    const { id, effective } = await ipc.profileSave(draft);
+    applyEffective(effective);
     await reload(id);
     return id;
   };
@@ -1399,10 +1400,12 @@ function ProfileSummary({
 }
 
 /// One overridable setting in the profile dialog (§16): a checkbox to keep
-/// the global default (showing its value), or a control for this
-/// connection's own value. `value` undefined = the default is in use.
+/// the global value (showing it, as set now in the settings window), or a
+/// control for this connection's own value. `value` undefined = the global
+/// one is in use.
 function OverrideRow({ def, value, onChange }: { def: SettingDef; value: unknown; onChange: (v: unknown) => void }) {
-  const dflt = settingOf(DEFAULTS, def.key as keyof SettingValues) as unknown;
+  const global = useSettings((s) => s.settings);
+  const dflt = settingOf(global, def.key as keyof SettingValues) as unknown;
   const overridden = value !== undefined;
   const current = overridden ? value : dflt;
   const defaultLabel = (): string => {
