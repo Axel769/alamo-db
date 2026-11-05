@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- First start, before any profile: the connections dialog introduces the app with its icon and name in place of the empty list, three pieces in a short cascade; the form on the right is usable at once.
 - Tooltips are the app's own: same look on every platform, after half a second, at once on the next button of a toolbar, hidden on a click or a key; they also open on keyboard focus. The text is the one the hover showed before, now in full lines.
 - Dark theme: red text and borders (errors, Delete, failed statements) are brighter and readable on the dark background.
 - Settings can be opened from the connections dialog (gear in its title): at the first start, before any connection, language and theme are one click away; the settings window sits above the dialog.

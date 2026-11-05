@@ -7,6 +7,7 @@ import { CertOut, ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut,
 import { SshPick, sshAuthLabel, sshSummary } from "./SshProfilesDialog";
 import { connInitials } from "./ConnectionPage";
 import { IconLock, IconLockOpen, IconPlus, IconSettings, IconShieldCheck, IconTrash, IconX } from "./icons";
+import logoUrl from "../src-tauri/icons/icon.svg";
 import { TLS_MODE_ORDER, TlsLevel, tlsMode, verifiesChain } from "./tlsModes";
 import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
@@ -578,8 +579,15 @@ export default function ConnectDialog({
                 </button>
               ))}
               {profiles.length === 0 && (
-                <div className="profile-empty">
-                  {t("No saved profile: fill in the server details on the right and press Connect.")}
+                // First start: the one time the app introduces itself. Three
+                // pieces in with a 50 ms stagger, the form on the right is
+                // usable at once.
+                <div className="welcome">
+                  <img className="welcome-logo" src={logoUrl} alt="" width={56} height={56} />
+                  <div className="welcome-name">Alamo DB</div>
+                  <div className="welcome-text">
+                    {t("No saved profile: fill in the server details on the right and press Connect.")}
+                  </div>
                 </div>
               )}
             </div>

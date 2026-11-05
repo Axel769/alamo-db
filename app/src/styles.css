@@ -4065,10 +4065,53 @@ select:focus-visible {
   background: var(--cell-selection-border);
 }
 
-.profile-empty {
-  padding: 14px 8px;
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 12px 14px;
+  text-align: center;
+}
+
+.welcome-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 13px;
+  box-shadow: var(--shadow-pop);
+}
+
+.welcome-name {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.welcome-text {
   font-size: 12.5px;
+  line-height: 1.4;
   color: var(--cell-muted-fg);
+}
+
+/* Seen once, when there is no profile yet: a 200 ms entrance per piece,
+   50 ms apart. Decorative, never blocking: the form is live meanwhile. */
+.welcome > * {
+  animation: welcome-in 200ms var(--ease-out) both;
+}
+
+.welcome > :nth-child(2) {
+  animation-delay: 50ms;
+}
+
+.welcome > :nth-child(3) {
+  animation-delay: 100ms;
+}
+
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 .profile-new {
@@ -5533,5 +5576,8 @@ button.profile-pill:hover {
   }
   .tip {
     transform: none;
+  }
+  .welcome > * {
+    animation-name: overlay-in; /* only the fade, no movement */
   }
 }
