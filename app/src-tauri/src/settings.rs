@@ -117,6 +117,80 @@ settings! {
     }
 }
 
+/// `app/src/settingsSchema.ts`: the same table for the frontend, generated
+/// so the two cannot drift. A test compares it with the file on disk;
+/// `cargo xtask gen-settings` writes it.
+#[cfg(test)]
+fn typescript() -> String {
+    let defaults = to_tree(&Settings::default());
+    let ts_type = |kind: Kind| match kind {
+        Kind::Enum(values) => values
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect::<Vec<_>>()
+            .join(" | "),
+        Kind::Str => "string".into(),
+    };
+    let ts_kind = |kind: Kind| match kind {
+        Kind::Enum(values) => format!(
+            "{{ kind: \"enum\", values: [{}] }}",
+            values
+                .iter()
+                .map(|v| format!("{v:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Kind::Str => "{ kind: \"str\" }".into(),
+    };
+    let mut out = String::from(
+        "// Generated from app/src-tauri/src/settings.rs by `cargo xtask gen-settings`:\n\
+         // do not edit. Every setting is declared once, there (§16).\n\n\
+         /// The settings as `settings_get` returns them.\n\
+         export type Settings = {\n",
+    );
+    let mut categories: Vec<&str> = Vec::new();
+    for def in DEFS {
+        if !categories.contains(&def.category) {
+            categories.push(def.category);
+        }
+    }
+    for cat in &categories {
+        out.push_str(&format!("  {cat}: {{\n"));
+        for def in DEFS.iter().filter(|d| d.category == *cat) {
+            let field = def.key.rsplit('.').next().unwrap_or(def.key);
+            out.push_str(&format!("    {field}: {};\n", ts_type(def.kind)));
+        }
+        out.push_str("  };\n");
+    }
+    out.push_str(
+        "};\n\n/// The same values by `category.field` key.\nexport type SettingValues = {\n",
+    );
+    for def in DEFS {
+        out.push_str(&format!("  {:?}: {};\n", def.key, ts_type(def.kind)));
+    }
+    out.push_str(
+        "};\n\n\
+         export type SettingKey = keyof SettingValues;\n\n\
+         export type SettingKind = { kind: \"enum\"; values: readonly string[] } | { kind: \"str\" };\n\n\
+         export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string };\n\n\
+         /// Every setting, in declaration order: what the window renders.\n\
+         export const SETTING_DEFS: readonly SettingDef[] = [\n",
+    );
+    for def in DEFS {
+        out.push_str(&format!(
+            "  {{ key: {:?}, category: {:?}, kind: {}, label: {:?} }},\n",
+            def.key,
+            def.category,
+            ts_kind(def.kind),
+            def.label
+        ));
+    }
+    out.push_str("];\n\n/// The defaults of this build.\nexport const DEFAULTS: Settings = ");
+    out.push_str(&serde_json::to_string_pretty(&defaults).expect("serializing defaults"));
+    out.push_str(";\n");
+    out
+}
+
 /// Format of the file; bumped only if the shape changes in a way the
 /// `version 1` reader cannot take.
 const FILE_VERSION: u64 = 1;
@@ -602,6 +676,23 @@ mod tests {
             }
             None => out.push(Box::leak(prefix.into_boxed_str())),
         }
+    }
+
+    /// The frontend's table is this one: `ALAMO_GEN_SETTINGS=1` writes it
+    /// (`cargo xtask gen-settings`), otherwise it must already match.
+    #[test]
+    fn settings_schema_ts_is_current() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/settingsSchema.ts");
+        let want = typescript();
+        if std::env::var_os("ALAMO_GEN_SETTINGS").is_some() {
+            std::fs::write(&path, want).unwrap();
+            return;
+        }
+        let have = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            have == want,
+            "app/src/settingsSchema.ts is out of date: run `cargo xtask gen-settings`"
+        );
     }
 
     /// Every label of `DEFS` has its Italian string: the window shows them

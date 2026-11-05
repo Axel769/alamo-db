@@ -4,11 +4,8 @@ import App from "./App";
 import "./tokens.css";
 import "./styles.css";
 import { applyTheme } from "./theme";
-import { invoke } from "@tauri-apps/api/core";
-import { lang } from "./i18n";
+import { bootSettings } from "./settings";
 
-// Before rendering: the first frame is born in the right theme already.
-applyTheme();
 // macOS: integrated title bar (tauri.conf.json, titleBarStyle
 // Overlay) — the toolbar leaves room for the window buttons.
 if (/Mac/.test(navigator.platform) && "__TAURI_INTERNALS__" in window) {
@@ -29,14 +26,23 @@ if ("__TAURI_INTERNALS__" in window) {
   });
 }
 
-// The native menu (macOS) is built in Italian before the webview exists:
-// relabel it in the chosen language.
-if ("__TAURI_INTERNALS__" in window) {
-  invoke("set_menu_lang", { lang: lang() }).catch(() => {});
+// Settings first (§16), then the theme, then the first frame: it is born
+// in the right language and theme already. Outside Tauri (plain browser)
+// the defaults stand.
+async function boot() {
+  if ("__TAURI_INTERNALS__" in window) {
+    try {
+      await bootSettings();
+    } catch (e) {
+      console.error("settings", e);
+    }
+  }
+  applyTheme();
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+void boot();

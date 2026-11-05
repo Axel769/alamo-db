@@ -148,6 +148,20 @@ body,
   max-width: 320px;
 }
 
+/* Values of settings.json this build could not take (§16): told once. */
+.settings-issues {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--state-modified);
+  color: var(--cell-fg);
+}
+
+.settings-issues ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 .activity-btn {
   position: relative;
   width: 42px;

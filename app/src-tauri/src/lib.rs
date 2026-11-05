@@ -2830,16 +2830,21 @@ fn build_menu(app: &AppHandle, italian: bool) -> tauri::Result<tauri::menu::Menu
         .build()
 }
 
-/// The language lives in the webview (localStorage `alamo.lang`), which the
-/// Rust side cannot read at startup: the frontend sends it here to relabel the
-/// native menu. No-op outside macOS.
-#[tauri::command]
-fn set_menu_lang(app: AppHandle, lang: String) -> Result<(), String> {
+/// macOS: the native menu follows the UI language (§16); rebuilt only when
+/// the language changed. No-op elsewhere.
+fn menu_follow_language(
+    app: &AppHandle,
+    before: settings::Language,
+    now: &settings::Settings,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    app.set_menu(build_menu(&app, lang != "en").map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    if now.appearance.language != before {
+        let italian = now.appearance.language == settings::Language::It;
+        app.set_menu(build_menu(app, italian).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    }
     #[cfg(not(target_os = "macos"))]
-    let _ = (app, lang);
+    let _ = (app, before, now);
     Ok(())
 }
 
@@ -2862,11 +2867,15 @@ fn settings_get(store: State<'_, settings::SettingsStore>) -> SettingsOut {
 /// `patch`: `category.field` → value, all applied or none (§16).
 #[tauri::command]
 fn settings_set(
+    app: AppHandle,
     store: State<'_, settings::SettingsStore>,
     patch: serde_json::Map<String, serde_json::Value>,
 ) -> Result<SettingsOut, String> {
+    let before = store.snapshot().appearance.language;
+    let settings = store.apply(&patch)?;
+    menu_follow_language(&app, before, &settings)?;
     Ok(SettingsOut {
-        settings: store.apply(&patch)?,
+        settings,
         issues: Vec::new(),
     })
 }
@@ -2874,11 +2883,15 @@ fn settings_set(
 /// Back to the defaults of one category, or of everything.
 #[tauri::command]
 fn settings_reset(
+    app: AppHandle,
     store: State<'_, settings::SettingsStore>,
     category: Option<String>,
 ) -> Result<SettingsOut, String> {
+    let before = store.snapshot().appearance.language;
+    let settings = store.reset(category.as_deref())?;
+    menu_follow_language(&app, before, &settings)?;
     Ok(SettingsOut {
-        settings: store.reset(category.as_deref())?,
+        settings,
         issues: Vec::new(),
     })
 }
@@ -2947,10 +2960,6 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             if remember_window {
                 maximize_on_first_launch(app)?;
             }
-            // Italian, the app default: the webview calls `set_menu_lang` as
-            // soon as it knows the chosen language.
-            #[cfg(target_os = "macos")]
-            app.set_menu(build_menu(app.handle(), true)?)?;
             // In auto mode the window must stay visible: WKWebView suspends
             // the rAF when occluded and the suspensions would pollute the measurement.
             if auto_mode_flag() {
@@ -2973,7 +2982,15 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             let config_dir = app.path().app_config_dir()?;
             #[cfg(feature = "e2e")]
             let config_dir = dir;
-            app.manage(settings::SettingsStore::load(&config_dir));
+            let store = settings::SettingsStore::load(&config_dir);
+            // The menu in the UI language from the first frame: the file
+            // is Rust's, no round trip through the webview.
+            #[cfg(target_os = "macos")]
+            app.set_menu(build_menu(
+                app.handle(),
+                store.snapshot().appearance.language == settings::Language::It,
+            )?)?;
+            app.manage(store);
             watch_idle_transactions(app.handle().clone());
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());
@@ -3013,7 +3030,6 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            set_menu_lang,
             settings_get,
             settings_set,
             settings_reset,

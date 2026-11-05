@@ -1,5 +1,10 @@
 // Types mirroring the IPC surface of §8 (serde in alamo-session/events.rs).
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { Settings, SettingValues } from "./settingsSchema";
+
+/// A value of settings.json this build could not take (§16): default used.
+export type SettingsIssue = { key: string; found: string; message: string };
+export type SettingsOut = { settings: Settings; issues: SettingsIssue[] };
 
 export type SemanticClass = "numeric" | "temporal" | "text" | "boolean" | "structured";
 
@@ -663,6 +668,9 @@ export const ipc = {
   appQuit: () => invoke<void>("app_quit"),
   /// Unsaved grid edits: they too stop the close.
   setUnsavedEdits: (on: boolean) => invoke<void>("set_unsaved_edits", { on }),
+  /// Settings (§16): the file is Rust's; `issues` only on the first read.
+  settingsGet: () => invoke<SettingsOut>("settings_get"),
+  settingsSet: (patch: Partial<SettingValues>) => invoke<SettingsOut>("settings_set", { patch }),
   /// Alpha updates: new version published (null = none).
   updateCheck: () => invoke<{ version: string; current_version: string; notes: string | null } | null>("update_check"),
   /// Downloads, installs and restarts: if it succeeds it does not return.

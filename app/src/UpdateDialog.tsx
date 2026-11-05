@@ -6,18 +6,12 @@ import { useEffect, useState } from "react";
 import { ErrorOut, ipc } from "./ipc";
 import { t, tMsg } from "./i18n";
 import { IconX } from "./icons";
+import { patchSettings, setting } from "./settings";
 
-/// Version dismissed with "Skip this version": not offered again until a
-/// different one comes out. Just a convenience for whoever uses the app: if
-/// storage is missing or fails, the window simply shows up again.
-const SKIP_KEY = "alamo.update.skip";
-
-function skipped(): string | null {
-  try {
-    return localStorage.getItem(SKIP_KEY);
-  } catch {
-    return null;
-  }
+/// Version dismissed with "Skip this version" (a setting, §16): not offered
+/// again until a different one comes out.
+function skipped(): string {
+  return setting("updates.skipped_version");
 }
 
 type Update = { version: string; current_version: string; notes: string | null };
@@ -39,11 +33,8 @@ export default function UpdateDialog() {
   };
   const skip = () => {
     if (!update || installing) return;
-    try {
-      localStorage.setItem(SKIP_KEY, update.version);
-    } catch {
-      // No storage: it just closes, at the next startup it shows up again.
-    }
+    // If the save fails it just closes: at the next startup it shows up again.
+    void patchSettings({ "updates.skipped_version": update.version }).catch(() => {});
     setUpdate(null);
   };
   const install = () => {

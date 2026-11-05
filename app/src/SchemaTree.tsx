@@ -14,7 +14,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { memo, useDeferredValue, useMemo, useState } from "react";
 import CatalogError from "./CatalogError";
-import { t } from "./i18n";
+import { t, useLang } from "./i18n";
 import { ipc, RelationKind, RelationOut } from "./ipc";
 import { ConnUi, hasDbFilter, profileConns, profileDatabase, rootConnId, useStore } from "./store";
 import { connForDatabase, openConnFor } from "./databases";
@@ -427,6 +427,7 @@ const SchemaNode = memo(function SchemaNode({
   favOnly?: boolean;
   defaultOpen?: boolean;
 }) {
+  useLang();
   const [open, setOpen] = useState(defaultOpen);
   const filtering = filter !== "";
   // Favorites only: favorite tables win — a schema with favorite tables
@@ -483,6 +484,7 @@ const RelationNode = memo(function RelationNode({
   rel: RelationOut;
   favs: Favs | null;
 }) {
+  useLang();
   const [open, setOpen] = useState(false);
   return (
     <>

@@ -19,6 +19,7 @@ import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from
 import { completionSpace } from "./completionSpace";
 import { sqlSyntax } from "./sqlSyntax";
 import { lang } from "./i18n";
+import { useSettings } from "./settings";
 import {
   Compartment,
   countColumn,
@@ -102,7 +103,7 @@ export function sqlPieces(text: string, dialect: string): { text: string; cls: s
 }
 
 /// Texts of the CodeMirror search panel (Cmd+F) in Italian; in English
-/// its own remain (applied only when `lang() === "it"`).
+/// its own remain (`phrasesExt`).
 const SEARCH_PHRASES_IT: Record<string, string> = {
   Find: "Cerca",
   Replace: "Sostituisci",
@@ -120,6 +121,10 @@ const SEARCH_PHRASES_IT: Record<string, string> = {
   "replaced match on line $": "sostituita la corrispondenza alla riga $",
   "on line": "alla riga",
 };
+
+function phrasesExt(): Extension {
+  return lang() === "it" ? EditorState.phrases.of(SEARCH_PHRASES_IT) : [];
+}
 
 const setErrorRange = StateEffect.define<{ from: number; to: number } | null>();
 
@@ -380,6 +385,9 @@ export class SqlEditor {
   view: EditorView;
   private themeCompartment = new Compartment();
   private langCompartment = new Compartment();
+  /// Search-panel texts in the UI language (§16): reconfigured on a
+  /// language change, and on a tab switch (per-state, like the schema).
+  private phrasesCompartment = new Compartment();
 
   /// Who computes the statement boundaries (the Studio, via IPC on the
   /// tab's connection); null = not available (disconnected tab).
@@ -393,6 +401,9 @@ export class SqlEditor {
     this.view = new EditorView({
       parent,
       state: this.newState(initialDoc, onRun, onDocChanged),
+    });
+    useSettings.subscribe((s, prev) => {
+      if (s.settings.appearance.language !== prev.settings.appearance.language) this.applyPhrases();
     });
   }
 
@@ -421,7 +432,7 @@ export class SqlEditor {
         // occurrences of the selected text highlight themselves.
         search({ top: true }),
         highlightSelectionMatches(),
-        ...(lang() === "it" ? [EditorState.phrases.of(SEARCH_PHRASES_IT)] : []),
+        this.phrasesCompartment.of(phrasesExt()),
         // Completion keymap without the mac shortcuts `Alt-\`` and `Alt-i`:
         // on non-US layouts `Alt-\`` IS how you type the backtick (MySQL
         // quoting) and CodeMirror would eat it. Ctrl-Space remains — which
@@ -544,6 +555,7 @@ export class SqlEditor {
   setState(state: EditorState): void {
     this.view.setState(state);
     this.applySchema();
+    this.applyPhrases();
     if (state.field(rangesField).stale) this.scheduleSplit(0);
     this.emitContext();
   }
@@ -623,6 +635,10 @@ export class SqlEditor {
 
   private applySchema(): void {
     this.view.dispatch({ effects: this.langCompartment.reconfigure(langExt()) });
+  }
+
+  private applyPhrases(): void {
+    this.view.dispatch({ effects: this.phrasesCompartment.reconfigure(phrasesExt()) });
   }
 
   sql(): string {

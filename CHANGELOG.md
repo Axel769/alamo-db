@@ -11,6 +11,10 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- Settings: language and theme change at once, without reloading the app. They are saved in settings.json in the app's configuration folder (with the skipped update version), no longer in the browser storage: the choices made so far are carried over at the first start.
+
 ## [0.1.0-alpha.13] - 2026-11-05
 
 - Updates and downloads now come from github.com/Axel769/alamo-db, the public source repository. The old alamo-db-releases repository only keeps a pointer to this version, so that installations up to alpha.12 find the update.

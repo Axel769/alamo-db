@@ -24,6 +24,7 @@ import { BLOCK, cacheFor } from "./rowCache";
 import { NewRowSlot, rowLayout } from "./rowLayout";
 import { pasteValues, toTsv } from "./tsv";
 import { tokens } from "./theme";
+import { useSettings } from "./settings";
 import { ExportDialog } from "./ExportDialog";
 
 const ROW_HEIGHT = 26; // compact density §9.6.2
@@ -238,7 +239,10 @@ export default function GridView({
   // Cell of the last editing commit: the selection must not advance (the
   // columns selected from the header stay selected).
   const keepSelection = useRef<{ cell: Item; columns: CompactSelection } | null>(null);
-  const tok = useMemo(tokens, []);
+  // The canvas cannot read CSS variables: new hex tokens when the theme
+  // changes (§16), the Glide theme below follows.
+  const resolvedTheme = useSettings((s) => s.resolvedTheme);
+  const tok = useMemo(() => tokens(), [resolvedTheme]);
 
   // Local sort (decision 10): the permutation lives in Rust, here only the
   // user's choice. `viewRows` is how many rows the view covers — on a still

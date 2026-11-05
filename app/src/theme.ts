@@ -2,6 +2,9 @@
 // oklch() on every webview, so the hex values of the approved table live
 // here. Conversion done as a build step of the document, not at runtime.
 
+import { patchSettings, setting, useSettings } from "./settings";
+import { SettingValues } from "./settingsSchema";
+
 export type Tokens = {
   typeNumeric: string;
   typeTemporal: string;
@@ -68,16 +71,14 @@ export const DARK: Tokens = {
   cellSelectionBorder: "#739BF5",
 };
 
-/// The user's theme preference (Settings). "system" = follows the operating
-/// system, as it was before one could choose.
-export type ThemePref = "system" | "light" | "dark";
+/// The user's theme preference (Settings, §16). "system" = follows the
+/// operating system, as it was before one could choose.
+export type ThemePref = SettingValues["appearance.theme"];
 
-const KEY = "alamo.theme";
 const systemDark = () => window.matchMedia("(prefers-color-scheme: dark)");
 
 export function themePref(): ThemePref {
-  const v = localStorage.getItem(KEY);
-  return v === "light" || v === "dark" ? v : "system";
+  return setting("appearance.theme");
 }
 
 /// The effective theme: the chosen one or, on "system", the system's.
@@ -88,22 +89,25 @@ export function resolvedTheme(): "light" | "dark" {
 
 /// Writes `data-theme` on <html>: the CSS tokens (tokens.css) follow it.
 /// To be called before the first render, so as not to flash in the wrong
-/// theme; on "system" it keeps listening for system changes.
+/// theme; then it follows the system and the setting. The canvas grid
+/// cannot read CSS: it takes `tokens()` again through the store's
+/// `resolvedTheme`.
 export function applyTheme(): void {
   const set = () => {
-    document.documentElement.dataset.theme = resolvedTheme();
+    const resolved = resolvedTheme();
+    document.documentElement.dataset.theme = resolved;
+    if (useSettings.getState().resolvedTheme !== resolved) useSettings.setState({ resolvedTheme: resolved });
   };
   set();
   systemDark().addEventListener("change", set);
+  useSettings.subscribe((s, prev) => {
+    if (s.settings.appearance.theme !== prev.settings.appearance.theme) set();
+  });
 }
 
-/// Persists the choice and reloads the app, like the language switch: the
-/// grid (canvas) and the editor read the tokens once, at creation.
-export function setThemePref(pref: ThemePref): void {
-  if (pref === themePref()) return;
-  if (pref === "system") localStorage.removeItem(KEY);
-  else localStorage.setItem(KEY, pref);
-  location.reload();
+/// Saves the choice (settings.json); rejects with the backend's message.
+export function setThemePref(pref: ThemePref): Promise<void> {
+  return patchSettings({ "appearance.theme": pref });
 }
 
 export function tokens(): Tokens {

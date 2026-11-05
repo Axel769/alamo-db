@@ -4,6 +4,7 @@
 //! `cargo xtask e2e` / `e2e-eval` — app with the remote control for tests (`e2e.rs`).
 //! `cargo xtask tls-lab` — the TLS targets of the matrix kept running, with
 //! their generated CA, for the e2e session and manual checks (`tls.rs`).
+//! `cargo xtask gen-settings` — regenerate `app/src/settingsSchema.ts` (§16).
 //!
 //! For every engine/version in the matrix it starts a throwaway container
 //! (testcontainers-rs, random port: does not collide with the development
@@ -115,6 +116,10 @@ fn main() {
             tls_lab();
             return;
         }
+        Some((cmd, _)) if cmd == "gen-settings" => {
+            gen_settings();
+            return;
+        }
         _ => {
             eprintln!("usage: cargo xtask test-matrix [filter]");
             eprintln!("     filter: substring of the id, e.g. `mysql`, `mariadb:11.8`, `tls`");
@@ -125,6 +130,7 @@ fn main() {
                 "     cargo xtask e2e-eval [file.js] — send JS to the open e2e app (or from stdin)"
             );
             eprintln!("     cargo xtask tls-lab — PG/MySQL/MariaDB with the lab CA on fixed ports, until Enter or Ctrl-C");
+            eprintln!("     cargo xtask gen-settings — regenerate app/src/settingsSchema.ts from settings.rs");
             std::process::exit(2);
         }
     };
@@ -490,6 +496,24 @@ fn with_lab_certificate(
             "--ssl-key=/tls/server-key.pem",
         ]),
     }
+}
+
+/// `cargo xtask gen-settings`: rewrites `app/src/settingsSchema.ts` from
+/// the `settings!` block of the app crate (§16). The generator is a test
+/// of that crate — this workspace cannot link it — switched to writing by
+/// `ALAMO_GEN_SETTINGS`; without the variable the same test checks that
+/// the file is current.
+fn gen_settings() {
+    let status = Command::new("cargo")
+        .args(["test", "-p", "alamo-app", "settings_schema_ts_is_current"])
+        .env("ALAMO_GEN_SETTINGS", "1")
+        .current_dir(repo_root())
+        .status()
+        .expect("cargo test");
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    println!("app/src/settingsSchema.ts regenerated");
 }
 
 /// `cargo xtask tls-lab`: the three `+tls` targets on fixed ports, for the

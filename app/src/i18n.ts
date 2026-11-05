@@ -7,23 +7,28 @@
 // `t()` substitutes them AFTER the lookup, so a translation can reorder them.
 // Numbers go through `locale()` for formatting.
 //
-// Changing the language reloads the app: the editor is a singleton outside
-// React (§9.2) and the strings are everywhere. An honest reload costs less
-// than a reactive system for something done once.
+// The language is a setting (§16): `t()` reads it on every call, so a
+// change applies at once — the Studio root re-renders on the settings
+// `version`, the editor reconfigures its search phrases.
 
-export type Lang = "it" | "en";
+import { patchSettings, setting, useSettings } from "./settings";
+import { SettingValues } from "./settingsSchema";
 
-const KEY = "alamo.lang";
+export type Lang = SettingValues["appearance.language"];
 
 export function lang(): Lang {
-  return localStorage.getItem(KEY) === "en" ? "en" : "it";
+  return setting("appearance.language");
 }
 
-/// Persists the choice and reloads the app (see the comment at the top).
-export function setLang(l: Lang): void {
-  if (l === lang()) return;
-  localStorage.setItem(KEY, l);
-  location.reload();
+/// Saves the choice (settings.json); rejects with the backend's message.
+export function setLang(l: Lang): Promise<void> {
+  return patchSettings({ "appearance.language": l });
+}
+
+/// The settings `version`, for a memoized component that shows translated
+/// text: subscribing makes it re-render on a language change.
+export function useLang(): number {
+  return useSettings((s) => s.version);
 }
 
 /// Locale for `toLocaleString` on numbers, consistent with the UI language.
@@ -782,6 +787,7 @@ const IT: Record<string, string> = {
   // Settings (§16): labels of `settings.rs` DEFS. A Rust test fails when
   // one is missing here.
   "Skipped version": "Versione saltata",
+  "Some values in settings.json could not be used and are back to the default:": "Alcuni valori di settings.json non si sono potuti usare e sono tornati al predefinito:",
 };
 
 /// Backend (Rust) messages EN -> IT, used only by `tMsg`. Keys are the Rust

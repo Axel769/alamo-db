@@ -44,7 +44,7 @@ import { ExportDialog } from "./ExportDialog";
 import { dropCache } from "./rowCache";
 import { connForDatabase } from "./databases";
 import { asErrorOut } from "./errors";
-import { locale, t, tMsg } from "./i18n";
+import { locale, t, tMsg, useLang } from "./i18n";
 import {
   closeTabsGuarded,
   cycleMru,
@@ -98,6 +98,9 @@ export default function Studio() {
 }
 
 function StudioInner() {
+  // Settings version (§16): a language change re-renders the whole tree
+  // from here, `t()` reads the language on every call.
+  useLang();
   const editorRef = useRef<SqlEditor | null>(null);
   const editorHost = useRef<HTMLDivElement | null>(null);
   const store = useStore();
