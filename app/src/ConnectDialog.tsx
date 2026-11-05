@@ -79,6 +79,10 @@ type Props = {
   sshPick: { id: number | null; v: number } | null;
 };
 
+/// Longest profile name (the same limit as `storage::profile_save`): a
+/// name is a label in a 240 px panel, not a description.
+const PROFILE_NAME_MAX = 120;
+
 export default function ConnectDialog({
   open,
   connected,
@@ -649,6 +653,7 @@ export default function ConnectDialog({
               {t("Name")}
               <input
                 value={draft.name}
+                maxLength={PROFILE_NAME_MAX}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}

@@ -388,7 +388,12 @@ pub fn profile_get(db: &Connection, id: i64) -> rusqlite::Result<Option<Profile>
 /// Server changed (host, port, user or dialect) = new keychain tag: the
 /// saved password was for the other server and must not go out to this one.
 /// The caller deletes the old entry.
+/// Longest profile name, in characters: the dialog stops there, an import
+/// is cut there. A label of a 240 px panel, not a description.
+pub const PROFILE_NAME_MAX: usize = 120;
+
 pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
+    let name: String = p.name.chars().take(PROFILE_NAME_MAX).collect();
     match p.id {
         Some(id) => {
             db.execute(
@@ -405,7 +410,7 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                 ),
                 params![
                     id,
-                    p.name,
+                    name,
                     p.host,
                     p.port,
                     p.database,
@@ -431,7 +436,7 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, {NEW_SECRET_TAG})"
                 ),
                 params![
-                    p.name,
+                    name,
                     p.host,
                     p.port,
                     p.database,
