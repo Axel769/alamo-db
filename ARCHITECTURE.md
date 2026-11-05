@@ -1401,7 +1401,10 @@ and the UI must warn, not silently make an open transaction disappear.
   reaches the keychain only once the bastion has accepted it, and only if
   asked.
 - **Credentials in the system keychain** (`keyring` crate) — never in plain text in the
-  configuration file.
+  configuration file. The Connections setting "Passwords" (§16) can turn
+  the offer off altogether ("always ask, never save"): the save box
+  disappears and a connect clears what was saved, the same path as "do not
+  save it".
 
 ### 12.1 Linux caveat `[DEFERRED — outside v1 target]`
 
@@ -1863,5 +1866,12 @@ indent, wrap, run target, write confirmations, history size); Execution
 (pause rows, table page, memory budget, manual commit, idle rollback, DDL
 confirmation) pushed into the open sessions; the server-side query timeout
 per dialect (§6.2); and per-connection overrides of the Execution settings.
+Phase two is in too: Data (NULL word, date format and time zone, thousands
+separator, characters per cell, binary rendering: §8.2), Copy (separator,
+header line, quotes), Export defaults (format, CSV delimiter, byte order
+mark, line ending, INSERT batch), Connections (connect timeout, TCP and SSH
+keep-alive, automatic reconnection, password policy) and Updates (check at
+startup, check now, diagnostics, settings folder). Keyboard shortcuts are
+the phase left.
 
 ---
