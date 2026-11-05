@@ -16,6 +16,7 @@ mod dbfilter;
 #[cfg(feature = "e2e")]
 mod e2e;
 mod secrets;
+mod settings;
 mod storage;
 mod transfer;
 
@@ -2842,6 +2843,46 @@ fn set_menu_lang(app: AppHandle, lang: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The settings (§16) as the frontend receives them, with the problems
+/// found in the file at load: only the first `settings_get` carries them.
+#[derive(Serialize)]
+struct SettingsOut {
+    settings: settings::Settings,
+    issues: Vec<settings::Issue>,
+}
+
+#[tauri::command]
+fn settings_get(store: State<'_, settings::SettingsStore>) -> SettingsOut {
+    SettingsOut {
+        settings: store.snapshot(),
+        issues: store.take_issues(),
+    }
+}
+
+/// `patch`: `category.field` → value, all applied or none (§16).
+#[tauri::command]
+fn settings_set(
+    store: State<'_, settings::SettingsStore>,
+    patch: serde_json::Map<String, serde_json::Value>,
+) -> Result<SettingsOut, String> {
+    Ok(SettingsOut {
+        settings: store.apply(&patch)?,
+        issues: Vec::new(),
+    })
+}
+
+/// Back to the defaults of one category, or of everything.
+#[tauri::command]
+fn settings_reset(
+    store: State<'_, settings::SettingsStore>,
+    category: Option<String>,
+) -> Result<SettingsOut, String> {
+    Ok(SettingsOut {
+        settings: store.reset(category.as_deref())?,
+        issues: Vec::new(),
+    })
+}
+
 /// macOS smart quotes, smart dashes and text replacements off in the
 /// webview: typed `"` became `“”` and `--` became `—` in cells, SQL and
 /// filters. WebKit reads these keys from the app's defaults and falls back
@@ -2925,6 +2966,14 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             let dir = e2e::data_dir()?;
             let db = storage::open(&dir).map_err(Box::<dyn std::error::Error>::from)?;
             app.manage(Db(Mutex::new(db)));
+            // §16: `settings.json` in the config directory (the same folder
+            // as the data on macOS and Windows, `~/.config` on Linux); in
+            // e2e next to the test database.
+            #[cfg(not(feature = "e2e"))]
+            let config_dir = app.path().app_config_dir()?;
+            #[cfg(feature = "e2e")]
+            let config_dir = dir;
+            app.manage(settings::SettingsStore::load(&config_dir));
             watch_idle_transactions(app.handle().clone());
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());
@@ -2965,6 +3014,9 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
         })
         .invoke_handler(tauri::generate_handler![
             set_menu_lang,
+            settings_get,
+            settings_set,
+            settings_reset,
             engines,
             connect,
             connect_profile,

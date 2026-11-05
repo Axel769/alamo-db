@@ -1771,3 +1771,62 @@ by far the most common cause of "I can't connect". MariaDB **does not implement*
 string. **The MariaDB flag must be taken from the handshake, never from parsing the version.**
 
 ---
+
+## 16. Settings (decided 2026-11-05)
+
+What the user tunes about the tool, as opposed to a connection profile
+(§9.1) or the workspace (tabs, panel sizes, last database: UI state, which
+stays in the webview or in the `kv` table). Until alpha.13 the only two
+settings (language, theme) lived in `localStorage` and every change reloaded
+the app; the thresholds that matter to a DBA (pause rows, page size, budget,
+idle rollback, timeouts) were constants.
+
+**One `settings.json`, owned by Rust**, in the app's config directory
+(`app_config_dir`: the data folder on macOS and Windows, `~/.config` on
+Linux; the test folder in the e2e build). Rust owns it because the session
+consumes most of the values and because the native menu needs the language
+before the webview exists. Rejected: the `kv` table of the SQLite database —
+already there, but not readable, editable or copyable by hand, which a
+configuration file of a professional tool must be (DataGrip, DBeaver).
+
+- **Only non-default values are written**, plus `version`. A default can
+  change in a later build without touching anybody's file; "Reset" is the
+  removal of keys.
+- **A value that does not validate falls back to the default and is reported
+  once** in the Settings window, with the value found: never silently. A key
+  this build does not know is kept and written back untouched, so a newer
+  build's settings survive a downgrade. An unreadable file is renamed to
+  `settings.json.invalid` and reported: a typo in a hand edit must not wipe
+  the user's choices.
+- **Every setting is declared once**, in the `settings!` block of
+  `app/src-tauri/src/settings.rs`: the typed structs the code reads, the
+  `DEFS` table (key, kind with its range or values, category, label, help)
+  that drives validation and the window, and the keys of the file all come
+  from it. The frontend's copy of the table is a generated
+  `app/src/settingsSchema.ts`, produced by a test of the app crate (`cargo
+  xtask gen-settings` wraps it; `xtask` is a separate workspace and cannot
+  link the app crate), so `cargo test` fails when the two drift. Labels and
+  help are English strings and therefore i18n keys (decision 14); a test
+  fails when one has no Italian entry.
+- **Validation lives in Rust**, for the file, the IPC patch and the
+  per-profile overrides alike, through the same table. Errors are in the
+  user's words ("Theme must be one of system, light, dark"), translated by
+  `tMsg`. The window validates with the same ranges before calling, so the
+  backend error is a safety net, not the UX.
+- **Changes apply at once, without reload**: language and theme through a
+  store the components subscribe to, the editor through CodeMirror
+  compartments, the grid through props; execution values are pushed into
+  the open sessions (`Session::set_limits`). Network timeouts and keep-alive
+  apply to the next connections, and the window says so under the setting.
+- **Per-connection overrides** of the execution settings live on the
+  profile (`profiles.settings_json`, a partial object of the overridable
+  keys only) and are merged over the global values in Rust at connect and on
+  every settings change; the frontend never merges.
+- **What is not a setting**: anything that rewrites the user's SQL or adds a
+  `COUNT(*)` (§5.2); the confirmation of irreversible operations on
+  production (§9.7 point 3), which no setting can turn off; telemetry.
+
+Phases: structure with Appearance, Editor and Execution first; then Data,
+Export, Connections, Updates; keyboard shortcuts last.
+
+---

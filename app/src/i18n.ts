@@ -779,6 +779,9 @@ const IT: Record<string, string> = {
   "Delete row": "Elimina riga",
   "Delete rows": "Elimina righe",
   "Del": "Canc",
+  // Settings (§16): labels of `settings.rs` DEFS. A Rust test fails when
+  // one is missing here.
+  "Skipped version": "Versione saltata",
 };
 
 /// Backend (Rust) messages EN -> IT, used only by `tMsg`. Keys are the Rust
@@ -901,4 +904,11 @@ const MSG: Record<string, string> = {
   "SSH key not found on this computer: {key}": "chiave SSH non trovata su questo computer: {key}",
   "invalid selection": "selezione non valida",
   "SSH tunnel missing from the file": "tunnel SSH assente dal file",
+  // settings.rs (§16)
+  "Unknown setting {key}": "Impostazione sconosciuta: {key}",
+  "Unknown settings category {c}": "Categoria di impostazioni sconosciuta: {c}",
+  "{label} must be one of {values}": "{label} deve essere uno tra: {values}",
+  "{label} must be text": "{label} deve essere un testo",
+  "Settings file could not be written: {e}": "Impossibile scrivere il file delle impostazioni: {e}",
+  "settings.json could not be read ({why}): it was renamed to {name} and the defaults are in use": "settings.json non si è potuto leggere ({why}): è stato rinominato in {name} e sono in uso i valori predefiniti",
 };
