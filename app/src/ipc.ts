@@ -391,6 +391,14 @@ export type ExportOptions = {
   neutralize_formulas?: boolean;
   /// TSV/CSV: every field between quotes (the Copy setting). Absent = off.
   quote_all?: boolean;
+  /// CSV: the character between fields. Absent = ",".
+  delimiter?: string;
+  /// Absent = "lf".
+  line_ending?: "lf" | "crlf";
+  /// TSV/CSV files: UTF-8 byte order mark in front. Absent = off.
+  bom?: boolean;
+  /// Rows per INSERT statement. Absent = 500.
+  insert_batch?: number;
 };
 
 export type ExportOut = { path: string; rows: number };

@@ -45,6 +45,13 @@ export type Settings = {
     headers: boolean;
     quote: "needed" | "always";
   };
+  export: {
+    format: "csv" | "tsv" | "json" | "insert";
+    csv_delimiter: "comma" | "semicolon";
+    csv_bom: boolean;
+    line_ending: "lf" | "crlf";
+    insert_batch: number;
+  };
   updates: {
     skipped_version: string;
   };
@@ -84,6 +91,11 @@ export type SettingValues = {
   "copy.separator": "tab" | "comma" | "semicolon";
   "copy.headers": boolean;
   "copy.quote": "needed" | "always";
+  "export.format": "csv" | "tsv" | "json" | "insert";
+  "export.csv_delimiter": "comma" | "semicolon";
+  "export.csv_bom": boolean;
+  "export.line_ending": "lf" | "crlf";
+  "export.insert_batch": number;
   "updates.skipped_version": string;
 };
 
@@ -105,6 +117,7 @@ export const SETTING_CATEGORIES: readonly { id: string; label: string; overridab
   { id: "execution", label: "Execution", overridable: true },
   { id: "data", label: "Data", overridable: false },
   { id: "copy", label: "Copy", overridable: false },
+  { id: "export", label: "Export", overridable: false },
   { id: "updates", label: "Updates", overridable: false },
 ];
 
@@ -142,6 +155,11 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "copy.separator", category: "copy", kind: { kind: "enum", values: ["tab", "comma", "semicolon"], labels: ["Tab", "Comma", "Semicolon"] }, label: "Separator between cells (⌘C / Ctrl+C)", help: "Paste into the grid always reads tabs, as spreadsheets write them." },
   { key: "copy.headers", category: "copy", kind: { kind: "bool" }, label: "Column names on the first line", help: "When more than one cell is copied, also with \"Copy selection as\"." },
   { key: "copy.quote", category: "copy", kind: { kind: "enum", values: ["needed", "always"], labels: ["Only when needed", "Always"] }, label: "Quotes around values", help: "\"Only when needed\": a value with the separator, quotes or a newline." },
+  { key: "export.format", category: "export", kind: { kind: "enum", values: ["csv", "tsv", "json", "insert"], labels: ["CSV", "TSV", "JSON", "INSERT"] }, label: "Format proposed by the export dialog", help: "" },
+  { key: "export.csv_delimiter", category: "export", kind: { kind: "enum", values: ["comma", "semicolon"], labels: ["Comma", "Semicolon"] }, label: "CSV delimiter", help: "Excel in Italian and other European locales opens semicolon-separated files directly." },
+  { key: "export.csv_bom", category: "export", kind: { kind: "bool" }, label: "UTF-8 byte order mark in CSV and TSV", help: "Lets Excel on Windows read accented text; other tools may show it as a stray character." },
+  { key: "export.line_ending", category: "export", kind: { kind: "enum", values: ["lf", "crlf"], labels: ["LF (Unix, macOS)", "CRLF (Windows)"] }, label: "Line ending", help: "" },
+  { key: "export.insert_batch", category: "export", kind: { kind: "int", min: 1, max: 10000 }, label: "Rows per INSERT statement", help: "" },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -188,6 +206,13 @@ export const DEFAULTS: Settings = {
     "query_timeout_s": 0,
     "sql_pause_rows": 200,
     "table_page_rows": 500
+  },
+  "export": {
+    "csv_bom": false,
+    "csv_delimiter": "comma",
+    "format": "csv",
+    "insert_batch": 500,
+    "line_ending": "lf"
   },
   "updates": {
     "skipped_version": ""

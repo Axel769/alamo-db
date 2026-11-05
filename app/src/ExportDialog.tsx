@@ -1,9 +1,14 @@
-// Export dialog (decision 11): format and its options. The file choice and
-// the writing live in the backend; the caller says which command runs.
+// Export dialog (decision 11): format and its options, starting from the
+// Export settings (§16) and changeable for this export. The file choice
+// and the writing live in the backend; the caller says which command runs.
 import { useEffect, useState } from "react";
 import { ExportFormat, ExportOptions, ExportOut, ScriptExportTarget } from "./ipc";
 import { locale, t, tMsg } from "./i18n";
 import { IconX } from "./icons";
+import { useSettings } from "./settings";
+
+const DELIMITERS = { comma: ",", semicolon: ";" } as const;
+type Delimiter = keyof typeof DELIMITERS;
 
 export function ExportDialog({
   title,
@@ -27,7 +32,12 @@ export function ExportDialog({
   onExport: (opts: ExportOptions, target: ScriptExportTarget) => Promise<ExportOut | null>;
   onClose: () => void;
 }) {
-  const [format, setFormat] = useState<ExportFormat>("csv");
+  const defaults = useSettings.getState().settings.export;
+  const [format, setFormat] = useState<ExportFormat>(defaults.format);
+  const [delimiter, setDelimiter] = useState<Delimiter>(defaults.csv_delimiter);
+  const [bom, setBom] = useState(defaults.csv_bom);
+  const [lineEnding, setLineEnding] = useState(defaults.line_ending);
+  const [batch, setBatch] = useState(defaults.insert_batch);
   const [headers, setHeaders] = useState(true);
   const [neutralize, setNeutralize] = useState(true);
   const [table, setTable] = useState(tableName ?? "");
@@ -42,7 +52,16 @@ export function ExportDialog({
     setError(null);
     try {
       const out = await onExport(
-        { format, headers, table_name: table, neutralize_formulas: neutralize },
+        {
+          format,
+          headers,
+          table_name: table,
+          neutralize_formulas: neutralize,
+          delimiter: DELIMITERS[delimiter],
+          line_ending: lineEnding,
+          bom,
+          insert_batch: batch,
+        },
         target
       );
       if (out) setDone(out);
@@ -69,7 +88,7 @@ export function ExportDialog({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [done, busy, format, headers, neutralize, table, target]);
+  }, [done, busy, format, headers, neutralize, table, target, delimiter, bom, lineEnding, batch]);
 
   const delimited = format === "csv" || format === "tsv";
   return (
@@ -104,10 +123,32 @@ export function ExportDialog({
               </select>
             </label>
           )}
+          {format === "csv" && (
+            <label>
+              {t("Delimiter")}
+              <select value={delimiter} onChange={(e) => setDelimiter(e.target.value as Delimiter)}>
+                <option value="comma">{t("Comma")}</option>
+                <option value="semicolon">{t("Semicolon")}</option>
+              </select>
+            </label>
+          )}
+          <label>
+            {t("Line ending")}
+            <select value={lineEnding} onChange={(e) => setLineEnding(e.target.value as "lf" | "crlf")}>
+              <option value="lf">{t("LF (Unix, macOS)")}</option>
+              <option value="crlf">{t("CRLF (Windows)")}</option>
+            </select>
+          </label>
           {delimited && (
             <label className="check">
               <input type="checkbox" checked={headers} onChange={(e) => setHeaders(e.target.checked)} />
               {t("Header row")}
+            </label>
+          )}
+          {delimited && (
+            <label className="check">
+              <input type="checkbox" checked={bom} onChange={(e) => setBom(e.target.checked)} />
+              {t("UTF-8 byte order mark")}
             </label>
           )}
           {delimited && (
@@ -120,6 +161,22 @@ export function ExportDialog({
             <div className="muted export-note">
               {t("Prefixes ' to values starting with = + - @: opening the file, Excel does not run them as formulas")}
             </div>
+          )}
+          {format === "insert" && (
+            <label>
+              {t("Rows per INSERT")}
+              <input
+                type="number"
+                min={1}
+                max={10000}
+                step={1}
+                value={batch}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (Number.isInteger(n) && n >= 1) setBatch(Math.min(n, 10000));
+                }}
+              />
+            </label>
           )}
           {format === "insert" &&
             (tableName === null ? (

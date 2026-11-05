@@ -22,9 +22,6 @@ use crate::registry::LiveResult;
 /// not to inflate memory.
 const WINDOW_ROWS: u64 = 1024;
 
-/// Rows per statement in the INSERT format.
-const INSERT_BATCH: usize = 500;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormat {
@@ -45,11 +42,36 @@ impl ExportFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEnding {
+    Lf,
+    Crlf,
+}
+
+impl LineEnding {
+    fn as_str(self) -> &'static str {
+        match self {
+            LineEnding::Lf => "\n",
+            LineEnding::Crlf => "\r\n",
+        }
+    }
+}
+
 /// What the caller leaves out takes the `Default` below.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ExportOptions {
     pub format: ExportFormat,
+    /// CSV only: the character between the fields (`,` when absent); TSV
+    /// is always tab-separated.
+    pub delimiter: Option<char>,
+    pub line_ending: LineEnding,
+    /// TSV/CSV files only: a UTF-8 byte order mark in front, for Excel on
+    /// Windows. Never in the clipboard (see `bom_bytes`).
+    pub bom: bool,
+    /// Rows per statement in the INSERT format (at least 1).
+    pub insert_batch: usize,
     /// Header row (TSV/CSV only).
     pub headers: bool,
     /// Table name for the INSERT format ("schema.table" allowed).
@@ -68,10 +90,34 @@ impl Default for ExportOptions {
     fn default() -> Self {
         ExportOptions {
             format: ExportFormat::Csv,
+            delimiter: None,
+            line_ending: LineEnding::Lf,
+            bom: false,
+            insert_batch: 500,
             headers: false,
             table_name: String::new(),
             neutralize_formulas: true,
             quote_all: false,
+        }
+    }
+}
+
+impl ExportOptions {
+    /// What a file starts with: the UTF-8 byte order mark when asked for a
+    /// delimited format, nothing otherwise (JSON forbids it, SQL does not
+    /// want it, the clipboard never gets it).
+    pub fn bom_bytes(&self) -> &'static [u8] {
+        if self.bom && matches!(self.format, ExportFormat::Tsv | ExportFormat::Csv) {
+            "\u{FEFF}".as_bytes()
+        } else {
+            &[]
+        }
+    }
+
+    fn delimiter(&self) -> char {
+        match self.format {
+            ExportFormat::Tsv => '\t',
+            _ => self.delimiter.unwrap_or(','),
         }
     }
 }
@@ -119,10 +165,11 @@ pub fn render(
         .map(|m| m.name.as_str())
         .collect();
     let io = |e: std::io::Error| Box::new(DbError::internal(format!("write failed: {e}")));
+    let nl = opts.line_ending.as_str();
 
     match opts.format {
         ExportFormat::Tsv | ExportFormat::Csv => {
-            let delim = delimiter(opts.format);
+            let delim = opts.delimiter();
             let neutralize = opts.neutralize_formulas;
             if opts.headers {
                 let names: Vec<_> = col_names
@@ -130,7 +177,7 @@ pub fn render(
                     .map(|n| delimited_field(n, neutralize))
                     .collect();
                 let names: Vec<&str> = names.iter().map(AsRef::as_ref).collect();
-                write_delimited_row(out, &names, delim, opts.quote_all).map_err(io)?;
+                write_delimited_row(out, &names, delim, opts.quote_all, nl).map_err(io)?;
             }
             let mut written = 0u64;
             for_each_row(live, &rows, &cols, |cells| {
@@ -139,7 +186,7 @@ pub fn render(
                     .map(|c| delimited_field(c.as_deref().unwrap_or(""), neutralize))
                     .collect();
                 let fields: Vec<&str> = fields.iter().map(AsRef::as_ref).collect();
-                write_delimited_row(out, &fields, delim, opts.quote_all)?;
+                write_delimited_row(out, &fields, delim, opts.quote_all, nl)?;
                 written += 1;
                 Ok(())
             })
@@ -150,7 +197,7 @@ pub fn render(
             out.write_all(b"[").map_err(io)?;
             let mut written = 0u64;
             for_each_row(live, &rows, &cols, |cells| {
-                out.write_all(if written == 0 { b"\n  {" } else { b",\n  {" })?;
+                write!(out, "{}{nl}  {{", if written == 0 { "" } else { "," })?;
                 for (i, (name, v)) in col_names.iter().zip(cells).enumerate() {
                     if i > 0 {
                         out.write_all(b", ")?;
@@ -172,8 +219,7 @@ pub fn render(
                 Ok(())
             })
             .map_err(io)?;
-            out.write_all(if written == 0 { b"]\n" } else { b"\n]\n" })
-                .map_err(io)?;
+            write!(out, "{}]{nl}", if written == 0 { "" } else { nl }).map_err(io)?;
             Ok(written)
         }
         ExportFormat::Insert => {
@@ -183,6 +229,7 @@ pub fn render(
                 .map(|n| dialect.quote_identifier(n))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let batch = opts.insert_batch.max(1);
             let mut written = 0u64;
             let mut in_batch = 0usize;
             for_each_row(live, &rows, &cols, |cells| {
@@ -191,7 +238,7 @@ pub fn render(
                 } else {
                     out.write_all(b",")?;
                 }
-                out.write_all(b"\n  (")?;
+                write!(out, "{nl}  (")?;
                 for (i, v) in cells.iter().enumerate() {
                     if i > 0 {
                         out.write_all(b", ")?;
@@ -204,15 +251,15 @@ pub fn render(
                 out.write_all(b")")?;
                 written += 1;
                 in_batch += 1;
-                if in_batch == INSERT_BATCH {
-                    out.write_all(b";\n")?;
+                if in_batch == batch {
+                    write!(out, ";{nl}")?;
                     in_batch = 0;
                 }
                 Ok(())
             })
             .map_err(io)?;
             if in_batch > 0 {
-                out.write_all(b";\n").map_err(io)?;
+                write!(out, ";{nl}").map_err(io)?;
             }
             Ok(written)
         }
@@ -244,6 +291,7 @@ pub fn render_script(
 ) -> Result<u64, Box<DbError>> {
     let io = |e: std::io::Error| Box::new(DbError::internal(format!("write failed: {e}")));
     let json = opts.format == ExportFormat::Json;
+    let nl = opts.line_ending.as_str();
     if json {
         out.write_all(b"[").map_err(io)?;
     }
@@ -253,23 +301,23 @@ pub fn render_script(
         match opts.format {
             ExportFormat::Tsv | ExportFormat::Csv => {
                 if i > 0 {
-                    out.write_all(b"\n").map_err(io)?;
+                    out.write_all(nl.as_bytes()).map_err(io)?;
                 }
                 let title = format!("[{}] {label}", item.position);
-                write_delimited_row(out, &[&title], delimiter(opts.format), false).map_err(io)?;
+                write_delimited_row(out, &[&title], opts.delimiter(), false, nl).map_err(io)?;
             }
             ExportFormat::Insert => {
                 if i > 0 {
-                    out.write_all(b"\n").map_err(io)?;
+                    out.write_all(nl.as_bytes()).map_err(io)?;
                 }
-                writeln!(out, "-- [{}] {label}", item.position).map_err(io)?;
+                write!(out, "-- [{}] {label}{nl}", item.position).map_err(io)?;
             }
             ExportFormat::Json => {
                 let sql = serde_json::to_string(&label).expect("string");
                 let sep = if i > 0 { "," } else { "" };
                 write!(
                     out,
-                    "{sep}\n{{\"statement\": {}, \"sql\": {sql}, \"rows\": ",
+                    "{sep}{nl}{{\"statement\": {}, \"sql\": {sql}, \"rows\": ",
                     item.position
                 )
                 .map_err(io)?;
@@ -292,7 +340,7 @@ pub fn render_script(
         }
     }
     if json {
-        out.write_all(b"\n]\n").map_err(io)?;
+        write!(out, "{nl}]{nl}").map_err(io)?;
     }
     Ok(total)
 }
@@ -313,6 +361,8 @@ pub fn write_script_dir(
         let file = std::fs::File::create(dir.join(&name))
             .map_err(|e| Box::new(DbError::internal(format!("opening file {name}: {e}"))))?;
         let mut out = std::io::BufWriter::new(file);
+        out.write_all(opts.bom_bytes())
+            .map_err(|e| Box::new(DbError::internal(format!("write failed: {e}"))))?;
         let opts = ExportOptions {
             table_name: item.table_name.clone(),
             ..opts.clone()
@@ -395,14 +445,6 @@ fn one_line(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn delimiter(format: ExportFormat) -> char {
-    if format == ExportFormat::Tsv {
-        '\t'
-    } else {
-        ','
-    }
-}
-
 /// Iterates the rows in windows, resolving truncated cells with `cell_full`.
 /// Each cell is an `Option<String>`: `None` = NULL.
 fn for_each_row(
@@ -446,6 +488,7 @@ fn write_delimited_row(
     fields: &[&str],
     delim: char,
     quote_all: bool,
+    nl: &str,
 ) -> std::io::Result<()> {
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {
@@ -458,7 +501,7 @@ fn write_delimited_row(
             out.write_all(f.as_bytes())?;
         }
     }
-    out.write_all(b"\n")
+    out.write_all(nl.as_bytes())
 }
 
 /// "schema.table" → both parts quoted; without a dot, the name alone.
@@ -552,6 +595,56 @@ mod tests {
         assert_eq!(
             s,
             "\"id\",\"note\"\n\"1\",\"hello, \"\"world\"\"\"\n\"2\",\"\"\n\"3\",\"it's\tand tab\"\n"
+        );
+    }
+
+    #[test]
+    fn csv_semicolon_and_crlf_bom_only_for_files() {
+        let opts = ExportOptions {
+            format: ExportFormat::Csv,
+            headers: true,
+            delimiter: Some(';'),
+            line_ending: LineEnding::Crlf,
+            bom: true,
+            ..Default::default()
+        };
+        let s = render_str(&opts);
+        assert_eq!(
+            s,
+            "id;note\r\n1;\"hello, \"\"world\"\"\"\r\n2;\r\n3;it's\tand tab\r\n"
+        );
+        assert_eq!(opts.bom_bytes(), "\u{FEFF}".as_bytes());
+        let json = ExportOptions {
+            format: ExportFormat::Json,
+            bom: true,
+            ..Default::default()
+        };
+        assert!(json.bom_bytes().is_empty());
+        let tsv = ExportOptions {
+            format: ExportFormat::Tsv,
+            delimiter: Some(';'),
+            ..Default::default()
+        };
+        assert!(
+            render_str(&tsv).starts_with("1\t\"hello"),
+            "TSV keeps the tab"
+        );
+    }
+
+    #[test]
+    fn insert_batch_of_two_and_crlf() {
+        let s = render_str(&ExportOptions {
+            format: ExportFormat::Insert,
+            table_name: "t".into(),
+            insert_batch: 2,
+            line_ending: LineEnding::Crlf,
+            ..Default::default()
+        });
+        assert_eq!(s.matches("INSERT INTO \"t\"").count(), 2, "{s}");
+        assert!(s.contains("('2', NULL);\r\nINSERT INTO"), "{s}");
+        assert!(
+            !s.contains("\n\n") && !s.contains("(\n"),
+            "no bare LF: {s:?}"
         );
     }
 

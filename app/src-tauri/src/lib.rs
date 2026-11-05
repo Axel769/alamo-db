@@ -1801,28 +1801,39 @@ async fn export_result(
 ) -> Result<Option<ExportOut>, ErrorOut> {
     use tauri_plugin_dialog::DialogExt;
     let session = state.session(conn_id).map_err(internal)?;
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .set_file_name(&suggested_name)
-        .save_file(move |p| {
-            let _ = tx.send(p);
-        });
-    let Ok(Some(picked)) = rx.await else {
-        return Ok(None);
+    #[cfg(feature = "e2e")]
+    let chosen = e2e::take_pick();
+    #[cfg(not(feature = "e2e"))]
+    let chosen: Option<std::path::PathBuf> = None;
+    let path = match chosen {
+        Some(p) => p,
+        None => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            app.dialog()
+                .file()
+                .set_file_name(&suggested_name)
+                .save_file(move |p| {
+                    let _ = tx.send(p);
+                });
+            let Ok(Some(picked)) = rx.await else {
+                return Ok(None);
+            };
+            picked.into_path().map_err(|e| internal(e.to_string()))?
+        }
     };
-    let path = picked.into_path().map_err(|e| internal(e.to_string()))?;
     // Write on a blocking thread: a large result set must not occupy the
     // command runtime.
     let path2 = path.clone();
     let rows = tokio::task::spawn_blocking(move || {
+        use std::io::Write as _;
         let file = std::fs::File::create(&path2)
             .map_err(|e| Box::new(internal(format!("opening file: {e}"))))?;
         let mut out = std::io::BufWriter::new(file);
+        out.write_all(opts.bom_bytes())
+            .map_err(|e| Box::new(internal(format!("writing: {e}"))))?;
         let rows = session
             .export_result(result_id, &opts, None, None, &mut out)
             .map_err(|e| Box::new(ErrorOut::from(&*e)))?;
-        use std::io::Write as _;
         out.flush()
             .map_err(|e| Box::new(internal(format!("writing: {e}"))))?;
         Ok::<u64, Box<ErrorOut>>(rows)
@@ -1887,13 +1898,15 @@ async fn export_script(
     };
     let (path, rows) = tokio::task::spawn_blocking(move || match target {
         ScriptExportTarget::File => {
+            use std::io::Write as _;
             let file = std::fs::File::create(&picked)
                 .map_err(|e| Box::new(internal(format!("opening file: {e}"))))?;
             let mut out = std::io::BufWriter::new(file);
+            out.write_all(opts.bom_bytes())
+                .map_err(|e| Box::new(internal(format!("writing: {e}"))))?;
             let rows = session
                 .export_script(&items, &opts, &mut out)
                 .map_err(|e| Box::new(ErrorOut::from(&*e)))?;
-            use std::io::Write as _;
             out.flush()
                 .map_err(|e| Box::new(internal(format!("writing: {e}"))))?;
             Ok::<_, Box<ErrorOut>>((picked, rows))

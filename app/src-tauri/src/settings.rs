@@ -124,6 +124,22 @@ setting_enum!(QuoteMode {
     Always = "always" => "Always",
 });
 
+// Export defaults: the dialog starts from these, each export may differ.
+setting_enum!(ExportDefault {
+    Csv = "csv" => "CSV",
+    Tsv = "tsv" => "TSV",
+    Json = "json" => "JSON",
+    Insert = "insert" => "INSERT",
+});
+setting_enum!(CsvDelimiter {
+    Comma = "comma" => "Comma",
+    Semicolon = "semicolon" => "Semicolon",
+});
+setting_enum!(LineEnding {
+    Lf = "lf" => "LF (Unix, macOS)",
+    Crlf = "crlf" => "CRLF (Windows)",
+});
+
 /// Monospace of the editor and the grid: the system's on each platform
 /// (SF Mono, Consolas, DejaVu Sans Mono), the generic family last.
 const MONO: &str = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace";
@@ -264,6 +280,15 @@ settings! {
             "When more than one cell is copied, also with \"Copy selection as\".";
         quote: QuoteMode = QuoteMode::Needed, "Quotes around values",
             "\"Only when needed\": a value with the separator, quotes or a newline.";
+    }
+    export: Export ("Export") {
+        format: ExportDefault = ExportDefault::Csv, "Format proposed by the export dialog";
+        csv_delimiter: CsvDelimiter = CsvDelimiter::Comma, "CSV delimiter",
+            "Excel in Italian and other European locales opens semicolon-separated files directly.";
+        csv_bom: bool = false, "UTF-8 byte order mark in CSV and TSV",
+            "Lets Excel on Windows read accented text; other tools may show it as a stray character.";
+        line_ending: LineEnding = LineEnding::Lf, "Line ending";
+        insert_batch: u32 [1..=10_000] = 500, "Rows per INSERT statement";
     }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
@@ -747,6 +772,18 @@ mod tests {
     /// The session's own defaults are the M0 values; the settings must
     /// default to the same, or a fresh install would behave differently
     /// from the tests of the session crate.
+    /// The format names of the Export setting are the exporter's.
+    #[test]
+    fn export_format_names_match_the_exporter() {
+        let Kind::Enum(values) = ExportDefault::KIND else {
+            panic!("enum")
+        };
+        for (name, _) in values {
+            serde_json::from_value::<alamo_session::export::ExportFormat>(json!(name))
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+
     #[test]
     fn execution_defaults_match_the_session() {
         assert_eq!(
