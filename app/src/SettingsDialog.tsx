@@ -47,6 +47,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   const matches = (d: SettingDef) =>
     q === "" ||
     searchText(d.label).includes(q) ||
+    (d.help !== "" && searchText(d.help).includes(q)) ||
     searchText(categoryLabel(d.category)).includes(q) ||
     d.key.includes(q);
   const found = SETTING_DEFS.filter(matches);
@@ -178,6 +179,7 @@ function SettingRow({ def, value, modified, onChange }: { def: SettingDef; value
     <div className={"setting-row" + (modified ? " modified" : "")} data-key={def.key} title={modified ? t("Changed from the default") : undefined}>
       <div className="setting-label">
         <span>{t(def.label)}</span>
+        {def.help !== "" && <span className="setting-help">{t(def.help)}</span>}
         {modified && <span className="setting-default">{t("Default: {value}", { value: defaultText(def) })}</span>}
       </div>
       <SettingControl def={def} value={value} onChange={onChange} />

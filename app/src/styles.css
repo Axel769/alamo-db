@@ -264,8 +264,10 @@ body,
   min-width: 0;
 }
 
-.setting-default {
+.setting-default,
+.setting-help {
   font-size: 11px;
+  line-height: 1.4;
   color: var(--cell-muted-fg);
 }
 

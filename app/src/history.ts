@@ -5,6 +5,7 @@
 // only on each execution, it must not re-render whoever watches the tabs.
 import { create } from "zustand";
 import { useStore } from "./store";
+import { setting } from "./settings";
 
 export type HistoryEntry = {
   sql: string;
@@ -18,7 +19,6 @@ export type HistoryEntry = {
 };
 
 const KEY = "alamo.history";
-const CAP = 200;
 /// Huge batches pasted into the editor: a prefix goes into the history,
 /// localStorage is no place for megabytes of SQL.
 const SQL_CAP = 10_000;
@@ -73,7 +73,7 @@ export function recordHistory(connId: number, sql: string): void {
     const entries =
       head && head.sql === entry.sql && head.profileId === entry.profileId
         ? [{ ...head, at: entry.at }, ...s.entries.slice(1)]
-        : [entry, ...s.entries].slice(0, CAP);
+        : [entry, ...s.entries].slice(0, setting("editor.history_size"));
     persist(entries);
     return { entries };
   });

@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Settings → Editor: autocomplete on/off and its delay, keywords in upper case as you type (never inside strings, comments or quoted names), indent width, wrapping of long lines, what ⌘↵ (Ctrl+Enter) runs (statement at the cursor, selection or the whole script; the Run button says which), the confirmation of UPDATE and DELETE without WHERE on non-production profiles, and the size of the query history. All apply to the open editor at once.
 - Settings → Appearance: font and text size of the SQL editor and of the grid, grid density (compact rows of 26 px, or comfortable of 30 px) and high-contrast grid lines. They apply at once to the open tabs. The default monospace is now the system one on every platform (SF Mono, Consolas, DejaVu Sans Mono).
 - Settings window: categories on the left (Appearance, Updates), a search box that finds a setting by its name in Italian or English, every value that differs from the default marked with the default next to it, and "Restore defaults" per section. It opens from the gear, the command palette, "Settings…" in the macOS menu (⌘,) or Ctrl+, on Windows and Linux.
 - Settings: language and theme change at once, without reloading the app. They are saved in settings.json in the app's configuration folder (with the skipped update version), no longer in the browser storage: the choices made so far are carried over at the first start.

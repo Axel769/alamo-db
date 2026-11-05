@@ -13,13 +13,14 @@ import {
 } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";
 import { sql, PostgreSQL, SQLNamespace } from "@codemirror/lang-sql";
-import { getIndentUnit, HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, getIndentUnit, HighlightStyle, indentUnit, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { highlightTree, tags } from "@lezer/highlight";
 import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { completionSpace } from "./completionSpace";
 import { sqlSyntax } from "./sqlSyntax";
 import { lang } from "./i18n";
-import { useSettings } from "./settings";
+import { setting, useSettings } from "./settings";
+import { Settings, SettingValues } from "./settingsSchema";
 import { editorFont } from "./appearance";
 import {
   Compartment,
@@ -131,7 +132,10 @@ const setErrorRange = StateEffect.define<{ from: number; to: number } | null>();
 
 // ------------------------------------------------------- current statement
 
-export type RunMode = "current" | "all";
+/// What an execution covers: "current" = the selection or the statement
+/// under the cursor, "selection" = the selection or everything, "all" =
+/// everything. ⌘↵ follows the setting, ⇧⌘↵ is always "all".
+export type RunMode = SettingValues["editor.run_shortcut"];
 export type Range = { from: number; to: number };
 /// What ⌘↩ would do now: the Run button needs it to say so in its label.
 export type RunContext = { hasSelection: boolean; statements: number };
@@ -382,6 +386,60 @@ function columnSource(context: CompletionContext): CompletionResult | null {
   return { from, options, validFor: /^[\w$]*$/ };
 }
 
+/// Keywords (and type names) in upper case as they are typed, when a
+/// space or a bracket closes the word. The syntax tree says what the word
+/// is: a `Keyword` inside a string, a comment or a quoted name is not one.
+const uppercaseKeywords = EditorView.inputHandler.of((view, from, to, text) => {
+  if (from !== to || !/^[\s(),;]$/.test(text)) return false;
+  // The parse runs in idle time and may lag behind fast typing: a few ms
+  // bring it up to the word just closed.
+  const tree = ensureSyntaxTree(view.state, from, 20);
+  if (!tree) return false;
+  const node = tree.resolveInner(from, -1);
+  if ((node.name !== "Keyword" && node.name !== "Type") || node.to !== from) return false;
+  const word = view.state.doc.sliceString(node.from, node.to);
+  const upper = word.toUpperCase();
+  if (upper === word) return false;
+  view.dispatch({
+    changes: [
+      { from: node.from, to: node.to, insert: upper },
+      { from, insert: text },
+    ],
+    selection: { anchor: from + text.length },
+    userEvent: "input.type",
+    scrollIntoView: true,
+  });
+  return true;
+});
+
+/// The Editor settings (§16) as extensions: completion, indent, wrap,
+/// keyword case and what ⌘↵ runs. Rebuilt on a change of the section.
+function editorSettingsExt(onRun: (mode: RunMode) => void): Extension {
+  const e = useSettings.getState().settings.editor;
+  return [
+    autocompletion({
+      defaultKeymap: false,
+      activateOnTyping: e.autocomplete,
+      activateOnTypingDelay: e.autocomplete_delay_ms,
+    }),
+    EditorState.tabSize.of(e.tab_size),
+    indentUnit.of(" ".repeat(e.tab_size)),
+    e.line_wrap ? EditorView.lineWrapping : [],
+    e.uppercase_keywords ? uppercaseKeywords : [],
+    keymap.of([
+      {
+        key: "Mod-Enter",
+        run: () => {
+          onRun(e.run_shortcut);
+          return true;
+        },
+      },
+    ]),
+  ];
+}
+
+const editorSection = (s: Settings) => JSON.stringify(s.editor);
+
 /// Font and text size of the editor from the settings.
 function appearanceExt(): Extension {
   const s = useSettings.getState().settings;
@@ -400,6 +458,10 @@ export class SqlEditor {
   private phrasesCompartment = new Compartment();
   /// Font and text size from the settings (§16), applied at once.
   private appearanceCompartment = new Compartment();
+  /// The Editor section of the settings (§16): completion, indent, wrap,
+  /// keyword case, what ⌘↵ runs.
+  private editorSettingsCompartment = new Compartment();
+  private onRun: (mode: RunMode) => void = () => {};
 
   /// Who computes the statement boundaries (the Studio, via IPC on the
   /// tab's connection); null = not available (disconnected tab).
@@ -422,12 +484,16 @@ export class SqlEditor {
       ) {
         this.view.dispatch({ effects: this.appearanceCompartment.reconfigure(appearanceExt()) });
       }
+      if (editorSection(s.settings) !== editorSection(prev.settings)) {
+        this.view.dispatch({ effects: this.editorSettingsCompartment.reconfigure(editorSettingsExt(this.onRun)) });
+      }
     });
   }
 
   /// New state for a tab: same extensions as the view (the `Compartment`s
   /// are per-state: after a `setState` the current schema must be reapplied).
   newState(doc: string, onRun: (mode: RunMode) => void, onDocChanged?: () => void): EditorState {
+    this.onRun = onRun;
     return EditorState.create({
       doc,
       extensions: [
@@ -457,7 +523,7 @@ export class SqlEditor {
         // quoting) and CodeMirror would eat it. Ctrl-Space remains — which
         // however on macOS belongs to the system by default (input source
         // switch) and never reaches the editor: Ctrl-. is the alternative nobody steals.
-        autocompletion({ defaultKeymap: false }),
+        this.editorSettingsCompartment.of(editorSettingsExt(onRun)),
         completionSpace(),
         Prec.highest(
           keymap.of([
@@ -467,14 +533,7 @@ export class SqlEditor {
         ),
         errorField,
         keymap.of([
-          // ⌘↩ = the query under the cursor (or the selection); ⇧⌘↩ = all.
-          {
-            key: "Mod-Enter",
-            run: () => {
-              onRun("current");
-              return true;
-            },
-          },
+          // ⌘↩ follows the setting (editorSettingsExt); ⇧⌘↩ = all, always.
           {
             key: "Shift-Mod-Enter",
             run: () => {
@@ -619,6 +678,7 @@ export class SqlEditor {
     if (!sel.empty) {
       return { sql: state.doc.sliceString(sel.from, sel.to), offset: utf16ToCodePoint(text, sel.from) };
     }
+    if (mode === "selection") return { sql: text, offset: 0 };
     if (state.field(rangesField).stale) {
       window.clearTimeout(this.splitTimer);
       await this.refreshRanges();

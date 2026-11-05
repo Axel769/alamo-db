@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ipc, AutocompleteOut, ErrorOut, Profile, ScriptItem, StatementClassOut } from "./ipc";
 import { RunContext, RunMode, SqlEditor } from "./editor";
+import { setting, useSettings } from "./settings";
 import {
   useStore,
   activeTab,
@@ -267,6 +268,8 @@ function StudioInner() {
   // App settings (language, then theme): gear at the bottom of the
   // activity bar, like VSCode — never inside the connections dialog.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // What ⌘↵ and the Run button execute (§16).
+  const runMode = useSettings((s) => s.settings.editor.run_shortcut);
   // Command palette (⌘K).
   const [paletteOpen, setPaletteOpen] = useState(false);
   // App closing blocked by the backend (§9.7.2): uncommitted writes, the
@@ -654,9 +657,10 @@ function StudioInner() {
     }
   }, []);
 
-  /// `mode`: "current" = selection or statement under the cursor (⌘↩),
-  /// "all" = the whole text (⇧⌘↩ / "Run all").
-  const run = useCallback(async (mode: RunMode = "current") => {
+  /// `mode`: "current" = selection or statement under the cursor,
+  /// "selection" = selection or everything, "all" = the whole text (⇧⌘↩ /
+  /// "Run all"). Without one, what the setting says ⌘↵ does.
+  const run = useCallback(async (mode: RunMode = setting("editor.run_shortcut")) => {
     const s = useStore.getState();
     const tab = activeTab(s);
     // One editor execution at a time PER connection (§3). Table tabs do not
@@ -676,9 +680,10 @@ function StudioInner() {
     // transaction (decision 8) and ALWAYS on irreversible operations — even
     // with the gate already open there is no safety net for MySQL DDL,
     // TRUNCATE, DROP, UPDATE/DELETE without WHERE. On the other profiles
-    // only UPDATE/DELETE without WHERE, as DataGrip and DBeaver do.
+    // only UPDATE/DELETE without WHERE, as DataGrip and DBeaver do — and
+    // only there can the setting turn it off.
     const conn = connById(s, connId);
-    if (conn && !conn.profile.is_production && !conn.profile.read_only) {
+    if (conn && !conn.profile.is_production && !conn.profile.read_only && setting("editor.confirm_unfiltered_writes")) {
       try {
         const classes = await ipc.classifySql(connId, sql);
         const unfiltered = classes.filter((c) => c.unfiltered);
@@ -1447,7 +1452,7 @@ function StudioInner() {
             <span className="run-group">
               <button
                 className="btn primary"
-                onClick={() => void run("current")}
+                onClick={() => void run()}
                 disabled={
                   !tab || tab.kind === "table" || tab.connId === null || (anyRunning && !stickyPaused) || tabConnecting
                 }
@@ -1458,9 +1463,9 @@ function StudioInner() {
                     ? t("execution in progress in \"{title}\"", { title: stickyTab?.title ?? "" })
                     : tab && tab.connId === null
                       ? t("tab disconnected: reconnect its profile")
-                      : runCtx.hasSelection
+                      : runCtx.hasSelection && runMode !== "all"
                         ? t("Runs only the selected text")
-                        : runCtx.statements > 1
+                        : runCtx.statements > 1 && runMode === "current"
                           ? t("Runs the query at the cursor (highlighted)")
                           : undefined
                 }
@@ -1476,10 +1481,12 @@ function StudioInner() {
                 ) : (
                   <>
                     <IconPlay />{" "}
-                    {runCtx.hasSelection
+                    {runCtx.hasSelection && runMode !== "all"
                       ? t("Run selection")
                       : runCtx.statements > 1
-                        ? t("Run query")
+                        ? runMode === "current"
+                          ? t("Run query")
+                          : t("Run all")
                         : t("Run")}{" "}
                     <kbd>⌘↵</kbd>
                   </>
@@ -1502,10 +1509,14 @@ function StudioInner() {
                     className="tab-menu-item"
                     onClick={() => {
                       setRunMenu(false);
-                      void run("current");
+                      void run();
                     }}
                   >
-                    {runCtx.hasSelection ? t("Run selection") : t("Run query at cursor")}{" "}
+                    {runCtx.hasSelection && runMode !== "all"
+                      ? t("Run selection")
+                      : runMode === "current"
+                        ? t("Run query at cursor")
+                        : t("Run all")}{" "}
                     <kbd>⌘↵</kbd>
                   </button>
                   <button

@@ -92,6 +92,12 @@ setting_enum!(GridDensity {
     Comfortable = "comfortable" => "Comfortable (30 px rows)",
 });
 
+setting_enum!(RunShortcut {
+    Current = "current" => "Statement at the cursor, or the selection",
+    Selection = "selection" => "Selection, otherwise the whole script",
+    All = "all" => "The whole script",
+});
+
 /// Monospace of the editor and the grid: the system's on each platform
 /// (SF Mono, Consolas, DejaVu Sans Mono), the generic family last.
 const MONO: &str = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace";
@@ -109,7 +115,7 @@ pub struct SettingDef {
 macro_rules! settings {
     ($(
         $cat:ident : $Cat:ident ($cat_label:literal) {
-            $( $field:ident : $ty:ty $( [ $min:literal ..= $max:literal ] )? = $default:expr, $label:literal; )*
+            $( $field:ident : $ty:ty $( [ $min:literal ..= $max:literal ] )? = $default:expr, $label:literal $( , $help:literal )?; )*
         }
     )*) => {
         $(
@@ -138,6 +144,15 @@ macro_rules! settings {
             $( (stringify!($cat), $cat_label), )*
         ];
 
+        /// `(key, help)` of the settings that have a line of help under
+        /// the label: text for the window only (English, i18n key), so
+        /// not in `SettingDef`; its readers are the TS generator and the
+        /// translation test, both tests.
+        #[cfg(test)]
+        pub static HELP: &[(&str, &str)] = &[
+            $( $( $( (concat!(stringify!($cat), ".", stringify!($field)), $help), )? )* )*
+        ];
+
         /// All the settings, declared: what the window and `validate` read.
         pub static DEFS: &[SettingDef] = &[
             $( $(
@@ -162,6 +177,19 @@ settings! {
         grid_font_size: u32 [9..=24] = 13, "Grid text size (px)";
         grid_density: GridDensity = GridDensity::Compact, "Grid density";
         high_contrast_grid: bool = false, "High-contrast grid lines";
+    }
+    editor: Editor ("Editor") {
+        autocomplete: bool = true, "Autocomplete while typing";
+        autocomplete_delay_ms: u32 [0..=2000] = 100, "Autocomplete delay (ms)";
+        uppercase_keywords: bool = false, "Uppercase keywords as you type",
+            "When a space or a bracket closes a keyword; never inside strings, comments or quoted names.";
+        tab_size: u32 [2..=8] = 2, "Indent width (spaces)";
+        line_wrap: bool = false, "Wrap long lines";
+        run_shortcut: RunShortcut = RunShortcut::Current, "Run (⌘↵ / Ctrl+Enter) executes",
+            "⇧⌘↵ (Shift+Ctrl+Enter) always runs the whole script.";
+        confirm_unfiltered_writes: bool = true, "Confirm UPDATE and DELETE without WHERE",
+            "On production profiles the confirmation is always asked, whatever this setting.";
+        history_size: u32 [50..=2000] = 200, "Query history entries";
     }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
@@ -230,7 +258,7 @@ fn typescript() -> String {
          \x20 | { kind: \"str\" }\n\
          \x20 | { kind: \"bool\" }\n\
          \x20 | { kind: \"int\"; min: number; max: number };\n\n\
-         export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string };\n\n\
+         export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string; help: string };\n\n\
          /// The categories, in declaration order, with the English label (i18n key).\n\
          export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [\n",
     );
@@ -244,11 +272,14 @@ fn typescript() -> String {
     );
     for def in DEFS {
         out.push_str(&format!(
-            "  {{ key: {:?}, category: {:?}, kind: {}, label: {:?} }},\n",
+            "  {{ key: {:?}, category: {:?}, kind: {}, label: {:?}, help: {:?} }},\n",
             def.key,
             def.category,
             ts_kind(def.kind),
-            def.label
+            def.label,
+            HELP.iter()
+                .find(|(k, _)| *k == def.key)
+                .map_or("", |(_, h)| *h)
         ));
     }
     out.push_str("];\n\n/// The defaults of this build.\nexport const DEFAULTS: Settings = ");
@@ -807,6 +838,7 @@ mod tests {
             std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/i18n.ts"))
                 .unwrap();
         let mut texts: Vec<&str> = CATEGORIES.iter().map(|(_, label)| *label).collect();
+        texts.extend(HELP.iter().map(|(_, help)| *help));
         for def in DEFS {
             texts.push(def.label);
             if let Kind::Enum(values) = def.kind {
