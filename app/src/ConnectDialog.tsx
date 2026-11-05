@@ -11,11 +11,19 @@ import { TLS_MODE_ORDER, TlsLevel, tlsMode, verifiesChain } from "./tlsModes";
 import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
 import { connColor } from "./connColor";
+import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingValues } from "./settingsSchema";
+import { settingOf } from "./settings";
+
+/// The settings a connection profile may override (§16): the overridable
+/// categories, in schema order. Phase 1 is the Execution ones.
+const OVERRIDABLE_DEFS = SETTING_DEFS.filter((d) =>
+  SETTING_CATEGORIES.find((c) => c.id === d.category)?.overridable
+);
 import { engineName, engineOf, engines, engineShortName } from "./engines";
 import type { TransferKind } from "./ConnectionsTransfer";
 
-type Section = "general" | "access" | "security" | "ssh";
-const SECTIONS: Section[] = ["general", "access", "security", "ssh"];
+type Section = "general" | "access" | "security" | "ssh" | "settings";
+const SECTIONS: Section[] = ["general", "access", "security", "ssh", "settings"];
 
 /// The list filter matches name or host, case-insensitive.
 const matchesFilter = (p: Profile, filter: string): boolean => {
@@ -40,6 +48,7 @@ const newProfile = (): Profile => ({
   ssh_profile_id: null,
   db_include: "",
   db_exclude: "",
+  settings: {},
 });
 
 // Fixed palette, not a color picker: the color is there to tell the
@@ -292,9 +301,21 @@ export default function ConnectDialog({
   // the advanced ones (TLS, tunnel) must not get in the way of whoever
   // wants only host and password. Label + summary of the state.
   const sectionLabel = (sec: Section): string =>
-    sec === "general" ? t("General") : sec === "access" ? t("Access") : sec === "security" ? t("Security") : t("SSH tunnel");
+    sec === "general"
+      ? t("General")
+      : sec === "access"
+        ? t("Access")
+        : sec === "security"
+          ? t("Security")
+          : sec === "ssh"
+            ? t("SSH tunnel")
+            : t("Settings");
   const sectionBadge = (sec: Section): string | null =>
-    sec === "security"
+    sec === "settings"
+      ? Object.keys(draft.settings).length > 0
+        ? t("on")
+        : null
+    : sec === "security"
       ? tlsMode(draft.sslmode).short
       : sec === "ssh"
         ? draft.ssh_profile_id !== null
@@ -313,6 +334,8 @@ export default function ConnectDialog({
     security: false,
     // Bastion deleted in the manager while this profile pointed at it.
     ssh: draft.ssh_profile_id !== null && ssh === null,
+    // Overrides are validated by the backend; the ranges match the window.
+    settings: false,
   };
   const friendly = error ? friendlyHint(error.message) : null;
 
@@ -992,6 +1015,26 @@ export default function ConnectDialog({
             )}
               </>
             )}
+            {section === "settings" && (
+              <>
+                <div className="form-hint">
+                  {t("Overrides for this connection only. Empty = the global settings (Settings → Execution).")}
+                </div>
+                {OVERRIDABLE_DEFS.map((def) => (
+                  <OverrideRow
+                    key={def.key}
+                    def={def}
+                    value={draft.settings[def.key]}
+                    onChange={(v) => {
+                      const next = { ...draft.settings };
+                      if (v === undefined) delete next[def.key];
+                      else next[def.key] = v;
+                      set({ settings: next });
+                    }}
+                  />
+                ))}
+              </>
+            )}
             </>
             )}
             {testOk && (
@@ -1330,4 +1373,77 @@ function ProfileSummary({
       </label>
     </>
   );
+}
+
+/// One overridable setting in the profile dialog (§16): a checkbox to keep
+/// the global default (showing its value), or a control for this
+/// connection's own value. `value` undefined = the default is in use.
+function OverrideRow({ def, value, onChange }: { def: SettingDef; value: unknown; onChange: (v: unknown) => void }) {
+  const dflt = settingOf(DEFAULTS, def.key as keyof SettingValues) as unknown;
+  const overridden = value !== undefined;
+  const current = overridden ? value : dflt;
+  const defaultLabel = (): string => {
+    if (def.kind.kind === "enum") {
+      const i = def.kind.values.indexOf(String(dflt));
+      return i >= 0 ? t(def.kind.labels[i]) : String(dflt);
+    }
+    if (def.kind.kind === "bool") return dflt ? t("Yes") : t("No");
+    return String(dflt);
+  };
+  return (
+    <div className="override-row" data-key={def.key}>
+      <div className="override-head">
+        <span>{t(def.label)}</span>
+        <label className="check override-default">
+          <input
+            type="checkbox"
+            checked={!overridden}
+            onChange={(e) => onChange(e.target.checked ? undefined : dflt)}
+          />
+          {t("Use the default ({value})", { value: defaultLabel() })}
+        </label>
+      </div>
+      {overridden && <OverrideControl def={def} value={current} onChange={onChange} />}
+    </div>
+  );
+}
+
+function OverrideControl({ def, value, onChange }: { def: SettingDef; value: unknown; onChange: (v: unknown) => void }) {
+  switch (def.kind.kind) {
+    case "enum": {
+      const { values, labels } = def.kind;
+      return (
+        <select value={String(value)} onChange={(e) => onChange(e.target.value)}>
+          {values.map((v, i) => (
+            <option key={v} value={v}>
+              {t(labels[i])}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    case "bool":
+      return (
+        <select value={value ? "true" : "false"} onChange={(e) => onChange(e.target.value === "true")}>
+          <option value="true">{t("Yes")}</option>
+          <option value="false">{t("No")}</option>
+        </select>
+      );
+    case "int":
+      return (
+        <input
+          type="number"
+          min={def.kind.min}
+          max={def.kind.max}
+          step={1}
+          value={Number(value)}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isInteger(n)) onChange(n);
+          }}
+        />
+      );
+    case "str":
+      return <input type="text" value={String(value)} onChange={(e) => onChange(e.target.value)} />;
+  }
 }

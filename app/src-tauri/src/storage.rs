@@ -54,6 +54,11 @@ pub struct Profile {
     pub db_include: String,
     #[serde(default)]
     pub db_exclude: String,
+    /// Per-connection overrides of the overridable settings (§16): a
+    /// partial `category.field` → value object, kept as given. Empty = the
+    /// global settings. Stored as `settings_json` (migration 12).
+    #[serde(default)]
+    pub settings: serde_json::Map<String, serde_json::Value>,
 }
 
 /// SSH profile (§12): a bastion saved once and reused by several database
@@ -109,6 +114,7 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     migration_9_table_sorts,
     migration_10_default_sort_only,
     migration_11_tree_favorites,
+    migration_12_profile_settings,
 ];
 
 /// Step 1: initial schema (M1-M3). Idempotent by construction, see the
@@ -301,6 +307,10 @@ fn migration_10_default_sort_only(db: &Connection) -> rusqlite::Result<()> {
 
 /// Step 11: tree favorites (star, like HeidiSQL). Empty `table_name` = the
 /// whole database/schema.
+fn migration_12_profile_settings(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch("ALTER TABLE profiles ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';")
+}
+
 fn migration_11_tree_favorites(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
         "CREATE TABLE tree_favorites (
@@ -345,12 +355,16 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         ssh_profile_id: row.get(12)?,
         db_include: row.get(13)?,
         db_exclude: row.get(14)?,
+        settings: {
+            let raw: String = row.get(15)?;
+            serde_json::from_str(&raw).unwrap_or_default()
+        },
     })
 }
 
 const PROFILE_COLS: &str = "id, name, host, port, database, username, sslmode, color, \
                             is_production, dialect, read_only, ssl_root_cert, ssh_profile_id, \
-                            db_include, db_exclude";
+                            db_include, db_exclude, settings_json";
 
 pub fn profiles_list(db: &Connection) -> rusqlite::Result<Vec<Profile>> {
     let mut stmt = db.prepare(&format!(
@@ -382,7 +396,7 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                     "UPDATE profiles SET name=?2, host=?3, port=?4, database=?5, username=?6,
                                      sslmode=?7, color=?8, is_production=?9, dialect=?10,
                                      read_only=?11, ssl_root_cert=?12, ssh_profile_id=?13,
-                                     db_include=?14, db_exclude=?15,
+                                     db_include=?14, db_exclude=?15, settings_json=?16,
                                      secret_tag = CASE WHEN host = ?3 AND port = ?4
                                                         AND username = ?6 AND dialect = ?10
                                                        THEN secret_tag
@@ -404,7 +418,8 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                     p.ssl_root_cert,
                     p.ssh_profile_id,
                     p.db_include,
-                    p.db_exclude
+                    p.db_exclude,
+                    serde_json::Value::Object(p.settings.clone()).to_string()
                 ],
             )?;
             Ok(id)
@@ -412,8 +427,8 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
         None => {
             db.execute(
                 &format!(
-                    "INSERT INTO profiles (name, host, port, database, username, sslmode, color, is_production, dialect, read_only, ssl_root_cert, ssh_profile_id, db_include, db_exclude, secret_tag)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, {NEW_SECRET_TAG})"
+                    "INSERT INTO profiles (name, host, port, database, username, sslmode, color, is_production, dialect, read_only, ssl_root_cert, ssh_profile_id, db_include, db_exclude, settings_json, secret_tag)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, {NEW_SECRET_TAG})"
                 ),
                 params![
                     p.name,
@@ -429,7 +444,8 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                     p.ssl_root_cert,
                     p.ssh_profile_id,
                     p.db_include,
-                    p.db_exclude
+                    p.db_exclude,
+                    serde_json::Value::Object(p.settings.clone()).to_string()
                 ],
             )?;
             Ok(db.last_insert_rowid())
@@ -827,6 +843,7 @@ mod tests {
             ssh_profile_id: None,
             db_include: String::new(),
             db_exclude: String::new(),
+            settings: serde_json::Map::new(),
         }
     }
 

@@ -75,12 +75,13 @@ export type SettingKind =
 
 export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string; help: string };
 
-/// The categories, in declaration order, with the English label (i18n key).
-export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [
-  { id: "appearance", label: "Appearance" },
-  { id: "editor", label: "Editor" },
-  { id: "execution", label: "Execution" },
-  { id: "updates", label: "Updates" },
+/// The categories, in declaration order, with the English label (i18n
+/// key) and whether a connection profile may override them (§16).
+export const SETTING_CATEGORIES: readonly { id: string; label: string; overridable: boolean }[] = [
+  { id: "appearance", label: "Appearance", overridable: false },
+  { id: "editor", label: "Editor", overridable: false },
+  { id: "execution", label: "Execution", overridable: true },
+  { id: "updates", label: "Updates", overridable: false },
 ];
 
 /// Every setting, in declaration order: what the window renders.

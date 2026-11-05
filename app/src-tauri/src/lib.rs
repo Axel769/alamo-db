@@ -204,15 +204,17 @@ impl AppState {
     /// commit/rollback; the read-only flag sets server-side read-only
     /// transactions on every lane. §12: the TLS regime travels next to the
     /// string, on every lane.
-    /// `exec`: the Execution settings (§16) the session is born with —
-    /// limits, and manual commit when asked for (production has it anyway).
+    /// Opens a session with the effective Execution settings (§16): the
+    /// global ones with the profile's overrides applied. Returns the
+    /// session and the override problems (unknown or not overridable),
+    /// which the caller shows once at connect.
     async fn open_session(
         &self,
         profile: &storage::Profile,
         password: &str,
         tunnel_port: Option<u16>,
-        exec: &settings::Execution,
-    ) -> Result<Session, ErrorOut> {
+        global: &settings::Settings,
+    ) -> Result<(Session, Vec<settings::Issue>), ErrorOut> {
         let driver = self
             .drivers
             .get(&profile.dialect)
@@ -227,6 +229,8 @@ impl AppState {
         )
         .await
         .map_err(|e| ErrorOut::from(&*e))?;
+        let (eff, warnings) = settings::effective(global, &profile.settings);
+        let exec = eff.execution;
         session.set_limits(exec.limits());
         // The statement timeout (§16) is a server SET, not just an atomic:
         // apply it to the sticky now (the lazy lanes pick it up at open).
@@ -239,7 +243,7 @@ impl AppState {
                 .set_manual_commit(true)
                 .map_err(|e| ErrorOut::from(&*e))?;
         }
-        Ok(session)
+        Ok((session, warnings))
     }
 
     fn insert(&self, session: Session) -> u64 {
@@ -355,6 +359,10 @@ struct ConnectOut {
     /// PG (§3.3): one database per connection, the others are opened with
     /// `open_database`.
     one_db_per_conn: bool,
+    /// Per-connection overrides (§16) the profile asked for that this build
+    /// could not apply (unknown or not overridable): told once at connect.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<settings::Issue>,
 }
 
 /// What really protects the open connection, for the UI (§12.2): `prefer`
@@ -435,6 +443,8 @@ impl TunnelSlot {
 struct OpenedProfile {
     profile: storage::Profile,
     session: Session,
+    /// Override problems found at connect (§16), shown once.
+    warnings: Vec<settings::Issue>,
     tunnel: Option<TunnelSlot>,
     service: String,
     password: String,
@@ -543,13 +553,14 @@ async fn open_profile(
     } else {
         None
     };
-    let exec = app.state::<settings::SettingsStore>().snapshot().execution;
-    let session = app
+    let global = app.state::<settings::SettingsStore>().snapshot();
+    let (session, warnings) = app
         .state::<AppState>()
-        .open_session(&profile, &password, tunnel_port, &exec)
+        .open_session(&profile, &password, tunnel_port, &global)
         .await?;
     Ok(OpenedProfile {
         profile,
+        warnings,
         session,
         tunnel,
         service,
@@ -733,6 +744,7 @@ async fn connect_profile(
         ssh_typed,
         db_account,
         ssh_account,
+        warnings,
     } = open_profile(&app, &db, id, password, ssh_secret).await?;
     let one_db_per_conn = !session.capabilities().can_change_database_in_session;
     // Connections of the profile's previous session that the server may
@@ -807,6 +819,7 @@ async fn connect_profile(
         profile,
         security,
         one_db_per_conn,
+        warnings,
     })
 }
 
@@ -871,8 +884,10 @@ async fn open_database(
         None => {
             let port = locked(&state.tunnels).get(&root).map(|t| t.port);
             profile.database = db.clone();
-            let exec = settings.snapshot().execution;
-            let session = state.open_session(&profile, &password, port, &exec).await?;
+            let global = settings.snapshot();
+            let (session, _) = state
+                .open_session(&profile, &password, port, &global)
+                .await?;
             // Two opens of the same database at once (tree and page): the
             // second one gives up its session for the first one's.
             match existing(&state) {
@@ -896,6 +911,7 @@ async fn open_database(
         profile,
         security,
         one_db_per_conn: true,
+        warnings: Vec::new(),
     })
 }
 
@@ -974,20 +990,53 @@ fn profiles_list(db: State<'_, Db>) -> Result<Vec<storage::Profile>, String> {
 /// Server changed = new keychain entry (`storage::profile_save`): the old
 /// one is deleted here, it was the password of another server.
 #[tauri::command]
-fn profile_save(
+async fn profile_save(
     app: AppHandle,
     db: State<'_, Db>,
+    settings: State<'_, settings::SettingsStore>,
     profile: storage::Profile,
 ) -> Result<i64, String> {
-    let db = locked(&db.0);
-    let before = profile.id.map(|id| db_account(&db, id)).transpose()?;
-    let id = storage::profile_save(&db, &profile).map_err(|e| e.to_string())?;
-    if let Some(old) = before.filter(|old| db_account(&db, id).ok().as_ref() != Some(old)) {
-        if let Err(e) = secrets::forget(&app.config().identifier, &old) {
-            eprintln!("keychain (profile {id}): {e}");
+    let id = {
+        let db = locked(&db.0);
+        let before = profile.id.map(|id| db_account(&db, id)).transpose()?;
+        let id = storage::profile_save(&db, &profile).map_err(|e| e.to_string())?;
+        if let Some(old) = before.filter(|old| db_account(&db, id).ok().as_ref() != Some(old)) {
+            if let Err(e) = secrets::forget(&app.config().identifier, &old) {
+                eprintln!("keychain (profile {id}): {e}");
+            }
         }
-    }
+        id
+    };
+    // Its overrides may have changed (§16): reapply to this profile's open
+    // connections so the limits take effect without a reconnect.
+    apply_profile_limits(&app, &settings.snapshot(), id, &profile.settings).await;
     Ok(id)
+}
+
+/// Reapplies the effective Execution limits (§16) to every open connection
+/// of profile `id`, after its overrides changed.
+async fn apply_profile_limits(
+    app: &AppHandle,
+    global: &settings::Settings,
+    id: i64,
+    overrides: &serde_json::Map<String, serde_json::Value>,
+) {
+    let (eff, _) = settings::effective(global, overrides);
+    let limits = eff.execution.limits();
+    let state = app.state::<AppState>();
+    let sessions: Vec<Arc<Session>> = {
+        let profiles = locked(&state.profiles);
+        let sessions = locked(&state.sessions);
+        profiles
+            .iter()
+            .filter(|(_, pid)| **pid == id)
+            .filter_map(|(conn_id, _)| sessions.get(conn_id).cloned())
+            .collect()
+    };
+    for session in sessions {
+        session.set_limits(limits);
+        let _ = session.apply_query_timeout().await;
+    }
 }
 
 #[tauri::command]

@@ -112,9 +112,19 @@ pub struct SettingDef {
     pub label: &'static str,
 }
 
+/// `false` when the optional `overridable` literal is absent on a category.
+macro_rules! or_false {
+    () => {
+        false
+    };
+    ($v:literal) => {
+        $v
+    };
+}
+
 macro_rules! settings {
     ($(
-        $cat:ident : $Cat:ident ($cat_label:literal) {
+        $cat:ident : $Cat:ident ($cat_label:literal $(, $overridable:literal )?) {
             $( $field:ident : $ty:ty $( [ $min:literal ..= $max:literal ] )? = $default:expr, $label:literal $( , $help:literal )?; )*
         }
     )*) => {
@@ -138,10 +148,12 @@ macro_rules! settings {
             $( pub $cat: $Cat, )*
         }
 
-        /// The categories in declaration order: `(id, label)`, the label
-        /// English and an i18n key (the heading in the window).
-        pub static CATEGORIES: &[(&str, &str)] = &[
-            $( (stringify!($cat), $cat_label), )*
+        /// The categories in declaration order: `(id, label, overridable)`;
+        /// the label is English and an i18n key (the heading in the window),
+        /// `overridable` means a connection profile may override the
+        /// category's settings (§16, per-connection overrides).
+        pub static CATEGORIES: &[(&str, &str, bool)] = &[
+            $( (stringify!($cat), $cat_label, or_false!($( $overridable )?)), )*
         ];
 
         /// `(key, help)` of the settings that have a line of help under
@@ -191,7 +203,7 @@ settings! {
             "On production profiles the confirmation is always asked, whatever this setting.";
         history_size: u32 [50..=2000] = 200, "Query history entries";
     }
-    execution: Execution ("Execution") {
+    execution: Execution ("Execution", true) {
         sql_pause_rows: u32 [50..=100_000] = 200, "Rows fetched before the SQL tab pauses",
             "Scrolling to the bottom brings another page; \"Load all\" removes the pause. The SQL is never rewritten.";
         table_page_rows: u32 [100..=10_000] = 500, "Rows per page of a table tab";
@@ -266,7 +278,7 @@ fn typescript() -> String {
          /// The settings as `settings_get` returns them.\n\
          export type Settings = {\n",
     );
-    for (cat, _) in CATEGORIES {
+    for (cat, _, _) in CATEGORIES {
         out.push_str(&format!("  {cat}: {{\n"));
         for def in DEFS.iter().filter(|d| d.category == *cat) {
             let field = def.key.rsplit('.').next().unwrap_or(def.key);
@@ -289,11 +301,14 @@ fn typescript() -> String {
          \x20 | { kind: \"bool\" }\n\
          \x20 | { kind: \"int\"; min: number; max: number };\n\n\
          export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string; help: string };\n\n\
-         /// The categories, in declaration order, with the English label (i18n key).\n\
-         export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [\n",
+         /// The categories, in declaration order, with the English label (i18n\n\
+         /// key) and whether a connection profile may override them (§16).\n\
+         export const SETTING_CATEGORIES: readonly { id: string; label: string; overridable: boolean }[] = [\n",
     );
-    for (cat, label) in CATEGORIES {
-        out.push_str(&format!("  {{ id: {cat:?}, label: {label:?} }},\n"));
+    for (cat, label, overridable) in CATEGORIES {
+        out.push_str(&format!(
+            "  {{ id: {cat:?}, label: {label:?}, overridable: {overridable} }},\n"
+        ));
     }
     out.push_str(
         "];\n\n\
@@ -410,7 +425,7 @@ impl SettingsStore {
     /// Back to the defaults: of one category, or of everything.
     pub fn reset(&self, category: Option<&str>) -> Result<Settings, String> {
         if let Some(c) = category {
-            if !CATEGORIES.iter().any(|(id, _)| *id == c) {
+            if !CATEGORIES.iter().any(|(id, _, _)| *id == c) {
                 return Err(format!("Unknown settings category {c}"));
             }
         }
@@ -529,6 +544,49 @@ fn validate(def: &SettingDef, v: &Value) -> Result<(), String> {
             )),
         },
     }
+}
+
+/// Whether a connection profile may override the settings of this
+/// category (§16, per-connection overrides).
+pub fn category_overridable(cat: &str) -> bool {
+    CATEGORIES.iter().any(|(id, _, over)| *id == cat && *over)
+}
+
+/// The global settings with a profile's overrides applied (§16): only the
+/// keys of an overridable category and only valid values; anything else is
+/// returned as an `Issue` and ignored, so a stale or hand-edited profile
+/// cannot break the connection. The frontend never merges — this is the
+/// one place.
+pub fn effective(global: &Settings, overrides: &Map<String, Value>) -> (Settings, Vec<Issue>) {
+    let mut tree = to_tree(global);
+    let mut issues = Vec::new();
+    for (key, value) in overrides {
+        let Some(def) = DEFS.iter().find(|d| d.key == *key) else {
+            issues.push(Issue {
+                key: key.clone(),
+                found: shorten(&value.to_string()),
+                message: format!("Unknown setting {key}"),
+            });
+            continue;
+        };
+        if !category_overridable(def.category) {
+            issues.push(Issue {
+                key: key.clone(),
+                found: shorten(&value.to_string()),
+                message: format!("{} cannot be set per connection", def.label),
+            });
+            continue;
+        }
+        match validate(def, value) {
+            Ok(()) => set_leaf(&mut tree, key, value.clone()),
+            Err(message) => issues.push(Issue {
+                key: key.clone(),
+                found: shorten(&value.to_string()),
+                message,
+            }),
+        }
+    }
+    (serde_json::from_value(tree).unwrap_or_default(), issues)
 }
 
 fn to_tree(s: &Settings) -> Value {
@@ -792,6 +850,40 @@ mod tests {
     }
 
     #[test]
+    fn effective_applies_only_valid_overridable_overrides() {
+        let global = Settings::default();
+        // A valid override of an overridable category wins; the rest is the global.
+        let (eff, issues) = effective(
+            &global,
+            &patch(&[("execution.sql_pause_rows", json!(5000))]),
+        );
+        assert_eq!(eff.execution.sql_pause_rows, 5000);
+        assert!(issues.is_empty());
+
+        // A non-overridable category, an unknown key and an out-of-range
+        // value are reported and ignored; the effective stays the default.
+        let (eff, issues) = effective(
+            &global,
+            &patch(&[
+                ("appearance.theme", json!("dark")),
+                ("execution.sql_pause_rows", json!(5)),
+                ("nope.key", json!(1)),
+            ]),
+        );
+        assert_eq!(eff, global);
+        let mut msgs: Vec<&str> = issues.iter().map(|i| i.message.as_str()).collect();
+        msgs.sort_unstable();
+        assert_eq!(
+            msgs,
+            vec![
+                "Rows fetched before the SQL tab pauses must be a whole number between 50 and 100000",
+                "Theme cannot be set per connection",
+                "Unknown setting nope.key",
+            ]
+        );
+    }
+
+    #[test]
     fn reset_one_category_or_all() {
         let d = dir();
         let store = SettingsStore::load(d.path());
@@ -878,7 +970,7 @@ mod tests {
         let i18n =
             std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/i18n.ts"))
                 .unwrap();
-        let mut texts: Vec<&str> = CATEGORIES.iter().map(|(_, label)| *label).collect();
+        let mut texts: Vec<&str> = CATEGORIES.iter().map(|(_, label, _)| *label).collect();
         texts.extend(HELP.iter().map(|(_, help)| *help));
         for def in DEFS {
             texts.push(def.label);

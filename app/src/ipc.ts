@@ -112,6 +112,9 @@ export type Profile = {
   /// reachable from SQL.
   db_include: string;
   db_exclude: string;
+  /// Per-connection overrides of the overridable settings (§16): a partial
+  /// `category.field` → value object. Empty = the global settings.
+  settings: Record<string, unknown>;
 };
 
 /// SSH profile (§12): bastion saved once, reused by several database
@@ -406,6 +409,8 @@ export type ConnectOut = {
   security: ConnSecurity;
   /// PG (§3.3): one database per connection, the others via `openDatabase`.
   one_db_per_conn: boolean;
+  /// Per-connection overrides this build could not apply (§16): shown once.
+  warnings?: SettingsIssue[];
 };
 
 /// Connections export file (serde `transfer::ExportDoc`). The frontend

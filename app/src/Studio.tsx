@@ -993,6 +993,7 @@ function StudioInner() {
                 id: null,
                 name: "bench",
                 dialect: "postgres",
+                settings: {},
                 host: "",
                 port: 0,
                 database: "",
@@ -1860,6 +1861,16 @@ function StudioInner() {
           const opened = out.profile.id !== null ? savedOpenedDb(out.profile.id) : null;
           if (opened !== null) openedDbByConn.set(out.conn_id, opened);
           useStore.getState().openConnPage(out.conn_id);
+          // §16: per-connection overrides this build could not apply, once.
+          if (out.warnings && out.warnings.length > 0) {
+            setConnNote({
+              warn: true,
+              text:
+                t("Some overrides of this connection could not be used:") +
+                " " +
+                out.warnings.map((w) => `${w.key} — ${tMsg(w.message)}`).join("; "),
+            });
+          }
           // The current database is needed right away: the tabs show it even
           // when the connection is not the active one.
           // On MySQL one restarts from the last database used with this

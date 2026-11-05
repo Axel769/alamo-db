@@ -78,6 +78,9 @@ pub struct ProfileEntry {
     pub db_include: String,
     #[serde(default)]
     pub db_exclude: String,
+    /// Per-connection setting overrides (§16): empty object omitted.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub settings: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Document to export and, aligned by index, the local ids it comes from:
@@ -141,6 +144,7 @@ pub fn build_export(db: &Connection, ids: &[i64]) -> rusqlite::Result<Built> {
             ssh,
             db_include: p.db_include,
             db_exclude: p.db_exclude,
+            settings: p.settings,
         });
     }
     Ok(Built {
@@ -654,6 +658,7 @@ pub fn apply(
                 ssh_profile_id,
                 db_include: e.db_include.clone(),
                 db_exclude: e.db_exclude.clone(),
+                settings: e.settings.clone(),
             },
         )
         .map_err(dberr)?;
@@ -768,6 +773,7 @@ mod tests {
             ssh_profile_id: ssh,
             db_include: String::new(),
             db_exclude: "*_test*".into(),
+            settings: serde_json::Map::new(),
         }
     }
 
