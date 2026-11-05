@@ -4,6 +4,7 @@
 //! subscriber is unique and dispatches into the store; events with unknown ids
 //! (tab closed in the meantime) must be ignored without breaking (§9.3).
 
+use alamo_core::column::ColumnKind;
 use alamo_core::error::{DbError, ErrorCategory, ErrorCode, Severity};
 use alamo_core::meta::{ColumnMeta, ColumnSource, SemanticClass};
 use alamo_core::result_set::ResultSetState;
@@ -13,6 +14,11 @@ use serde::Serialize;
 pub struct ColumnOut {
     pub name: String,
     pub type_display: String,
+    /// Columnar kind (§4.4) the driver chose for the type: the grid formats
+    /// the display text of dates, numbers and binaries from it (§8.2). A
+    /// column degraded to text later (§4.6) keeps it: its values are text
+    /// the formatter leaves alone.
+    pub kind: &'static str,
     /// Class → colour resolved **once per column**, never per cell (§9.6).
     pub semantic_class: &'static str,
     pub nullable: Option<bool>,
@@ -26,11 +32,26 @@ pub struct ColumnOut {
     pub source_table: Option<String>,
 }
 
-impl From<&ColumnMeta> for ColumnOut {
-    fn from(m: &ColumnMeta) -> Self {
+impl ColumnOut {
+    pub fn new(m: &ColumnMeta, kind: ColumnKind) -> Self {
         ColumnOut {
             name: m.name.clone(),
             type_display: m.type_display.clone(),
+            kind: match kind {
+                ColumnKind::Bool => "bool",
+                ColumnKind::I16 => "i16",
+                ColumnKind::I32 => "i32",
+                ColumnKind::I64 => "i64",
+                ColumnKind::U64 => "u64",
+                ColumnKind::F32 => "f32",
+                ColumnKind::F64 => "f64",
+                ColumnKind::Utf8 => "utf8",
+                ColumnKind::Binary => "binary",
+                ColumnKind::Date32 => "date",
+                ColumnKind::Time64Micros => "time",
+                ColumnKind::TimestampMicros { tz: false } => "timestamp",
+                ColumnKind::TimestampMicros { tz: true } => "timestamptz",
+            },
             semantic_class: match m.semantic_class {
                 SemanticClass::Numeric => "numeric",
                 SemanticClass::Temporal => "temporal",
@@ -216,7 +237,7 @@ mod tests {
         };
         let mut m = ColumnMeta::new("c", native, "varchar");
         m.source = source;
-        ColumnOut::from(&m)
+        ColumnOut::new(&m, ColumnKind::Utf8)
     }
 
     /// The name of a query's INSERT export comes from here: `db.table`,

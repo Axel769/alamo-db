@@ -25,6 +25,7 @@ import { NewRowSlot, rowLayout } from "./rowLayout";
 import { pasteValues, toTsv } from "./tsv";
 import { tokens } from "./theme";
 import { useSettings } from "./settings";
+import { clampText, DataSettings, displayText, isLong, nullText } from "./display";
 import { gridFont, gridRowHeight } from "./appearance";
 import { ExportDialog } from "./ExportDialog";
 
@@ -249,6 +250,11 @@ export default function GridView({
   const settings = useSettings((s) => s.settings);
   const rowHeight = gridRowHeight(settings);
   const font = `${appearance.grid_font_size}px ${gridFont(settings)}`;
+  // Data settings (§8.2, §16): the drawn text only; `loc` follows the UI
+  // language. A change re-creates the cell memo: nothing is fetched again.
+  const data = settings.data;
+  const loc = locale();
+  const nul = nullText(data);
 
   // Local sort (decision 10): the permutation lives in Rust, here only the
   // user's choice. `viewRows` is how many rows the view covers — on a still
@@ -373,7 +379,7 @@ export default function GridView({
   const cellMemo = useMemo(
     () => new Map<number, GridCell>(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cache, columns.length, rows, sortEpoch, editable, pendingAt, extraRows, deletedAt]
+    [cache, columns.length, rows, sortEpoch, editable, pendingAt, extraRows, deletedAt, data, loc]
   );
 
   const applySort = useCallback(
@@ -563,12 +569,12 @@ export default function GridView({
   // not yet have a fitted width are measured.
   useEffect(() => {
     const w = cache.peekBlock(0);
-    if (w && fitColumns(columns, w, fitWidths, font)) setWidthEpoch((e) => e + 1);
-  }, [cache, columns, fitWidths, font]);
+    if (w && fitColumns(columns, w, fitWidths, font, data, loc)) setWidthEpoch((e) => e + 1);
+  }, [cache, columns, fitWidths, font, data, loc]);
 
   useEffect(() => {
     cache.onBlock = (_b, w) => {
-      if (w.row_start === 0 && fitColumns(columns, w, fitWidths, font)) setWidthEpoch((e) => e + 1);
+      if (w.row_start === 0 && fitColumns(columns, w, fitWidths, font, data, loc)) setWidthEpoch((e) => e + 1);
       // A block may arrive again with changed values (rows re-read after a
       // save): the memo of those rows is no longer valid.
       // Memo and Glide count screen rows, the block view rows.
@@ -651,8 +657,8 @@ export default function GridView({
         const out: GridCell = {
           kind: GridCellKind.Text,
           data: isText ? p : "",
-          displayData: isText ? clamp(p) : p === null ? "NULL" : "DEFAULT",
-          allowOverlay: editable && !(onEditInPanel && isText && isLong(p)),
+          displayData: isText ? clampText(p, data.max_cell_chars) : p === null ? nul : "DEFAULT",
+          allowOverlay: editable && !(onEditInPanel && isText && isLong(p, data.max_cell_chars)),
           contentAlign: alignRight ? "right" : "left",
           themeOverride: isText ? newTheme : newNullTheme,
         };
@@ -671,7 +677,7 @@ export default function GridView({
         const out: GridCell = {
           kind: GridCellKind.Text,
           data: v.isNull ? "" : v.v,
-          displayData: v.isNull ? "NULL" : clamp(v.v),
+          displayData: v.isNull ? nul : displayText(meta, v.v, data, loc),
           allowOverlay: false,
           contentAlign: alignRight ? "right" : "left",
           themeOverride: deletedTheme,
@@ -687,8 +693,8 @@ export default function GridView({
         const out: GridCell = {
           kind: GridCellKind.Text,
           data: isText ? p : "",
-          displayData: isText ? clamp(p) : p === null ? "NULL" : "DEFAULT",
-          allowOverlay: editable && !(onEditInPanel && isText && isLong(p)),
+          displayData: isText ? clampText(p, data.max_cell_chars) : p === null ? nul : "DEFAULT",
+          allowOverlay: editable && !(onEditInPanel && isText && isLong(p, data.max_cell_chars)),
           contentAlign: alignRight ? "right" : "left",
           themeOverride: isText ? pendingTheme : pendingNullTheme,
         };
@@ -696,14 +702,14 @@ export default function GridView({
         return out;
       }
       // NULL: state, not type — identical rendering in every column (§9.6 rule 2).
-      // Truncated values (4KB) are longer than CLAMP: `clamp` adds the "…"
-      // and turns the newlines into "↵" (raw, Glide stopped at the first one).
-      // Long values are edited in the cell panel (see onEditInPanel).
+      // `data` is the canonical value (editing, copy); the drawn text follows
+      // the Data settings (§8.2): cut, newlines as "↵", dates and numbers
+      // formatted. Long values are edited in the cell panel (see onEditInPanel).
       const out: GridCell = {
         kind: GridCellKind.Text,
         data: v.isNull ? "" : v.v,
-        displayData: v.isNull ? "NULL" : clamp(v.v),
-        allowOverlay: editable && !v.truncated && !(onEditInPanel && !v.isNull && isLong(v.v)),
+        displayData: v.isNull ? nul : displayText(meta, v.v, data, loc),
+        allowOverlay: editable && !v.truncated && !(onEditInPanel && !v.isNull && isLong(v.v, data.max_cell_chars)),
         contentAlign: alignRight ? "right" : "left",
         themeOverride: v.isNull ? nullTheme : colThemes[col],
       };
@@ -711,7 +717,7 @@ export default function GridView({
       return out;
     },
     // New memo → new identity → Glide invalidates all the rendered cells.
-    [cache, cellMemo, columns, colThemes, nullTheme, pendingAt, pendingTheme, pendingNullTheme, editable, layout, isExtra, extraAt, newTheme, newNullTheme, deletedAt, deletedTheme, onEditInPanel]
+    [cache, cellMemo, columns, colThemes, nullTheme, pendingAt, pendingTheme, pendingNullTheme, editable, layout, isExtra, extraAt, newTheme, newNullTheme, deletedAt, deletedTheme, onEditInPanel, data, loc, nul]
   );
 
   /// Row that can be edited in the panel (not deleted; new ones too).
@@ -728,10 +734,11 @@ export default function GridView({
       const v = cellAt(row, col);
       if (v === undefined) return;
       const p = pendingValue(row, col);
-      const long = typeof p === "string" ? isLong(p) : p === undefined && !v.isNull && (v.truncated || isLong(v.v));
+      const max = data.max_cell_chars;
+      const long = typeof p === "string" ? isLong(p, max) : p === undefined && !v.isNull && (v.truncated || isLong(v.v, max));
       if (long) onEditInPanel!(toModelRow(row), col);
     },
-    [panelEditable, cellAt, pendingValue, toModelRow, onEditInPanel]
+    [panelEditable, cellAt, pendingValue, toModelRow, onEditInPanel, data.max_cell_chars]
   );
 
   // Shift+Enter (like DBeaver's value editor): any cell in the panel.
@@ -1629,20 +1636,6 @@ function widthsFor(key: string): Map<string, number> {
   return m;
 }
 
-/// Text drawn in a cell: beyond CLAMP characters no column would show it
-/// anyway, and drawing it all costs at every frame.
-const CLAMP = 500;
-
-/// Text to draw: the grid shows a single line, so newlines become "↵" and
-/// the indentation that follows them a space — of a multi-line JSON the
-/// start of the content is seen, not just the "{". Tabs become spaces.
-/// Rendering only: the value (copy, editing) stays the real one.
-/// Value edited in the cell panel rather than in the overlay: what the cell
-/// cannot show whole (beyond CLAMP, or on more lines).
-export function isLong(s: string): boolean {
-  return s.length > CLAMP || /[\r\n]/.test(s);
-}
-
 /// Glide's cell editor open (focus inside it): closed keeping the text, as
 /// Enter would. `true` = there was one; Glide hands the value to
 /// `onCellEdited` from a timeout, so it arrives at the next task.
@@ -1651,12 +1644,6 @@ export function commitCellEditor(): boolean {
   if (!(el instanceof HTMLElement) || !el.closest(".gdg-clip-region")) return false;
   el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   return true;
-}
-
-function clamp(s: string): string {
-  let out = s.length > CLAMP ? s.slice(0, CLAMP) + "…" : s;
-  if (/[\n\r\t]/.test(out)) out = out.replace(/[ \t]*\r?\n[ \t]*/g, " ↵ ").replace(/[\r\t]/g, " ");
-  return out;
 }
 
 // Fitted width: the column widens up to the longest value of the first
@@ -1697,18 +1684,26 @@ function monoCharWidth(font: string): number {
 
 /// Measures the columns without a fitted width from block `w`. Returns
 /// whether it added any (a re-render is needed).
-function fitColumns(columns: ColumnOut[], w: WindowOut, into: Map<string, number>, font: string): boolean {
+function fitColumns(
+  columns: ColumnOut[],
+  w: WindowOut,
+  into: Map<string, number>,
+  font: string,
+  data: DataSettings,
+  loc: string
+): boolean {
   if (w.row_end <= w.row_start) return false;
   const cw = monoCharWidth(font);
+  const nul = nullText(data).length;
   let added = false;
   for (const col of w.columns) {
     const meta = columns[col.index];
     if (!meta || into.has(meta.name)) continue;
     // +2: room for the sort arrow in the header. The text is measured as it
-    // is drawn (newlines rendered with "↵", see `clamp`).
+    // is drawn (`displayText`: newlines as "↵", dates and numbers formatted).
     let chars = meta.name.length + 2;
     for (let i = 0; i < col.values.length; i++) {
-      const n = col.nulls[i] ? 4 : clamp(col.values[i]).length + (col.truncated[i] ? 1 : 0);
+      const n = col.nulls[i] ? nul : displayText(meta, col.values[i], data, loc).length + (col.truncated[i] ? 1 : 0);
       if (n > chars) chars = n;
     }
     into.set(meta.name, Math.round(Math.min(FIT_MAX, Math.max(FIT_MIN, chars * cw + 24))));

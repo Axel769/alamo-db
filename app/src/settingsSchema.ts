@@ -32,6 +32,14 @@ export type Settings = {
     confirm_ddl_on_production: boolean;
     query_timeout_s: number;
   };
+  data: {
+    null_text: string;
+    date_format: "iso" | "locale";
+    timestamp_timezone: "utc" | "local";
+    thousands_separator: boolean;
+    max_cell_chars: number;
+    binary_display: "hex" | "base64";
+  };
   updates: {
     skipped_version: string;
   };
@@ -62,6 +70,12 @@ export type SettingValues = {
   "execution.idle_rollback_minutes": number;
   "execution.confirm_ddl_on_production": boolean;
   "execution.query_timeout_s": number;
+  "data.null_text": string;
+  "data.date_format": "iso" | "locale";
+  "data.timestamp_timezone": "utc" | "local";
+  "data.thousands_separator": boolean;
+  "data.max_cell_chars": number;
+  "data.binary_display": "hex" | "base64";
   "updates.skipped_version": string;
 };
 
@@ -81,6 +95,7 @@ export const SETTING_CATEGORIES: readonly { id: string; label: string; overridab
   { id: "appearance", label: "Appearance", overridable: false },
   { id: "editor", label: "Editor", overridable: false },
   { id: "execution", label: "Execution", overridable: true },
+  { id: "data", label: "Data", overridable: false },
   { id: "updates", label: "Updates", overridable: false },
 ];
 
@@ -109,6 +124,12 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "execution.idle_rollback_minutes", category: "execution", kind: { kind: "int", min: 1, max: 120 }, label: "Roll back a transaction idle for (minutes)", help: "An open transaction without statements for this long is rolled back, on every profile." },
   { key: "execution.confirm_ddl_on_production", category: "execution", kind: { kind: "bool" }, label: "Confirm schema changes (DDL) on production", help: "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo." },
   { key: "execution.query_timeout_s", category: "execution", kind: { kind: "int", min: 0, max: 86400 }, label: "Query timeout (seconds, 0 = none)", help: "The server stops a statement past this time. On MySQL it bounds only SELECT; on PostgreSQL and MariaDB, every statement. Applies from the next query." },
+  { key: "data.null_text", category: "data", kind: { kind: "str" }, label: "Text shown for NULL", help: "Grid and panels only: a NULL copies and exports as nothing. Empty = NULL." },
+  { key: "data.date_format", category: "data", kind: { kind: "enum", values: ["iso", "locale"], labels: ["ISO (2024-03-05 10:00:00)", "Of the language (05/03/2024 10:00:00)"] }, label: "Date and time format", help: "" },
+  { key: "data.timestamp_timezone", category: "data", kind: { kind: "enum", values: ["utc", "local"], labels: ["UTC, as stored", "This computer's"] }, label: "Time zone of timestamps with time zone", help: "They are stored in UTC. Timestamps without time zone are shown as stored." },
+  { key: "data.thousands_separator", category: "data", kind: { kind: "bool" }, label: "Thousands separator in numbers", help: "Grouped as the language does (1.234.567,89 in Italian); copy and export keep the plain number." },
+  { key: "data.max_cell_chars", category: "data", kind: { kind: "int", min: 100, max: 4096 }, label: "Characters shown per cell", help: "Longer values open in the cell panel. The grid receives at most 4 KB per cell." },
+  { key: "data.binary_display", category: "data", kind: { kind: "enum", values: ["hex", "base64"], labels: ["Hexadecimal (\\x0aff)", "Base64"] }, label: "Binary values", help: "Copy and export keep the database form (\\x hexadecimal)." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -123,6 +144,14 @@ export const DEFAULTS: Settings = {
     "high_contrast_grid": false,
     "language": "it",
     "theme": "system"
+  },
+  "data": {
+    "binary_display": "hex",
+    "date_format": "iso",
+    "max_cell_chars": 500,
+    "null_text": "NULL",
+    "thousands_separator": false,
+    "timestamp_timezone": "utc"
   },
   "editor": {
     "autocomplete": true,

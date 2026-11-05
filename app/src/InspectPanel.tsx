@@ -9,6 +9,8 @@ import { cacheFor, useFullValue } from "./rowCache";
 import { IconX } from "./icons";
 import { useDragSize } from "./dragSize";
 import { ValueEditor, ValueEditorOptions } from "./valueEditor";
+import { nullText } from "./display";
+import { useSettings } from "./settings";
 
 type Props = {
   /// Connection of the result set (M3.5).
@@ -77,6 +79,7 @@ export default function InspectPanel({
   const value = typeof shown === "string" ? shown : null;
   const shownNull = shown === null;
   const shownDefault = shown === DEFAULT_CELL;
+  const nul = nullText(useSettings((s) => s.settings.data));
   const canEdit = editable && !loading && onEdit !== undefined;
 
   // The editor lives outside React (like the SQL one): created once, its
@@ -91,7 +94,7 @@ export default function InspectPanel({
   const lastKey = useRef<string | null>(null);
   const opts: ValueEditorOptions = {
     readOnly: !canEdit,
-    placeholder: shownDefault ? "DEFAULT" : shownNull ? "NULL" : "",
+    placeholder: shownDefault ? "DEFAULT" : shownNull ? nul : "",
     onChange: (text) => cb.current.onEdit?.(text),
     onEscape: () => {
       const e = entry.current;
@@ -212,7 +215,7 @@ export default function InspectPanel({
       </div>
       <div className="inspect-body">
         {!canEdit && (shownNull || shownDefault) && (
-          <span className="inspect-null">{shownNull ? "NULL" : "DEFAULT"}</span>
+          <span className="inspect-null">{shownNull ? nul : "DEFAULT"}</span>
         )}
         {!shownNull && !shownDefault && loading && <span className="hint">{t("loading…")}</span>}
         <div

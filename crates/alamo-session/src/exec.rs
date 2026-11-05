@@ -10,7 +10,7 @@ use alamo_core::stream::{FetchOptions, StreamEvent};
 use tokio::sync::mpsc;
 
 use crate::driver::DbConn;
-use crate::events::{state_str, ErrorOut, ExecEvent, OutcomeOut};
+use crate::events::{state_str, ColumnOut, ErrorOut, ExecEvent, OutcomeOut};
 use crate::registry::{ExecState, LiveResult, Registry};
 use crate::txn::TxnTracker;
 
@@ -186,6 +186,7 @@ pub async fn run_execution(
         let emit_cb = Arc::clone(&emit);
         let conn_cb = conn.clone();
 
+        let dialect = conn.dialect();
         let outcome = conn
             .execute_streaming(&stmt.sql, &opts, &mut control_rx, &mut |ev| match ev {
                 StreamEvent::Schema { schema, .. } => {
@@ -196,7 +197,10 @@ pub async fn run_execution(
                             exec_id,
                             index,
                             result_id,
-                            columns: schema.iter().map(Into::into).collect(),
+                            columns: schema
+                                .iter()
+                                .map(|m| ColumnOut::new(m, dialect.column_kind(&m.native_type)))
+                                .collect(),
                         });
                         live = Some((result_id, l));
                     }

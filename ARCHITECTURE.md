@@ -704,10 +704,18 @@ JSON is perfectly fine for ~200-row windows: **do not over-engineer**.
 - NULLs must remain distinguishable from the string `"NULL"` and from the empty string
   (separate array or compact bitmap), otherwise the grid shows three different things
   the same way.
-- **Formatting (locale, display timezone, decimal separator) is
-  presentation**: it is done centrally in Rust, but the **canonical form always stays
-  available** for clipboard copy and export. Whoever copies a cell expects
-  the value, not its localized rendering.
+- **Formatting (locale, display timezone, thousands separator, NULL
+  word, binary rendering) is presentation**: the window carries the
+  **canonical form** only, which the row cache keeps and copy, export,
+  editing, keys and filters read; the grid formats the drawn text of the
+  visible cells in one frontend module (`app/src/display.ts`) from the
+  Data settings (§16) and the column kind the schema event carries. Whoever
+  copies a cell expects the value, not its localized rendering. It is not
+  done in Rust because the cache must stay canonical for the synchronous
+  paths (Cmd+C, editing, primary keys), a settings change must redraw and
+  not refetch, and locale and time zone come from `Intl` with no dependency
+  in `alamo-core`. The row card and the cell panel show the canonical value:
+  they are where it is edited.
 
 ---
 

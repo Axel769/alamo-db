@@ -8,7 +8,8 @@ import { ColumnOut, ipc, isDefaultCell, PendingValue } from "./ipc";
 import { cacheFor, useFullValue } from "./rowCache";
 import { IconX } from "./icons";
 import { useDragSize } from "./dragSize";
-import { isLong } from "./GridView";
+import { isLong, nullText } from "./display";
+import { useSettings } from "./settings";
 
 /// A jump to another table: `go(true)` opens it in a new tab.
 export type RowLink = { label: string; title: string; go: (newTab: boolean) => void };
@@ -73,6 +74,7 @@ export default function RowPanel({
 }: Props) {
   const cache = cacheFor(connId, resultId, columns.length);
   const current = fresh ? undefined : cache.cell(row, col);
+  const nul = nullText(useSettings((s) => s.settings.data));
   const [copied, setCopied] = useState(false);
   const activeRef = useRef<HTMLDivElement | null>(null);
   // Field being edited in place: `initial` tells an untouched field (blur
@@ -242,7 +244,7 @@ export default function RowPanel({
               ) : shown === undefined ? (
                 <span className="row-field-val muted">…</span>
               ) : shown === null ? (
-                <span className="row-field-val null">NULL</span>
+                <span className="row-field-val null">{nul}</span>
               ) : isDefaultCell(shown) ? (
                 <span className="row-field-val null">DEFAULT</span>
               ) : (

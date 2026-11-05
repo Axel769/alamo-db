@@ -11,9 +11,27 @@ export type SettingsOut = { settings: Settings; issues: SettingsIssue[]; effecti
 
 export type SemanticClass = "numeric" | "temporal" | "text" | "boolean" | "structured";
 
+/// Columnar kind of a column (§4.4), as the driver chose it: what the
+/// display formatting (§8.2) keys on.
+export type ColumnKind =
+  | "bool"
+  | "i16"
+  | "i32"
+  | "i64"
+  | "u64"
+  | "f32"
+  | "f64"
+  | "utf8"
+  | "binary"
+  | "date"
+  | "time"
+  | "timestamp"
+  | "timestamptz";
+
 export type ColumnOut = {
   name: string;
   type_display: string;
+  kind: ColumnKind;
   semantic_class: SemanticClass;
   nullable: boolean | null;
   numeric_text: boolean;

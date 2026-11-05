@@ -98,6 +98,21 @@ setting_enum!(RunShortcut {
     All = "all" => "The whole script",
 });
 
+// Data display (§8.2): presentation only, the canonical value stays in
+// the cache and goes to copy and export.
+setting_enum!(DateFormat {
+    Iso = "iso" => "ISO (2024-03-05 10:00:00)",
+    Locale = "locale" => "Of the language (05/03/2024 10:00:00)",
+});
+setting_enum!(TimeZonePref {
+    Utc = "utc" => "UTC, as stored",
+    Local = "local" => "This computer's",
+});
+setting_enum!(BinaryDisplay {
+    Hex = "hex" => "Hexadecimal (\\x0aff)",
+    Base64 = "base64" => "Base64",
+});
+
 /// Monospace of the editor and the grid: the system's on each platform
 /// (SF Mono, Consolas, DejaVu Sans Mono), the generic family last.
 const MONO: &str = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace";
@@ -217,6 +232,19 @@ settings! {
             "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo.";
         query_timeout_s: u32 [0..=86400] = 0, "Query timeout (seconds, 0 = none)",
             "The server stops a statement past this time. On MySQL it bounds only SELECT; on PostgreSQL and MariaDB, every statement. Applies from the next query.";
+    }
+    data: Data ("Data") {
+        null_text: String = "NULL".into(), "Text shown for NULL",
+            "Grid and panels only: a NULL copies and exports as nothing. Empty = NULL.";
+        date_format: DateFormat = DateFormat::Iso, "Date and time format";
+        timestamp_timezone: TimeZonePref = TimeZonePref::Utc, "Time zone of timestamps with time zone",
+            "They are stored in UTC. Timestamps without time zone are shown as stored.";
+        thousands_separator: bool = false, "Thousands separator in numbers",
+            "Grouped as the language does (1.234.567,89 in Italian); copy and export keep the plain number.";
+        max_cell_chars: u32 [100..=4096] = 500, "Characters shown per cell",
+            "Longer values open in the cell panel. The grid receives at most 4 KB per cell.";
+        binary_display: BinaryDisplay = BinaryDisplay::Hex, "Binary values",
+            "Copy and export keep the database form (\\x hexadecimal).";
     }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
@@ -982,7 +1010,10 @@ mod tests {
         texts.dedup();
         let missing: Vec<&str> = texts
             .into_iter()
-            .filter(|s| !i18n.contains(&format!("  \"{}\": \"", s.replace('"', "\\\""))))
+            .filter(|s| {
+                let js = s.replace('\\', "\\\\").replace('"', "\\\"");
+                !i18n.contains(&format!("  \"{js}\": \""))
+            })
             .collect();
         assert!(missing.is_empty(), "missing in i18n.ts IT: {missing:?}");
     }

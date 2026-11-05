@@ -3079,6 +3079,7 @@ ul.transfer-hint {
   color: var(--cell-null-fg);
   font-family: ui-monospace, monospace;
   font-size: 13px;
+  font-style: italic;
 }
 
 /* ------------------------------------------- connections/history panels */
