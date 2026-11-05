@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- While a query runs, the moving thread under the query bar no longer costs the main thread anything: the rows arriving are not slowed down by it, and it moves at a constant speed.
 - A connection profile can override the execution settings for itself (new "Settings" tab in the connection dialog): each one is "use the default (value)" or a value of its own. The overrides travel with the connection in export and import. On connect, an override this build cannot use (unknown or not overridable) is reported once, and the global settings stay in force.
 - Settings → Execution: a query timeout (seconds, 0 = none). The server stops a statement that runs longer: on PostgreSQL and MariaDB every statement, on MySQL only SELECT. It applies from the next query and the error says the limit came from the settings.
 - Settings → Execution: rows fetched before a SQL tab pauses (was fixed at 200), rows per page of a table tab (500), memory per result set (384 MB), manual commit as the default of new connections, the idle time after which an open transaction is rolled back (15 minutes), and an extra confirmation of schema changes on production. The limits reach the open connections at once, also a fetch already running.

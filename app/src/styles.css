@@ -5088,21 +5088,25 @@ button.profile-pill:hover {
   overflow: hidden;
   background: color-mix(in oklab, var(--cell-selection-border) 22%, transparent);
 }
+/* The thread moves on `transform`, not `left`: compositor only, so it costs
+   the main thread nothing while rows stream in. Linear: constant motion. */
 .run-progress::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
+  left: 0;
   width: 30%;
   background: var(--cell-selection-border);
-  animation: run-slide 1.2s ease-in-out infinite;
+  animation: run-slide 1.2s linear infinite;
 }
 @keyframes run-slide {
   from {
-    left: -30%;
+    transform: translateX(-100%);
   }
   to {
-    left: 100%;
+    /* 100% of the bar = 100 / 30 of the thread's own width. */
+    transform: translateX(333.34%);
   }
 }
 .running-notice {
@@ -5137,7 +5141,6 @@ button.profile-pill:hover {
   }
   .run-progress::after {
     animation: none;
-    left: 0;
     width: 100%;
     opacity: 0.6;
   }
