@@ -711,8 +711,13 @@ export const ipc = {
   settingsSet: (patch: Partial<SettingValues>) => invoke<SettingsOut>("settings_set", { patch }),
   /// Back to the defaults of one category, or of everything with `null`.
   settingsReset: (category: string | null) => invoke<SettingsOut>("settings_reset", { category }),
-  /// Alpha updates: new version published (null = none).
+  /// Alpha updates: new version published (null = none). Rejects in
+  /// development builds, where the check is off.
   updateCheck: () => invoke<{ version: string; current_version: string; notes: string | null } | null>("update_check"),
+  /// "Copy diagnostics" (§16): version, system, engines, changed settings.
+  diagnosticsText: () => invoke<string>("diagnostics_text"),
+  /// settings.json shown in the file manager.
+  settingsReveal: () => invoke<void>("settings_reveal"),
   /// Downloads, installs and restarts: if it succeeds it does not return.
   updateInstall: () => invoke<void>("update_install"),
   /// Integrated title bar: drag / maximize the window.

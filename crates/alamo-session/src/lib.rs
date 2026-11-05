@@ -676,6 +676,16 @@ impl Session {
         self.sticky().tls_info().await
     }
 
+    /// The server's version string, as said at connect (diagnostics).
+    pub fn server_version(&self) -> Option<String> {
+        self.sticky().server_version()
+    }
+
+    /// The engine's name as the build calls it (diagnostics).
+    pub fn engine_name(&self) -> &'static str {
+        self.driver.info().short_name
+    }
+
     pub fn read_only(&self) -> bool {
         self.read_only
     }

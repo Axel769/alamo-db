@@ -212,6 +212,9 @@ pub trait Connection: Send + Sync + 'static {
     /// engine cannot give stay `None` inside.
     fn tls_info(&self) -> BoxFuture<'_, DbResult<Option<TlsInfo>>>;
 
+    /// The server's version string as it said it at connect (diagnostics).
+    fn server_version(&self) -> Option<String>;
+
     /// READ ONLY transaction around a read-only batch, called only when
     /// `Capabilities::read_only_txn` is on.
     fn begin_read_only_txn(&self) -> BoxFuture<'_, DbResult<()>>;

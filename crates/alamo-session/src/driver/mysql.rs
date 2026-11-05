@@ -99,6 +99,7 @@ impl Driver for MyDriver {
                 mariadb: sess.is_mariadb,
                 tls: sess.tls_options(),
                 server_conn,
+                server_version: sess.server_version.clone(),
                 sess: Mutex::new(sess),
             }) as DbConn)
         }
@@ -124,6 +125,7 @@ struct MyConn {
     tls: TlsOptions,
     /// Identity on the server, read at connect (see `kill_abandoned`).
     server_conn: Option<ServerConnId>,
+    server_version: Option<String>,
 }
 
 /// `old` may be killed from `fresh`: another connection, on the same server
@@ -277,6 +279,10 @@ impl Connection for MyConn {
     /// The session keeps the effective regime after the downgrade; the
     /// server tells the rest. No subject/issuer here: `mysql_async` hides
     /// the certificate, the status variables only carry its validity.
+    fn server_version(&self) -> Option<String> {
+        self.server_version.clone()
+    }
+
     fn tls_info(&self) -> BoxFuture<'_, DbResult<Option<TlsInfo>>> {
         async move {
             if !self.tls.mode.wants_tls() {

@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Settings → Updates: the check at startup can be turned off, "Check now" asks at any time (a newer version opens the update window; a development build says the check is off instead of a false "up to date"), "Copy diagnostics" puts in the clipboard what a bug report needs (version, system, webview, engines with server version, changed settings, where settings.json is; no hosts, profiles or passwords) and "Open settings folder" shows settings.json in the file manager.
 - Settings → Connections: a connection timeout (15 s by default) on the database server and on the SSH bastion, where before a server that accepted and stayed silent hung the dialog; the TCP keep-alive after idle and the SSH keep-alive (both 30 s); automatic reconnection on or off (off: a lost connection is reported with a Reconnect button); and the passwords policy ("save in the keychain when asked" or "always ask, never save", which hides the save box). They apply to the next connections.
 - Development build: deleting a profile or forgetting an SSH credential now removes the entry of the test keychain service, not the real app's.
 - Settings → Export: the format the export dialog proposes, the CSV delimiter (comma or semicolon), a UTF-8 byte order mark for Excel on Windows, LF or CRLF line endings and the rows per INSERT statement (was fixed at 500). The dialog starts from them and each export can still differ; the clipboard never gets the byte order mark.

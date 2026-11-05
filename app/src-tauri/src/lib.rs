@@ -2897,12 +2897,13 @@ struct UpdateInfo {
     notes: Option<String>,
 }
 
-/// Check at startup. Never in debug: `cargo xtask run` must not offer
-/// to replace itself with the published build.
+/// Check at startup and on "Check now". Never in debug: `cargo xtask run`
+/// must not offer to replace itself with the published build — an error,
+/// so "Check now" says why instead of a false "up to date".
 #[tauri::command]
 async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, ErrorOut> {
     if cfg!(debug_assertions) {
-        return Ok(None);
+        return Err(internal("Update checks are off in development builds"));
     }
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| internal(e.to_string()))?;
@@ -3052,6 +3053,93 @@ async fn apply_limits(
     out
 }
 
+/// "Copy diagnostics" (§16): what a bug report needs and nothing that
+/// identifies the user's servers: version, system, webview, engines with
+/// their server versions, the settings that differ from the defaults and
+/// where the file is. No hosts, profile names, passwords or SQL.
+#[tauri::command]
+fn diagnostics_text(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    store: State<'_, settings::SettingsStore>,
+) -> String {
+    let info = app.package_info();
+    let mut lines = vec![
+        format!(
+            "{} {}{}",
+            info.name,
+            info.version,
+            if cfg!(debug_assertions) {
+                " (development build)"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "System: {} {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+        format!(
+            "WebView: {}",
+            tauri::webview_version().unwrap_or_else(|_| "unknown".into())
+        ),
+    ];
+    let sessions: Vec<Arc<Session>> = locked(&state.sessions).values().cloned().collect();
+    let mut engines: Vec<(String, usize)> = Vec::new();
+    for session in sessions {
+        let name = format!(
+            "{} {}",
+            session.engine_name(),
+            session.server_version().unwrap_or_else(|| "?".into())
+        );
+        match engines.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, count)) => *count += 1,
+            None => engines.push((name, 1)),
+        }
+    }
+    lines.push(if engines.is_empty() {
+        "Connections: none".into()
+    } else {
+        format!(
+            "Connections: {}",
+            engines
+                .iter()
+                .map(|(n, c)| format!("{n} ({c})"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    });
+    let changed = settings::non_default_leaves(&store.snapshot());
+    lines.push(if changed.is_empty() {
+        "Settings: defaults".into()
+    } else {
+        format!(
+            "Settings: {}",
+            changed
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    });
+    lines.push(format!("Settings file: {}", store.path().display()));
+    lines.join("\n")
+}
+
+/// "Open settings folder" (§16): settings.json selected in the file
+/// manager, so a hand edit or a bug report starts from the right file.
+#[tauri::command]
+fn settings_reveal(
+    app: AppHandle,
+    store: State<'_, settings::SettingsStore>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .reveal_item_in_dir(store.path())
+        .map_err(|e| e.to_string())
+}
+
 /// The Execution settings in force on one open connection (§16).
 #[derive(Serialize)]
 struct EffectiveOut {
@@ -3177,6 +3265,7 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
         // ONLY on the Rust side — no JS binding, no ACL capability.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         // Alpha updates (Windows): this one too only on the Rust side.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
@@ -3257,6 +3346,8 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             settings_get,
             settings_set,
             settings_reset,
+            diagnostics_text,
+            settings_reveal,
             engines,
             connect,
             connect_profile,

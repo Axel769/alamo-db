@@ -53,6 +53,8 @@ pub struct MySession {
     /// Which server this is (see `server_identity`): with `server_start`, it
     /// tells whether an old connection id still means the same connection.
     pub server_identity: Option<String>,
+    /// `VERSION()`, for diagnostics (MariaDB says so in it).
+    pub server_version: Option<String>,
     url: String,
     /// TLS regime of the profile: cancel/terminate reopen connections and
     /// must speak the same TLS (§12).
@@ -128,7 +130,7 @@ impl MySession {
             .tcp_keepalive(Some(net.tcp_keepalive));
         let mut conn = Conn::new(opts).await.map_err(MyError::from)?;
         let connection_id = conn.id();
-        let is_mariadb = detect_mariadb(&mut conn).await?;
+        let (is_mariadb, server_version) = detect_mariadb(&mut conn).await?;
         let server_start = server_start(&mut conn).await;
         let server_identity = server_identity(&mut conn, is_mariadb).await;
         Ok(MySession {
@@ -137,6 +139,7 @@ impl MySession {
             is_mariadb,
             server_start,
             server_identity,
+            server_version,
             url: url.to_owned(),
             tls: TlsOptions::plain(),
         })
@@ -353,7 +356,8 @@ async fn server_identity(conn: &mut Conn, mariadb: bool) -> Option<String> {
 /// "MariaDB" or the compatibility prefix `5.5.5-`). MariaDB if AT LEAST ONE
 /// of the two says yes: this way a customised version_comment does not hide
 /// the product.
-async fn detect_mariadb(conn: &mut Conn) -> Result<bool, MyError> {
+/// Whether the server is MariaDB, and its `VERSION()` string.
+async fn detect_mariadb(conn: &mut Conn) -> Result<(bool, Option<String>), MyError> {
     let row: Option<(Option<String>, Option<String>)> = conn
         .query_first::<mysql_async::Row, _>("SELECT @@version_comment, VERSION()")
         .await
@@ -364,7 +368,8 @@ async fn detect_mariadb(conn: &mut Conn) -> Result<bool, MyError> {
         .map(|c| c.to_ascii_lowercase().contains("mariadb"))
         .unwrap_or(false);
     let by_version = version
+        .as_deref()
         .map(|v| v.to_ascii_lowercase().contains("mariadb") || v.starts_with("5.5.5-"))
         .unwrap_or(false);
-    Ok(by_comment || by_version)
+    Ok((by_comment || by_version, version))
 }

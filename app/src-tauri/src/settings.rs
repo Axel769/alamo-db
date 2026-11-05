@@ -309,6 +309,8 @@ settings! {
             "\"Always ask\": the save box disappears and passwords already saved are removed at the next connection.";
     }
     updates: Updates ("Updates") {
+        check_at_startup: bool = true, "Check for updates at startup",
+            "Once, when the app opens; \"Check now\" here at any time.";
         skipped_version: String = String::new(), "Skipped version";
     }
 }
@@ -501,6 +503,11 @@ impl SettingsStore {
             unknown: Mutex::new(unknown),
             issues: Mutex::new(issues),
         }
+    }
+
+    /// Where the file lives (the window shows it in the file manager).
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn snapshot(&self) -> Settings {
@@ -703,7 +710,7 @@ fn to_tree(s: &Settings) -> Value {
 
 /// `(key, value)` of every setting that differs from its default: what
 /// goes to disk.
-fn non_default_leaves(s: &Settings) -> Vec<(String, Value)> {
+pub(crate) fn non_default_leaves(s: &Settings) -> Vec<(String, Value)> {
     let tree = to_tree(s);
     let defaults = to_tree(&Settings::default());
     DEFS.iter()

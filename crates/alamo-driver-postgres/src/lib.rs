@@ -56,6 +56,8 @@ pub struct PgSession {
     /// way debugging is done — the connection task queues them here and the
     /// execution drains them towards the UI.
     notices: Arc<Mutex<VecDeque<DbError>>>,
+    /// `server_version` of the startup parameters, for diagnostics.
+    pub server_version: Option<String>,
     /// Backend PID, for the §7.2 escalation (`pg_terminate_backend`).
     /// Captured at connect: afterwards it can no longer be queried if the
     /// connection is busy.
@@ -126,6 +128,7 @@ impl PgSession {
             .keepalives_interval(std::time::Duration::from_secs(10))
             .keepalives_retries(3);
         let (client, mut connection) = config.connect(connector).await.map_err(PgError::from)?;
+        let server_version = connection.parameter("server_version").map(str::to_owned);
         let cancel_token = client.cancel_token();
         let notices: Arc<Mutex<VecDeque<DbError>>> = Arc::default();
         let sink = Arc::clone(&notices);
@@ -166,6 +169,7 @@ impl PgSession {
             cancel_token,
             connection: handle,
             notices,
+            server_version,
             backend_pid,
             backend_start,
             url: url.to_owned(),

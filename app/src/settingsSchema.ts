@@ -60,6 +60,7 @@ export type Settings = {
     password_policy: "keychain" | "ask";
   };
   updates: {
+    check_at_startup: boolean;
     skipped_version: string;
   };
 };
@@ -108,6 +109,7 @@ export type SettingValues = {
   "connections.ssh_keepalive_s": number;
   "connections.auto_reconnect": boolean;
   "connections.password_policy": "keychain" | "ask";
+  "updates.check_at_startup": boolean;
   "updates.skipped_version": string;
 };
 
@@ -178,6 +180,7 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "connections.ssh_keepalive_s", category: "connections", kind: { kind: "int", min: 5, max: 600 }, label: "SSH keep-alive (seconds)", help: "Applies to the next tunnels." },
   { key: "connections.auto_reconnect", category: "connections", kind: { kind: "bool" }, label: "Reconnect automatically", help: "Off: a lost connection is reported and Reconnect is up to you." },
   { key: "connections.password_policy", category: "connections", kind: { kind: "enum", values: ["keychain", "ask"], labels: ["Save in the keychain when asked", "Always ask, never save"] }, label: "Passwords", help: "\"Always ask\": the save box disappears and passwords already saved are removed at the next connection." },
+  { key: "updates.check_at_startup", category: "updates", kind: { kind: "bool" }, label: "Check for updates at startup", help: "Once, when the app opens; \"Check now\" here at any time." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -240,6 +243,7 @@ export const DEFAULTS: Settings = {
     "line_ending": "lf"
   },
   "updates": {
+    "check_at_startup": true,
     "skipped_version": ""
   }
 };

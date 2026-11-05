@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { searchText, t, tMsg } from "./i18n";
 import { patchSettings, resetSettings, settingOf, useSettings } from "./settings";
 import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingKey, SettingValues } from "./settingsSchema";
+import { SETTING_ACTIONS, SettingAction } from "./settingsActions";
 
 type Value = SettingValues[SettingKey];
 import { IconSearch, IconX } from "./icons";
@@ -51,9 +52,15 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
     searchText(categoryLabel(d.category)).includes(q) ||
     d.key.includes(q);
   const found = SETTING_DEFS.filter(matches);
+  const actions = SETTING_ACTIONS.filter(
+    (a) => q === "" || searchText(a.label).includes(q) || searchText(a.help).includes(q) || searchText(categoryLabel(a.category)).includes(q)
+  );
   // Without a query, one section; with a query, every category that has a
   // match, so the user sees where the setting lives.
-  const shown = q === "" ? SETTING_CATEGORIES.filter((c) => c.id === category) : SETTING_CATEGORIES.filter((c) => found.some((d) => d.category === c.id));
+  const shown =
+    q === ""
+      ? SETTING_CATEGORIES.filter((c) => c.id === category)
+      : SETTING_CATEGORIES.filter((c) => found.some((d) => d.category === c.id) || actions.some((a) => a.category === c.id));
   const isDefault = (d: SettingDef) => settingOf(settings, d.key) === settingOf(DEFAULTS, d.key);
 
   return (
@@ -142,6 +149,11 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
                       onChange={(v) => save(patchSettings({ [d.key]: v } as Partial<SettingValues>))}
                     />
                   ))}
+                  {actions
+                    .filter((a) => a.category === c.id)
+                    .map((a) => (
+                      <ActionRow key={a.id} action={a} />
+                    ))}
                 </section>
               );
             })}
@@ -154,6 +166,37 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
 
 function categoryLabel(id: string): string {
   return SETTING_CATEGORIES.find((c) => c.id === id)?.label ?? id;
+}
+
+/// A button in a section (§16): runs the action and shows its answer, or
+/// the backend's message, on the row itself.
+function ActionRow({ action }: { action: SettingAction }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const line = await action.run();
+      setResult(line ? { text: line, error: false } : null);
+    } catch (e) {
+      const err = e as { message?: string };
+      setResult({ text: tMsg(err?.message ?? String(e)), error: true });
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="setting-row" data-key={action.id}>
+      <div className="setting-label">
+        <span>{t(action.label)}</span>
+        <span className="setting-help">{t(action.help)}</span>
+        {result && <span className={"setting-default" + (result.error ? " setting-error" : "")}>{result.text}</span>}
+      </div>
+      <button className="btn small" disabled={busy} onClick={() => void run()}>
+        {busy ? t("Checking…") : t(action.label)}
+      </button>
+    </div>
+  );
 }
 
 /// The default of a setting as the user reads it: the option's label for

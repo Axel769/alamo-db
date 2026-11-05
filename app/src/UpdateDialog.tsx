@@ -14,18 +14,25 @@ function skipped(): string {
   return setting("updates.skipped_version");
 }
 
-type Update = { version: string; current_version: string; notes: string | null };
+export type Update = { version: string; current_version: string; notes: string | null };
 
 export default function UpdateDialog() {
   const [update, setUpdate] = useState<Update | null>(null);
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // At startup if the setting says so (§16); "Check now" in the settings
+  // window asks the backend itself and hands the update over here.
   useEffect(() => {
-    ipc
-      .updateCheck()
-      .then((u) => setUpdate(u && u.version !== skipped() ? u : null))
-      .catch(() => {});
+    if (setting("updates.check_at_startup")) {
+      ipc
+        .updateCheck()
+        .then((u) => setUpdate(u && u.version !== skipped() ? u : null))
+        .catch(() => {});
+    }
+    const onFound = (e: Event) => setUpdate((e as CustomEvent<Update>).detail);
+    window.addEventListener("alamo:update-found", onFound);
+    return () => window.removeEventListener("alamo:update-found", onFound);
   }, []);
 
   const later = () => {

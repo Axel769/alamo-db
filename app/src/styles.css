@@ -251,6 +251,10 @@ body,
   border-radius: 4px;
 }
 
+.setting-error {
+  color: var(--ui-danger);
+}
+
 .setting-row.modified {
   border-left-color: var(--cell-selection-border);
   background: var(--state-alt);

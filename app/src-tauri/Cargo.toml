@@ -42,6 +42,8 @@ base64 = "0.22"
 getrandom = "0.3"
 zeroize = "1"
 tauri-plugin-window-state = "~2.4"
+# "Open settings folder" (§16): reveals settings.json in the file manager.
+tauri-plugin-opener = "2"
 
 # Attribute search in the keychain (`secrets::exists`): already in the graph
 # through keyring, here its direct API is needed.

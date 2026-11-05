@@ -210,6 +210,10 @@ impl Connection for PgConn {
     /// `prefer` may have fallen back to plaintext and tokio-postgres does
     /// not say so: the server does, with protocol and cipher. The
     /// certificate is the one the driver's verifier saw at the handshake.
+    fn server_version(&self) -> Option<String> {
+        self.0.server_version.clone()
+    }
+
     fn tls_info(&self) -> BoxFuture<'_, DbResult<Option<TlsInfo>>> {
         async move {
             let row = self

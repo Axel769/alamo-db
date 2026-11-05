@@ -1846,6 +1846,11 @@ configuration file of a professional tool must be (DataGrip, DBeaver).
   for the new connection, `settings_set`/`settings_reset`/`settings_get` and
   `profile_save` for every open one. No Tauri event: the app has none, and a
   reply reaches the one caller that must react.
+- **Actions in a section** (`app/src/settingsActions.ts`: check for
+  updates now, copy diagnostics, open the settings folder) are buttons
+  with a label and a help line like a setting, found by the search, that
+  answer on their own row with a line or with the backend's message. They
+  are not values and never touch settings.json.
 - **What is not a setting**: anything that rewrites the user's SQL or adds a
   `COUNT(*)` (§5.2); the confirmation of irreversible operations on
   production (§9.7 point 3), which no setting can turn off; telemetry.
