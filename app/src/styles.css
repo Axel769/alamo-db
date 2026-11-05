@@ -4072,6 +4072,12 @@ select:focus-visible {
   min-width: 106px;
 }
 
+/* A title shorter than the floor leaves slack: the title takes it, so the
+   × sits at the right edge of every tab, not in the middle of a short one. */
+.tab-text {
+  flex: 1 1 auto;
+}
+
 .tab-icon,
 .tab-close,
 .tab-pin,
