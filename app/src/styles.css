@@ -3871,16 +3871,6 @@ select:focus-visible {
   border-color: var(--ui-border);
 }
 
-/* Those who prefer less motion see none. */
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
-  }
-  .dialog {
-    animation-name: overlay-in; /* only the fade, no scale */
-  }
-}
-
 /* ------------------------------------------- connection modal (redone) */
 
 /* Fixed size: before, the dialog changed height on every section and
@@ -5165,16 +5155,6 @@ button.profile-pill:hover {
 .btn.cancel-live:not(:disabled) {
   border-color: var(--cell-selection-border);
 }
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation-duration: 2.4s;
-  }
-  .run-progress::after {
-    animation: none;
-    width: 100%;
-    opacity: 0.6;
-  }
-}
 
 /* Name of the open database in the connection page: it stays the title of
    the level (bold, interface font) but it is also the quick database
@@ -5419,4 +5399,28 @@ button.profile-pill:hover {
 /* Negotiated TLS on the connection page header. */
 .conn-page-tls {
   overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------- reduced motion */
+
+/* Drop movement, keep the 120 ms colour fades (they are feedback, not
+   motion). Every transform and keyframe of the app is listed here. */
+@media (prefers-reduced-motion: reduce) {
+  .conn-av {
+    transition: box-shadow var(--ui-ease);
+  }
+  .conn-av:hover {
+    transform: none;
+  }
+  .spinner {
+    animation-duration: 2.4s;
+  }
+  .run-progress::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+  .dialog {
+    animation-name: overlay-in; /* only the fade, no scale */
+  }
 }

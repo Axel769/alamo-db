@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- With "reduce motion" on in the system, buttons and tabs keep their short colour fade on hover and focus; only movement is dropped.
 - Dialogs (connection, settings, export, update and the others) open with a short fade instead of appearing at once; closing stays instant. The command palette and the side panel do not animate. With "reduce motion" on in the system, only the fade remains.
 - While a query runs, the moving thread under the query bar no longer costs the main thread anything: the rows arriving are not slowed down by it, and it moves at a constant speed.
 - A connection profile can override the execution settings for itself (new "Settings" tab in the connection dialog): each one is "use the default (value)" or a value of its own. The overrides travel with the connection in export and import. On connect, an override this build cannot use (unknown or not overridable) is reported once, and the global settings stay in force.
