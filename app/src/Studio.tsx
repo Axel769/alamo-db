@@ -510,6 +510,11 @@ function StudioInner() {
     const show = window.setTimeout(() => setReconnecting({ connId, startedAt, force }), showAfter);
     try {
       const rc = force ? await ipc.reconnect(connId) : await ipc.ensureConnected(connId);
+      if (!force && rc.dead) {
+        // §16: automatic reconnection off. Said once, Reconnect in the note.
+        setConnNote({ warn: true, text: t("Connection lost. Press Reconnect to reopen it."), retry: connId });
+        return null;
+      }
       if (!rc.reconnected) return rc;
       // Database and table lists read (or failed) on the old connection:
       // re-read, without having to press "Refresh" too.

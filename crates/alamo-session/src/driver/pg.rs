@@ -10,6 +10,7 @@ use alamo_core::schema_info::{
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
 use alamo_core::tls::{TlsInfo, TlsMode, TlsOptions};
+use alamo_core::NetOptions;
 use alamo_driver_postgres::introspect;
 use alamo_driver_postgres::{PgDialect, PgError, PgSession};
 use futures_util::future::BoxFuture;
@@ -76,9 +77,14 @@ impl Driver for PgDriver {
         s
     }
 
-    fn connect<'a>(&'a self, url: &'a str, tls: &'a TlsOptions) -> BoxFuture<'a, DbResult<DbConn>> {
+    fn connect<'a>(
+        &'a self,
+        url: &'a str,
+        tls: &'a TlsOptions,
+        net: &'a NetOptions,
+    ) -> BoxFuture<'a, DbResult<DbConn>> {
         async move {
-            let sess = PgSession::connect(url, tls).await.map_err(boxed)?;
+            let sess = PgSession::connect_net(url, tls, net).await.map_err(boxed)?;
             Ok(Arc::new(PgConn(Arc::new(sess))) as DbConn)
         }
         .boxed()

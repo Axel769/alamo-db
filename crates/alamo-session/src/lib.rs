@@ -29,6 +29,7 @@ use alamo_core::error::DbError;
 use alamo_core::schema_info::{ColumnInfo, ForeignKey, RelationInfo, SchemaInfo, SchemaStats};
 use alamo_core::stream::FetchOptions;
 use alamo_core::tls::{TlsInfo, TlsOptions};
+pub use alamo_core::NetOptions;
 use alamo_driver_postgres::PgSession;
 
 use driver::{DbConn, Driver, ServerConnId};
@@ -134,6 +135,9 @@ pub const PING_AFTER_IDLE: std::time::Duration = std::time::Duration::from_secs(
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct ReconnectOut {
     pub reconnected: bool,
+    /// The connection is dead and was NOT reopened: automatic reconnection
+    /// is off (§16), the user decides.
+    pub dead: bool,
     /// There was an open transaction: the server rolled it back.
     pub lost_txn: bool,
     /// ...with uncommitted writes: work lost, it must be said.
@@ -281,6 +285,8 @@ pub struct Session {
     /// The profile's TLS regime (§12): every lane is born with it — a
     /// plaintext auxiliary on a TLS profile would be a silent downgrade.
     tls: TlsOptions,
+    /// Connect timeout and keepalive (§16), fixed at connect for every lane.
+    net: NetOptions,
     /// Connection dedicated to introspection (§3): **lazy** — opening it at
     /// connect would keep an unused connection on every server — and
     /// reopened if it dropped in the meantime.
@@ -362,12 +368,34 @@ impl Session {
         read_only: bool,
         tls: TlsOptions,
     ) -> Result<Session, Box<DbError>> {
+        Self::connect_with(
+            driver,
+            url,
+            production,
+            read_only,
+            tls,
+            NetOptions::default(),
+        )
+        .await
+    }
+
+    /// `connect_opts` with the network choices of the Connections settings
+    /// (§16): connect timeout and TCP keepalive, for this and every lane.
+    pub async fn connect_with(
+        driver: Arc<dyn Driver>,
+        url: &str,
+        production: bool,
+        read_only: bool,
+        tls: TlsOptions,
+        net: NetOptions,
+    ) -> Result<Session, Box<DbError>> {
         let opened = std::sync::Mutex::new(Vec::new());
         let sticky = Self::open_lane(
             &*driver,
             &opened,
             url,
             &tls,
+            &net,
             LaneSetup {
                 production,
                 read_only,
@@ -388,6 +416,7 @@ impl Session {
             driver,
             url: url.to_owned(),
             tls,
+            net,
             introspect: tokio::sync::Mutex::new(None),
             stats: tokio::sync::Mutex::new(None),
             shared: tokio::sync::Mutex::new(None),
@@ -532,8 +561,15 @@ impl Session {
     /// running nothing is touched. The old connection's transaction is
     /// lost (the server rolled it back): the outcome says so, the UI shows it.
     pub async fn ensure_connected(&self) -> Result<ReconnectOut, Box<DbError>> {
+        self.ensure_connected_opts(true).await
+    }
+
+    /// `ensure_connected` with the choice of §16: `reopen` false = a dead
+    /// connection is reported (`dead`), not reopened.
+    pub async fn ensure_connected_opts(&self, reopen: bool) -> Result<ReconnectOut, Box<DbError>> {
         let fine = ReconnectOut {
             reconnected: false,
+            dead: false,
             lost_txn: false,
             lost_writes: false,
         };
@@ -558,12 +594,16 @@ impl Session {
             self.touch();
             return Ok(fine);
         }
+        if !reopen {
+            return Ok(ReconnectOut { dead: true, ..fine });
+        }
         let lost = self.txn.snapshot();
         let fresh = Self::open_lane(
             &*self.driver,
             &self.opened,
             &self.url,
             &self.tls,
+            &self.net,
             LaneSetup {
                 production: self.production,
                 read_only: self.read_only,
@@ -580,6 +620,7 @@ impl Session {
         self.touch();
         Ok(ReconnectOut {
             reconnected: true,
+            dead: false,
             lost_txn: lost.open,
             lost_writes: lost.has_writes,
         })
@@ -597,6 +638,7 @@ impl Session {
             &self.opened,
             &self.url,
             &self.tls,
+            &self.net,
             LaneSetup {
                 production: self.production,
                 read_only: self.read_only,
@@ -622,6 +664,7 @@ impl Session {
         self.touch();
         Ok(ReconnectOut {
             reconnected: true,
+            dead: false,
             lost_txn: lost.open,
             lost_writes: lost.has_writes,
         })
@@ -900,6 +943,7 @@ impl Session {
             &self.opened,
             &self.url,
             &self.tls,
+            &self.net,
             LaneSetup {
                 production: self.production,
                 read_only: self.read_only,
@@ -980,6 +1024,7 @@ impl Session {
         opened: &std::sync::Mutex<Vec<ServerConnId>>,
         url: &str,
         tls: &TlsOptions,
+        net: &NetOptions,
         setup: LaneSetup,
     ) -> Result<DbConn, Box<DbError>> {
         let LaneSetup {
@@ -988,7 +1033,20 @@ impl Session {
             role,
             query_timeout_ms,
         } = setup;
-        let conn = driver.connect(url, tls).await?;
+        // One bound for the whole open (TCP, TLS, handshake and the driver's
+        // first queries): a server that accepts and stays silent must not
+        // hang the dialog. Transport: the UI offers the reconnection.
+        let conn = tokio::time::timeout(net.connect_timeout, driver.connect(url, tls, net))
+            .await
+            .map_err(|_| {
+                Box::new(
+                    DbError::internal(format!(
+                        "No answer from the server within {} s",
+                        net.connect_timeout.as_secs()
+                    ))
+                    .with_category(alamo_core::error::ErrorCategory::Transport),
+                )
+            })??;
         opened.lock().unwrap().extend(conn.server_conn_id());
         // Read-only: if the SET fails, the opening fails — promising the
         // server net without having it would be a false sense of security.

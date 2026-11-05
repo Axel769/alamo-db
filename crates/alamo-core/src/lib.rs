@@ -103,3 +103,23 @@ impl From<CoreError> for DbError {
 /// 350 s: the classic "connection dropped after 5 minutes") and detects an
 /// already dead connection early. The server does not see it as activity.
 pub const TCP_KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Network choices of a database connection (the Connections settings,
+/// §16): fixed when it opens, so a change applies to the next ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetOptions {
+    /// Longest wait for the server to answer the connect, handshake and
+    /// first queries included.
+    pub connect_timeout: std::time::Duration,
+    /// TCP keepalive idle time (see `TCP_KEEPALIVE_IDLE`).
+    pub tcp_keepalive: std::time::Duration,
+}
+
+impl Default for NetOptions {
+    fn default() -> Self {
+        NetOptions {
+            connect_timeout: std::time::Duration::from_secs(15),
+            tcp_keepalive: TCP_KEEPALIVE_IDLE,
+        }
+    }
+}

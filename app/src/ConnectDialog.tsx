@@ -13,7 +13,7 @@ import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
 import { connColor } from "./connColor";
 import { SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingValues } from "./settingsSchema";
-import { applyEffective, settingOf, useSettings } from "./settings";
+import { applyEffective, setting, settingOf, useSettings } from "./settings";
 
 /// The settings a connection profile may override (§16): the overridable
 /// categories, in schema order. Phase 1 is the Execution ones.
@@ -371,7 +371,7 @@ export default function ConnectDialog({
     try {
       // Outside edit mode the SAVED profile is connected, as is.
       id = editing || draft.id === null ? await save() : draft.id;
-      const p = await ipc.connectProfile(id, password || null, savePassword, sshSecret || null);
+      const p = await ipc.connectProfile(id, password || null, savePassword && keychainAllowed(), sshSecret || null);
       onConnected(p);
     } catch (e) {
       failed(e, id, "connect");
@@ -841,17 +841,19 @@ export default function ConnectDialog({
                 onKeyDown={(e) => e.key === "Enter" && void connect()}
               />
             </label>
-            <label
-              className="check"
-              title={t("In the system keychain (Keychain Access/Credential Manager), never in cleartext on disk")}
-            >
-              <input
-                type="checkbox"
-                checked={savePassword}
-                onChange={(e) => setSavePassword(e.target.checked)}
-              />
-              {t("save password in the keychain")}
-            </label>
+            {keychainAllowed() && (
+              <label
+                className="check"
+                title={t("In the system keychain (Keychain Access/Credential Manager), never in cleartext on disk")}
+              >
+                <input
+                  type="checkbox"
+                  checked={savePassword}
+                  onChange={(e) => setSavePassword(e.target.checked)}
+                />
+                {t("save password in the keychain")}
+              </label>
+            )}
               </>
             )}
             {section === "security" && (
@@ -1388,15 +1390,23 @@ function ProfileSummary({
           />
         </label>
       )}
-      <label
-        className="check"
-        title={t("In the system keychain (Keychain Access/Credential Manager), never in cleartext on disk")}
-      >
-        <input type="checkbox" checked={savePassword} onChange={(e) => onSavePassword(e.target.checked)} />
-        {t("save password in the keychain")}
-      </label>
+      {keychainAllowed() && (
+        <label
+          className="check"
+          title={t("In the system keychain (Keychain Access/Credential Manager), never in cleartext on disk")}
+        >
+          <input type="checkbox" checked={savePassword} onChange={(e) => onSavePassword(e.target.checked)} />
+          {t("save password in the keychain")}
+        </label>
+      )}
     </>
   );
+}
+
+/// §16 "Passwords": with "always ask" nothing is offered for the keychain
+/// and a connect clears what was saved (the backend's "do not save").
+function keychainAllowed(): boolean {
+  return setting("connections.password_policy") === "keychain";
 }
 
 /// One overridable setting in the profile dialog (§16): a checkbox to keep

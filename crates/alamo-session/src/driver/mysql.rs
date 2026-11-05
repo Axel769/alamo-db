@@ -10,6 +10,7 @@ use alamo_core::schema_info::{
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
 use alamo_core::tls::{CertSummary, TlsInfo, TlsMode, TlsOptions};
+use alamo_core::NetOptions;
 use alamo_driver_mysql::introspect;
 use alamo_driver_mysql::{MyDialect, MyError, MySession};
 use futures_util::future::BoxFuture;
@@ -75,9 +76,14 @@ impl Driver for MyDriver {
         s
     }
 
-    fn connect<'a>(&'a self, url: &'a str, tls: &'a TlsOptions) -> BoxFuture<'a, DbResult<DbConn>> {
+    fn connect<'a>(
+        &'a self,
+        url: &'a str,
+        tls: &'a TlsOptions,
+        net: &'a NetOptions,
+    ) -> BoxFuture<'a, DbResult<DbConn>> {
         async move {
-            let sess = MySession::connect(url, tls).await.map_err(boxed)?;
+            let sess = MySession::connect_net(url, tls, net).await.map_err(boxed)?;
             let (url, id) = sess.cancel_parts();
             let server_conn = match (&sess.server_identity, sess.server_start) {
                 (Some(server), Some(start)) => Some(ServerConnId {

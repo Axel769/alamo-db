@@ -221,12 +221,13 @@ impl AppState {
             .get(&profile.dialect)
             .ok_or_else(|| internal(format!("unsupported engine «{}»", profile.dialect)))?;
         let url = driver.conn_string(&storage::connect_target(profile, password, tunnel_port));
-        let session = Session::connect_opts(
+        let session = Session::connect_with(
             driver,
             &url,
             profile.is_production,
             profile.read_only,
             storage::tls_options(profile, tunnel_port.is_some()),
+            global.connections.net(),
         )
         .await
         .map_err(|e| ErrorOut::from(&*e))?;
@@ -432,6 +433,9 @@ impl From<alamo_core::tls::CertSummary> for CertOut {
 struct TunnelSlot {
     tunnel: Option<alamo_tunnel::Tunnel>,
     cfg: alamo_tunnel::TunnelConfig,
+    /// Timeout and keepalive of §16 as they were at connect: a rebuild is
+    /// the same connection, not a new one.
+    net: alamo_tunnel::TunnelNet,
     port: u16,
 }
 
@@ -538,6 +542,7 @@ async fn open_profile(
     };
     // The tunnel first (§12): the connection string points to its listener.
     // Tunnel failed, no session.
+    let global = app.state::<settings::SettingsStore>().snapshot();
     let mut tunnel = None;
     let tunnel_port = if let Some(sp) = &ssh_profile {
         let sid = sp.id.unwrap_or(0);
@@ -546,20 +551,21 @@ async fn open_profile(
             target_host: profile.host.clone(),
             target_port: profile.port,
         };
-        let t = alamo_tunnel::Tunnel::open(cfg.clone())
+        let net = global.connections.tunnel_net();
+        let t = alamo_tunnel::Tunnel::open_at(cfg.clone(), None, net)
             .await
             .map_err(|e| tunnel_error(app, sid, sp, e))?;
         let port = t.local_port;
         tunnel = Some(TunnelSlot {
             tunnel: Some(t),
             cfg,
+            net,
             port,
         });
         Some(port)
     } else {
         None
     };
-    let global = app.state::<settings::SettingsStore>().snapshot();
     let (session, execution, warnings) = app
         .state::<AppState>()
         .open_session(&profile, &password, tunnel_port, &global)
@@ -1022,7 +1028,7 @@ async fn profile_save(
         let before = profile.id.map(|id| db_account(&db, id)).transpose()?;
         let id = storage::profile_save(&db, &profile).map_err(|e| e.to_string())?;
         if let Some(old) = before.filter(|old| db_account(&db, id).ok().as_ref() != Some(old)) {
-            if let Err(e) = secrets::forget(&app.config().identifier, &old) {
+            if let Err(e) = secrets::forget(&keychain_service(app.config()), &old) {
                 eprintln!("keychain (profile {id}): {e}");
             }
         }
@@ -1105,7 +1111,7 @@ fn profile_delete(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), Stri
     // The db password dies with the profile. The SSH credential instead
     // belongs to the (shared) SSH profile and dies with IT, in
     // `ssh_profile_delete`.
-    secrets::forget(&app.config().identifier, &account)
+    secrets::forget(&keychain_service(app.config()), &account)
 }
 
 // ------------------------------------------------------------- SSH profiles
@@ -1159,7 +1165,7 @@ fn ssh_profile_save(
     let before = profile.id.map(|id| ssh_account(&db, id)).transpose()?;
     let id = storage::ssh_profile_save(&db, &profile).map_err(|e| e.to_string())?;
     if let Some(old) = before.filter(|old| ssh_account(&db, id).ok().as_ref() != Some(old)) {
-        if let Err(e) = secrets::forget(&app.config().identifier, &old) {
+        if let Err(e) = secrets::forget(&keychain_service(app.config()), &old) {
             eprintln!("keychain (SSH profile {id}): {e}");
         }
     }
@@ -1172,7 +1178,7 @@ fn ssh_profile_delete(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), 
     let account = ssh_account(&db, id)?;
     storage::ssh_profile_delete(&db, id).map_err(|e| e.to_string())?;
     // The bastion's credential dies with its profile.
-    secrets::forget(&app.config().identifier, &account)
+    secrets::forget(&keychain_service(app.config()), &account)
 }
 
 /// "Do not save it" in the manager: the bastion's credential leaves the
@@ -1180,7 +1186,7 @@ fn ssh_profile_delete(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), 
 #[tauri::command]
 fn ssh_secret_forget(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), String> {
     let account = ssh_account(&locked(&db.0), id)?;
-    secrets::forget(&app.config().identifier, &account)
+    secrets::forget(&keychain_service(app.config()), &account)
 }
 
 #[tauri::command]
@@ -1202,6 +1208,7 @@ struct ProbeOut {
 async fn ssh_profile_test(
     app: AppHandle,
     db: State<'_, Db>,
+    settings: State<'_, settings::SettingsStore>,
     id: i64,
     secret: Option<String>,
     save_secret: bool,
@@ -1227,7 +1234,7 @@ async fn ssh_profile_test(
     };
     // The lock must not live across the await: built first.
     let endpoint = ssh_endpoint(&locked(&db.0), &sp, &secret)?;
-    alamo_tunnel::probe(&endpoint)
+    alamo_tunnel::probe_with(&endpoint, settings.snapshot().connections.tunnel_net())
         .await
         .map_err(|e| tunnel_error(&app, id, &sp, e))?;
     if save_secret && !typed.is_empty() {
@@ -2374,15 +2381,28 @@ async fn rebuild_tunnel(state: &AppState, conn_id: u64) -> Result<(), ErrorOut> 
     let Some(slot) = locked(&state.tunnels).remove(&conn_id) else {
         return Ok(());
     };
-    let TunnelSlot { tunnel, cfg, port } = slot;
+    let TunnelSlot {
+        tunnel,
+        cfg,
+        net,
+        port,
+    } = slot;
     // The old one closes listener and SSH: the port is freed for the new one.
     drop(tunnel);
-    let opened = alamo_tunnel::Tunnel::open_at(cfg.clone(), Some(port)).await;
+    let opened = alamo_tunnel::Tunnel::open_at(cfg.clone(), Some(port), net).await;
     let (tunnel, result) = match opened {
         Ok(t) => (Some(t), Ok(())),
         Err(e) => (None, Err(internal(e.to_string()))),
     };
-    locked(&state.tunnels).insert(conn_id, TunnelSlot { tunnel, cfg, port });
+    locked(&state.tunnels).insert(
+        conn_id,
+        TunnelSlot {
+            tunnel,
+            cfg,
+            net,
+            port,
+        },
+    );
     result
 }
 
@@ -2397,20 +2417,32 @@ async fn rebuild_tunnel(state: &AppState, conn_id: u64) -> Result<(), ErrorOut> 
 #[tauri::command]
 async fn ensure_connected(
     state: State<'_, AppState>,
+    settings: State<'_, settings::SettingsStore>,
     conn_id: u64,
 ) -> Result<alamo_session::ReconnectOut, ErrorOut> {
     let session = state.session(conn_id).map_err(internal)?;
+    // §16: with automatic reconnection off nothing is rebuilt, the user
+    // decides from the note.
+    let auto = settings.snapshot().connections.auto_reconnect;
     // The tunnel belongs to the profile's connection (§3.3).
     let owner = state.root(conn_id);
     let tunnel_closed = locked(&state.tunnels)
         .get(&owner)
         .map(TunnelSlot::is_closed);
     if tunnel_closed == Some(true) {
+        if !auto {
+            return Ok(alamo_session::ReconnectOut {
+                reconnected: false,
+                dead: true,
+                lost_txn: false,
+                lost_writes: false,
+            });
+        }
         rebuild_tunnel(&state, owner).await?;
     }
-    match session.ensure_connected().await {
+    match session.ensure_connected_opts(auto).await {
         Ok(rc) => Ok(rc),
-        Err(_) if tunnel_closed == Some(false) => {
+        Err(_) if auto && tunnel_closed == Some(false) => {
             rebuild_tunnel(&state, owner).await?;
             session
                 .ensure_connected()

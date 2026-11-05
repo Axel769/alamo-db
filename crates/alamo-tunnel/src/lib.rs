@@ -57,6 +57,12 @@ pub enum TunnelError {
     Keys(russh::keys::Error),
     Io(std::io::Error),
     Config(String),
+    /// The bastion did not finish connect and authentication in time.
+    Timeout {
+        host: String,
+        port: u16,
+        secs: u64,
+    },
 }
 
 impl fmt::Display for TunnelError {
@@ -85,6 +91,9 @@ impl fmt::Display for TunnelError {
             TunnelError::Keys(e) => write!(f, "SSH key: {e}"),
             TunnelError::Io(e) => write!(f, "SSH tunnel: {e}"),
             TunnelError::Config(m) => write!(f, "SSH tunnel: {m}"),
+            TunnelError::Timeout { host, port, secs } => {
+                write!(f, "No answer from {host}:{port} within {secs} s")
+            }
         }
     }
 }
@@ -141,6 +150,26 @@ pub struct SshEndpoint {
     pub trusted_key: Option<String>,
 }
 
+/// Network choices of a tunnel (the Connections settings, §16): fixed
+/// when it opens, so a change applies to the next ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TunnelNet {
+    /// Longest wait for the bastion: TCP, key exchange and authentication.
+    pub connect_timeout: Duration,
+    /// SSH keepalive interval: keeps NAT/firewall from dropping the idle
+    /// connection, and notices a dead one.
+    pub keepalive: Duration,
+}
+
+impl Default for TunnelNet {
+    fn default() -> Self {
+        TunnelNet {
+            connect_timeout: Duration::from_secs(15),
+            keepalive: Duration::from_secs(30),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct TunnelConfig {
     pub ssh: SshEndpoint,
@@ -162,7 +191,12 @@ pub fn fingerprint_of(openssh: &str) -> Option<String> {
 /// disconnects. Says whether the bastion accepts us, without forwarding
 /// anything.
 pub async fn probe(ssh: &SshEndpoint) -> Result<(), TunnelError> {
-    let handle = session(ssh).await?;
+    probe_with(ssh, TunnelNet::default()).await
+}
+
+/// `probe` with the network choices of §16.
+pub async fn probe_with(ssh: &SshEndpoint, net: TunnelNet) -> Result<(), TunnelError> {
+    let handle = session(ssh, net).await?;
     // Best-effort goodbye: the handshake already answered the question.
     let _ = handle
         .disconnect(russh::Disconnect::ByApplication, "", "en")
@@ -172,11 +206,11 @@ pub async fn probe(ssh: &SshEndpoint) -> Result<(), TunnelError> {
 
 /// Connection to the bastion, host key verified, user authenticated: the
 /// part of the tunnel that can fail for reasons the user can act on.
-async fn session(ssh: &SshEndpoint) -> Result<Handle<HostCheck>, TunnelError> {
+async fn session(ssh: &SshEndpoint, net: TunnelNet) -> Result<Handle<HostCheck>, TunnelError> {
     let config = Arc::new(client::Config {
         // A tunnel stays up for hours with long silences: the keepalive
         // prevents NAT/firewall from dropping the idle connection.
-        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_interval: Some(net.keepalive),
         ..Default::default()
     });
     // Read BEFORE connecting: an unreadable known_hosts or a broken
@@ -197,8 +231,25 @@ async fn session(ssh: &SshEndpoint) -> Result<Handle<HostCheck>, TunnelError> {
         known_hosts,
         pinned,
     };
-    let mut handle = client::connect(config, (ssh.host.as_str(), ssh.port), checker).await?;
-    authenticate(&mut handle, &ssh.user, &ssh.auth).await?;
+    // One bound for TCP, key exchange and authentication: a bastion that
+    // accepts and stays silent must not hang the connect.
+    let timeout = || TunnelError::Timeout {
+        host: ssh.host.clone(),
+        port: ssh.port,
+        secs: net.connect_timeout.as_secs(),
+    };
+    let mut handle = tokio::time::timeout(
+        net.connect_timeout,
+        client::connect(config, (ssh.host.as_str(), ssh.port), checker),
+    )
+    .await
+    .map_err(|_| timeout())??;
+    tokio::time::timeout(
+        net.connect_timeout,
+        authenticate(&mut handle, &ssh.user, &ssh.auth),
+    )
+    .await
+    .map_err(|_| timeout())??;
     Ok(handle)
 }
 
@@ -221,7 +272,7 @@ impl Drop for Tunnel {
 
 impl Tunnel {
     pub async fn open(cfg: TunnelConfig) -> Result<Tunnel, TunnelError> {
-        Self::open_at(cfg, None).await
+        Self::open_at(cfg, None, TunnelNet::default()).await
     }
 
     /// Has the SSH connection dropped (network, Mac asleep)? The local
@@ -236,11 +287,14 @@ impl Tunnel {
     /// connection string, which contains it. The old tunnel must be dropped
     /// first: its listener closes with the task abort, which is
     /// asynchronous, so the bind is retried for a while.
+    /// `local_port`: the previous listener's port on a rebuild, so the
+    /// connection strings stay valid. `net`: the choices of §16.
     pub async fn open_at(
         cfg: TunnelConfig,
         local_port: Option<u16>,
+        net: TunnelNet,
     ) -> Result<Tunnel, TunnelError> {
-        let handle = session(&cfg.ssh).await?;
+        let handle = session(&cfg.ssh, net).await?;
 
         // Random port on loopback: no conflicts, no exposure outside the
         // machine.

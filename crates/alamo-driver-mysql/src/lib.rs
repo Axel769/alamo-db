@@ -29,6 +29,7 @@ use mysql_async::prelude::Queryable;
 use mysql_async::{Conn, Opts, OptsBuilder, SslOpts};
 
 use alamo_core::tls::{TlsMode, TlsOptions};
+use alamo_core::NetOptions;
 
 /// An open connection plus what is needed to cancel its queries.
 ///
@@ -78,12 +79,23 @@ impl MySession {
     /// MariaDB does not implement it and uses native/ed25519. Both paths go
     /// through here.
     pub async fn connect(url: &str, tls: &TlsOptions) -> Result<MySession, MyError> {
-        match Self::connect_with(url, ssl_opts(tls)?).await {
+        Self::connect_net(url, tls, &NetOptions::default()).await
+    }
+
+    /// `connect` with the network choices of the Connections settings
+    /// (§16). The connect timeout is the session's (it covers the extra
+    /// queries too); here only the keepalive.
+    pub async fn connect_net(
+        url: &str,
+        tls: &TlsOptions,
+        net: &NetOptions,
+    ) -> Result<MySession, MyError> {
+        match Self::connect_with(url, ssl_opts(tls)?, net).await {
             Ok(sess) => Ok(sess.with_tls(tls.clone())),
             Err(e) if tls.mode == TlsMode::Prefer && server_refused_tls(&e) => {
                 // The `prefer` degradation: from here on the session IS in
                 // plaintext, and so must cancel/terminate be.
-                Ok(Self::connect_with(url, None)
+                Ok(Self::connect_with(url, None, net)
                     .await?
                     .with_tls(TlsOptions::plain()))
             }
@@ -96,7 +108,11 @@ impl MySession {
         self
     }
 
-    async fn connect_with(url: &str, ssl: Option<SslOpts>) -> Result<MySession, MyError> {
+    async fn connect_with(
+        url: &str,
+        ssl: Option<SslOpts>,
+        net: &NetOptions,
+    ) -> Result<MySession, MyError> {
         let opts = Opts::from_url(url).map_err(|e| MyError::from(mysql_async::Error::from(e)))?;
         // The columnar layout declares text as UTF-8 (§4.2): the session must
         // be forced to utf8mb4, otherwise a different charset requested by
@@ -109,7 +125,7 @@ impl MySession {
         let opts = OptsBuilder::from_opts(opts)
             .setup(vec!["SET NAMES utf8mb4"])
             .ssl_opts(ssl)
-            .tcp_keepalive(Some(alamo_core::TCP_KEEPALIVE_IDLE));
+            .tcp_keepalive(Some(net.tcp_keepalive));
         let mut conn = Conn::new(opts).await.map_err(MyError::from)?;
         let connection_id = conn.id();
         let is_mariadb = detect_mariadb(&mut conn).await?;

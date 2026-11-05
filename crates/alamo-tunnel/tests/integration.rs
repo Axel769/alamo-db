@@ -323,7 +323,7 @@ async fn reopened_on_the_same_port_after_drop() {
     assert!(!tunnel.is_closed());
     let port = tunnel.local_port;
     drop(tunnel);
-    let again = Tunnel::open_at(cfg, Some(port))
+    let again = Tunnel::open_at(cfg, Some(port), alamo_tunnel::TunnelNet::default())
         .await
         .expect("reopening on the same port");
     assert_eq!(again.local_port, port);
@@ -551,4 +551,48 @@ fn fingerprint_of_saved_key() {
         )
     );
     assert_eq!(alamo_tunnel::fingerprint_of("not a key"), None);
+}
+
+/// A bastion that accepts and never speaks: the probe gives up after the
+/// configured timeout (§16), naming host and port, instead of hanging.
+#[tokio::test]
+async fn probe_gives_up_on_a_silent_bastion() {
+    use alamo_tunnel::{probe_with, TunnelNet};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = listener.accept().await {
+            held.push(sock);
+        }
+    });
+    let endpoint = SshEndpoint {
+        host: "127.0.0.1".into(),
+        port,
+        user: USER.into(),
+        auth: TunnelAuth::Password(PASSWORD.into()),
+        known_hosts: Some(known_hosts_file("silent", None)),
+        trusted_key: None,
+    };
+    let started = std::time::Instant::now();
+    let err = probe_with(
+        &endpoint,
+        TunnelNet {
+            connect_timeout: std::time::Duration::from_secs(1),
+            keepalive: std::time::Duration::from_secs(30),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, TunnelError::Timeout { port: p, secs: 1, .. } if p == port),
+        "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        format!("No answer from 127.0.0.1:{port} within 1 s")
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }

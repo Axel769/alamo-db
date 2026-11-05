@@ -1791,8 +1791,14 @@ async fn mysql_kill_abandoned_closes_the_old_connection() {
     let url = require_mysql!();
     let tls = alamo_core::tls::TlsOptions::plain();
     let driver = builtin_for_url(&url);
-    let fresh = driver.connect(&url, &tls).await.expect("connection");
-    let other = driver.connect(&url, &tls).await.expect("other connection");
+    let fresh = driver
+        .connect(&url, &tls, &alamo_session::NetOptions::default())
+        .await
+        .expect("connection");
+    let other = driver
+        .connect(&url, &tls, &alamo_session::NetOptions::default())
+        .await
+        .expect("other connection");
     assert!(other.ping().await);
     fresh
         .kill_abandoned(other.server_conn_id().as_slice())
@@ -2102,7 +2108,7 @@ async fn mysql_busy_connection_is_healthy_without_waiting() {
     let url = require_mysql!();
     let tls = alamo_core::tls::TlsOptions::default();
     let conn = builtin_for_url(&url)
-        .connect(&url, &tls)
+        .connect(&url, &tls, &alamo_session::NetOptions::default())
         .await
         .expect("connection");
     let busy = tokio::spawn({
@@ -5292,4 +5298,57 @@ async fn tls_verify_full_with_lab_ca_reports_cipher_and_validity() {
     assert_eq!((&cert.subject, &cert.issuer), (&None, &None), "{cert:?}");
     assert!(cert.not_before.unwrap() < unix_now(), "{cert:?}");
     assert!(cert.not_after.unwrap() > unix_now(), "{cert:?}");
+}
+
+/// A server that accepts and never speaks (no database needed): the connect
+/// gives up after the configured timeout (§16) with a Transport error, on
+/// both engines, instead of hanging on the handshake.
+#[tokio::test]
+async fn connect_gives_up_on_a_silent_server() {
+    use alamo_session::driver::Drivers;
+    use alamo_session::NetOptions;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let held = Arc::new(Mutex::new(Vec::new()));
+    let keep = Arc::clone(&held);
+    tokio::spawn(async move {
+        while let Ok((sock, _)) = listener.accept().await {
+            keep.lock().unwrap().push(sock);
+        }
+    });
+    let drivers = Drivers::builtin();
+    for (id, url) in [
+        (
+            "postgres",
+            format!("host=127.0.0.1 port={port} user=u dbname=d"),
+        ),
+        ("mysql", format!("mysql://u:p@127.0.0.1:{port}/d")),
+    ] {
+        let started = std::time::Instant::now();
+        let err = Session::connect_with(
+            drivers.get(id).unwrap(),
+            &url,
+            false,
+            false,
+            alamo_core::tls::TlsOptions::plain(),
+            NetOptions {
+                connect_timeout: Duration::from_secs(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .err()
+        .expect(id);
+        assert_eq!(
+            err.category,
+            alamo_core::error::ErrorCategory::Transport,
+            "{id}: {err:?}"
+        );
+        assert_eq!(err.message, "No answer from the server within 1 s", "{id}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{id}: {:?}",
+            started.elapsed()
+        );
+    }
 }

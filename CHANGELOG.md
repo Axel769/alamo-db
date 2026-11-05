@@ -13,6 +13,8 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Settings → Connections: a connection timeout (15 s by default) on the database server and on the SSH bastion, where before a server that accepted and stayed silent hung the dialog; the TCP keep-alive after idle and the SSH keep-alive (both 30 s); automatic reconnection on or off (off: a lost connection is reported with a Reconnect button); and the passwords policy ("save in the keychain when asked" or "always ask, never save", which hides the save box). They apply to the next connections.
+- Development build: deleting a profile or forgetting an SSH credential now removes the entry of the test keychain service, not the real app's.
 - Settings → Export: the format the export dialog proposes, the CSV delimiter (comma or semicolon), a UTF-8 byte order mark for Excel on Windows, LF or CRLF line endings and the rows per INSERT statement (was fixed at 500). The dialog starts from them and each export can still differ; the clipboard never gets the byte order mark.
 - Settings → Copy: the separator ⌘C (Ctrl+C) puts between the cells (tab, comma or semicolon), the column names as first line when more than one cell is copied, and quotes around every value or only where needed. "Copy selection as" follows the header and quote choices too.
 - Settings → Data: the word shown for NULL, dates and times in ISO or in the language's format, timestamps with time zone in UTC or in this computer's zone, a thousands separator in numbers, how many characters a cell shows before "…" (was fixed at 500) and binary values as hexadecimal or base64. They change what the grid draws, at once; copying, exporting and editing keep the value as the database gives it.

@@ -623,13 +623,14 @@ export const ipc = {
   /// after commit/rollback, never polled.
   txnState: (connId: number) => invoke<TxnState>("txn_state", { connId }),
   /// Before using the editor's connection: if it dropped, reopen it.
+  /// `dead`: lost and not reopened (automatic reconnection off, §16).
   ensureConnected: (connId: number) =>
-    invoke<{ reconnected: boolean; lost_txn: boolean; lost_writes: boolean }>("ensure_connected", {
+    invoke<{ reconnected: boolean; dead: boolean; lost_txn: boolean; lost_writes: boolean }>("ensure_connected", {
       connId,
     }),
   /// "Reconnect": tunnel and connections rebuilt right away, without checking.
   reconnect: (connId: number) =>
-    invoke<{ reconnected: boolean; lost_txn: boolean; lost_writes: boolean }>("reconnect", { connId }),
+    invoke<{ reconnected: boolean; dead: boolean; lost_txn: boolean; lost_writes: boolean }>("reconnect", { connId }),
   txnLog: (connId: number) => invoke<TxnLog>("txn_log", { connId }),
   setManualCommit: (connId: number, on: boolean) => invoke<void>("set_manual_commit", { connId, on }),
   txnCommit: (connId: number) => invoke<TxnState>("txn_commit", { connId }),

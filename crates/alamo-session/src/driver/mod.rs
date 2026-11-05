@@ -24,6 +24,7 @@ use alamo_core::schema_info::{
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
 use alamo_core::tls::{TlsInfo, TlsMode, TlsOptions};
+use alamo_core::NetOptions;
 use futures_util::future::BoxFuture;
 
 pub(crate) use pg::PgConn;
@@ -100,9 +101,15 @@ pub trait Driver: Send + Sync {
     /// The string `connect` receives for `target`.
     fn conn_string(&self, target: &ConnectTarget<'_>) -> String;
 
-    /// A connection with `tls` applied (§12), nothing else: the session
-    /// applies the profile's regime (read-only, prod) on top.
-    fn connect<'a>(&'a self, url: &'a str, tls: &'a TlsOptions) -> BoxFuture<'a, DbResult<DbConn>>;
+    /// A connection with `tls` (§12) and `net` (§16) applied, nothing
+    /// else: the session applies the profile's regime (read-only, prod) on
+    /// top, and bounds the whole open with `net.connect_timeout`.
+    fn connect<'a>(
+        &'a self,
+        url: &'a str,
+        tls: &'a TlsOptions,
+        net: &'a NetOptions,
+    ) -> BoxFuture<'a, DbResult<DbConn>>;
 }
 
 /// The drivers of a build. The app starts from `builtin` and the official
@@ -323,7 +330,12 @@ mod tests {
         fn conn_string(&self, _: &ConnectTarget<'_>) -> String {
             String::new()
         }
-        fn connect<'a>(&'a self, _: &'a str, _: &'a TlsOptions) -> BoxFuture<'a, DbResult<DbConn>> {
+        fn connect<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a TlsOptions,
+            _: &'a NetOptions,
+        ) -> BoxFuture<'a, DbResult<DbConn>> {
             Box::pin(async { Err(Box::new(DbError::internal("fake"))) })
         }
     }

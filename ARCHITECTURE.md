@@ -1825,7 +1825,16 @@ configuration file of a professional tool must be (DataGrip, DBeaver).
   store the components subscribe to, the editor through CodeMirror
   compartments, the grid through props; execution values are pushed into
   the open sessions (`Session::set_limits`). Network timeouts and keep-alive
-  apply to the next connections, and the window says so under the setting.
+  apply to the next connections, and the window says so under the setting:
+  they travel as `alamo_core::NetOptions` (drivers, keep-alive) and
+  `alamo_tunnel::TunnelNet` (bastion), fixed in the session and in the
+  tunnel slot at connect, so a rebuild of the tunnel is the same
+  connection. The connect timeout is one `tokio::time::timeout` around the
+  whole lane open in `Session::open_lane` (TCP, TLS, handshake, the driver's
+  first queries), never in the drivers, and a Transport error so the UI
+  offers the reconnection. With automatic reconnection off,
+  `ensure_connected` reports the dead connection (`ReconnectOut::dead`)
+  and the user presses Reconnect.
 - **Per-connection overrides** of the execution settings live on the
   profile (`profiles.settings_json`, a partial object of the overridable
   keys only) and are merged over the global values in Rust at connect and on

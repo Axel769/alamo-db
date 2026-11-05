@@ -33,6 +33,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 use alamo_core::error::DbError;
 use alamo_core::tls::TlsOptions;
+use alamo_core::NetOptions;
 
 /// An open connection plus what is needed to cancel its queries.
 ///
@@ -87,11 +88,22 @@ impl PgSession {
     /// degrades to plaintext (libpq semantics); from `require` upwards the
     /// connect fails.
     pub async fn connect(url: &str, tls_opts: &TlsOptions) -> Result<PgSession, PgError> {
+        Self::connect_net(url, tls_opts, &NetOptions::default()).await
+    }
+
+    /// `connect` with the network choices of the Connections settings
+    /// (§16). The connect timeout is the session's (it covers the extra
+    /// queries too); here only the keepalive.
+    pub async fn connect_net(
+        url: &str,
+        tls_opts: &TlsOptions,
+        net: &NetOptions,
+    ) -> Result<PgSession, PgError> {
         match tls::make_connector(tls_opts)? {
             Some(connector) => {
-                Self::connect_inner(url, connector.make.clone(), Some(connector)).await
+                Self::connect_inner(url, connector.make.clone(), Some(connector), net).await
             }
-            None => Self::connect_inner(url, NoTls, None).await,
+            None => Self::connect_inner(url, NoTls, None, net).await,
         }
     }
 
@@ -99,17 +111,18 @@ impl PgSession {
         url: &str,
         connector: T,
         tls: Option<tls::Connector>,
+        net: &NetOptions,
     ) -> Result<PgSession, PgError>
     where
         T: MakeTlsConnect<Socket>,
         T::Stream: Send + 'static,
     {
-        // TCP keepalive (see `TCP_KEEPALIVE_IDLE`): probe after 30 s of
-        // silence, then every 10 s; 3 unanswered probes = dead connection.
+        // TCP keepalive (see `TCP_KEEPALIVE_IDLE`): probe after the idle
+        // time, then every 10 s; 3 unanswered probes = dead connection.
         let mut config: tokio_postgres::Config = url.parse().map_err(PgError::from)?;
         config
             .keepalives(true)
-            .keepalives_idle(alamo_core::TCP_KEEPALIVE_IDLE)
+            .keepalives_idle(net.tcp_keepalive)
             .keepalives_interval(std::time::Duration::from_secs(10))
             .keepalives_retries(3);
         let (client, mut connection) = config.connect(connector).await.map_err(PgError::from)?;

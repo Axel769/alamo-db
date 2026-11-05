@@ -18,6 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -138,6 +139,11 @@ setting_enum!(CsvDelimiter {
 setting_enum!(LineEnding {
     Lf = "lf" => "LF (Unix, macOS)",
     Crlf = "crlf" => "CRLF (Windows)",
+});
+
+setting_enum!(PasswordPolicy {
+    Keychain = "keychain" => "Save in the keychain when asked",
+    Ask = "ask" => "Always ask, never save",
 });
 
 /// Monospace of the editor and the grid: the system's on each platform
@@ -290,8 +296,38 @@ settings! {
         line_ending: LineEnding = LineEnding::Lf, "Line ending";
         insert_batch: u32 [1..=10_000] = 500, "Rows per INSERT statement";
     }
+    connections: Connections ("Connections") {
+        connect_timeout_s: u32 [3..=120] = 15, "Connection timeout (seconds)",
+            "Database server and SSH bastion. Applies to the next connections.";
+        tcp_keepalive_s: u32 [5..=600] = 30, "TCP keep-alive after idle (seconds)",
+            "Keeps NATs and firewalls from dropping an idle connection. Applies to the next connections.";
+        ssh_keepalive_s: u32 [5..=600] = 30, "SSH keep-alive (seconds)",
+            "Applies to the next tunnels.";
+        auto_reconnect: bool = true, "Reconnect automatically",
+            "Off: a lost connection is reported and Reconnect is up to you.";
+        password_policy: PasswordPolicy = PasswordPolicy::Keychain, "Passwords",
+            "\"Always ask\": the save box disappears and passwords already saved are removed at the next connection.";
+    }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
+    }
+}
+
+impl Connections {
+    /// What the database drivers get at connect (§16).
+    pub fn net(&self) -> alamo_core::NetOptions {
+        alamo_core::NetOptions {
+            connect_timeout: Duration::from_secs(self.connect_timeout_s.into()),
+            tcp_keepalive: Duration::from_secs(self.tcp_keepalive_s.into()),
+        }
+    }
+
+    /// What the SSH tunnel gets at open (§16).
+    pub fn tunnel_net(&self) -> alamo_tunnel::TunnelNet {
+        alamo_tunnel::TunnelNet {
+            connect_timeout: Duration::from_secs(self.connect_timeout_s.into()),
+            keepalive: Duration::from_secs(self.ssh_keepalive_s.into()),
+        }
     }
 }
 
@@ -782,6 +818,15 @@ mod tests {
             serde_json::from_value::<alamo_session::export::ExportFormat>(json!(name))
                 .unwrap_or_else(|e| panic!("{name}: {e}"));
         }
+    }
+
+    /// The defaults shown in the window are the ones the crates use when
+    /// nobody says anything (bench, tests).
+    #[test]
+    fn connections_defaults_match_the_crates() {
+        let c = Connections::default();
+        assert_eq!(c.net(), alamo_core::NetOptions::default());
+        assert_eq!(c.tunnel_net(), alamo_tunnel::TunnelNet::default());
     }
 
     #[test]

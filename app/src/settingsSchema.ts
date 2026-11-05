@@ -52,6 +52,13 @@ export type Settings = {
     line_ending: "lf" | "crlf";
     insert_batch: number;
   };
+  connections: {
+    connect_timeout_s: number;
+    tcp_keepalive_s: number;
+    ssh_keepalive_s: number;
+    auto_reconnect: boolean;
+    password_policy: "keychain" | "ask";
+  };
   updates: {
     skipped_version: string;
   };
@@ -96,6 +103,11 @@ export type SettingValues = {
   "export.csv_bom": boolean;
   "export.line_ending": "lf" | "crlf";
   "export.insert_batch": number;
+  "connections.connect_timeout_s": number;
+  "connections.tcp_keepalive_s": number;
+  "connections.ssh_keepalive_s": number;
+  "connections.auto_reconnect": boolean;
+  "connections.password_policy": "keychain" | "ask";
   "updates.skipped_version": string;
 };
 
@@ -118,6 +130,7 @@ export const SETTING_CATEGORIES: readonly { id: string; label: string; overridab
   { id: "data", label: "Data", overridable: false },
   { id: "copy", label: "Copy", overridable: false },
   { id: "export", label: "Export", overridable: false },
+  { id: "connections", label: "Connections", overridable: false },
   { id: "updates", label: "Updates", overridable: false },
 ];
 
@@ -160,6 +173,11 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "export.csv_bom", category: "export", kind: { kind: "bool" }, label: "UTF-8 byte order mark in CSV and TSV", help: "Lets Excel on Windows read accented text; other tools may show it as a stray character." },
   { key: "export.line_ending", category: "export", kind: { kind: "enum", values: ["lf", "crlf"], labels: ["LF (Unix, macOS)", "CRLF (Windows)"] }, label: "Line ending", help: "" },
   { key: "export.insert_batch", category: "export", kind: { kind: "int", min: 1, max: 10000 }, label: "Rows per INSERT statement", help: "" },
+  { key: "connections.connect_timeout_s", category: "connections", kind: { kind: "int", min: 3, max: 120 }, label: "Connection timeout (seconds)", help: "Database server and SSH bastion. Applies to the next connections." },
+  { key: "connections.tcp_keepalive_s", category: "connections", kind: { kind: "int", min: 5, max: 600 }, label: "TCP keep-alive after idle (seconds)", help: "Keeps NATs and firewalls from dropping an idle connection. Applies to the next connections." },
+  { key: "connections.ssh_keepalive_s", category: "connections", kind: { kind: "int", min: 5, max: 600 }, label: "SSH keep-alive (seconds)", help: "Applies to the next tunnels." },
+  { key: "connections.auto_reconnect", category: "connections", kind: { kind: "bool" }, label: "Reconnect automatically", help: "Off: a lost connection is reported and Reconnect is up to you." },
+  { key: "connections.password_policy", category: "connections", kind: { kind: "enum", values: ["keychain", "ask"], labels: ["Save in the keychain when asked", "Always ask, never save"] }, label: "Passwords", help: "\"Always ask\": the save box disappears and passwords already saved are removed at the next connection." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -174,6 +192,13 @@ export const DEFAULTS: Settings = {
     "high_contrast_grid": false,
     "language": "it",
     "theme": "system"
+  },
+  "connections": {
+    "auto_reconnect": true,
+    "connect_timeout_s": 15,
+    "password_policy": "keychain",
+    "ssh_keepalive_s": 30,
+    "tcp_keepalive_s": 30
   },
   "copy": {
     "headers": false,
