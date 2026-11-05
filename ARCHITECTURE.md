@@ -1594,7 +1594,7 @@ become unreachable**.
 | ~~5~~ | ~~Project name~~ | **RESOLVED**: **Alamo** (§13.1) | ✅ |
 | 5b | **Final bundle identifier** — ✅ resolved: `io.github.axel769.alamo` | §13.1. Fixed on 2026-10-01 (replaces the provisional id of 2026-08-07), before any signed build | **Closed** |
 | 6 | **Editing without PK** — block, or generate `UPDATE` matching on all columns (risky)? | Phase M4 | Low |
-| 7 | Final constants (64k rows/chunk, 256–512 MB, 64 KB LOB) | To be confirmed with the M0 measurements, now that the thresholds are fixed (§15, M0) | `[VERIFY M0]` |
+| 7 | Final constants (64k rows/chunk, 256–512 MB, 64 KB LOB) | To be confirmed with the M0 measurements, now that the thresholds are fixed (§15, M0). The thresholds a DBA tunes (pause rows 200, table page 500, memory budget 384 MB, idle rollback 15 min, query timeout off) are no longer constants but settings (§16), each with its former value as the default; the chunk and LOB limits stay constants | `[VERIFY M0]` |
 | 8 | **Scope of the "first write" confirmation** — transaction (recommended) or session? | §9.7 | **High** |
 | 9a | ~~Colour tokens~~ | **CLOSED**: §9.6.1 approved (iter. 4, all thresholds pass) | ✅ |
 | 9b | ~~Typography~~ | **CLOSED**: §9.6.2 — mono on all cells, Inter for the chrome, 26px, 13px. The choice of the specific monospace remains, to be validated in the mock | ✅ |
@@ -1827,6 +1827,12 @@ configuration file of a professional tool must be (DataGrip, DBeaver).
   production (§9.7 point 3), which no setting can turn off; telemetry.
 
 Phases: structure with Appearance, Editor and Execution first; then Data,
-Export, Connections, Updates; keyboard shortcuts last.
+Export, Connections, Updates; keyboard shortcuts last. Phase one is in
+(alpha.14): the window with search and per-section reset; Appearance (fonts,
+sizes, grid density, high-contrast grid); Editor (completion, keyword case,
+indent, wrap, run target, write confirmations, history size); Execution
+(pause rows, table page, memory budget, manual commit, idle rollback, DDL
+confirmation) pushed into the open sessions; the server-side query timeout
+per dialect (§6.2); and per-connection overrides of the Execution settings.
 
 ---
