@@ -1147,6 +1147,61 @@ async fn table_more_appends_next_pages_pg() {
     page_through_fixture(&session, "public").await;
 }
 
+/// §16: the server-side query timeout. With a 1 s limit a 5 s sleep fails
+/// as a Timeout (not a user cancel, which shares PG's 57014), well within
+/// the sleep. Zero clears it: the sleep then runs to the end.
+#[tokio::test]
+async fn query_timeout_stops_a_slow_statement_pg() {
+    let url = require_url!();
+    let session = Session::connect(&url).await.expect("connection");
+    session.set_limits(alamo_session::LimitsIn {
+        query_timeout: Duration::from_secs(1),
+        ..alamo_session::LimitsIn::default()
+    });
+    session.apply_query_timeout().await.expect("apply timeout");
+
+    let (c, emit) = collector();
+    session
+        .execute("SELECT pg_sleep(5)".into(), FetchOptions::default(), emit)
+        .expect("execute");
+    tokio::time::timeout(Duration::from_secs(4), c.done.notified())
+        .await
+        .expect("the 1 s timeout did not stop the 5 s sleep");
+    let category = {
+        let events = c.events.lock().unwrap();
+        events
+            .iter()
+            .find_map(|e| match e {
+                ExecEvent::StatementFinished {
+                    outcome: OutcomeOut::Failed { error },
+                    ..
+                } => Some(error.category),
+                _ => None,
+            })
+            .expect("a failure was expected")
+    };
+    assert_eq!(category, "timeout");
+
+    // Cleared: the same sleep now runs to completion.
+    session.set_limits(alamo_session::LimitsIn::default());
+    session.apply_query_timeout().await.expect("clear timeout");
+    let (c, emit) = collector();
+    session
+        .execute("SELECT pg_sleep(2)".into(), FetchOptions::default(), emit)
+        .expect("execute");
+    wait_done(&c).await;
+    let failed = c.events.lock().unwrap().iter().any(|e| {
+        matches!(
+            e,
+            ExecEvent::StatementFinished {
+                outcome: OutcomeOut::Failed { .. },
+                ..
+            }
+        )
+    });
+    assert!(!failed, "with no timeout the 2 s sleep must succeed");
+}
+
 /// §16: `set_limits` changes the SQL-tab pause and the table-tab page
 /// end-to-end. The session is born with the defaults; a settings change
 /// makes a 300-row query pause at 50 and a table page hold 100.

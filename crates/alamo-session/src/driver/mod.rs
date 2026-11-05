@@ -241,6 +241,13 @@ pub trait Connection: Send + Sync + 'static {
     /// the caller ignores the error.
     fn set_idle_txn_timeout(&self, secs: u32) -> BoxFuture<'_, DbResult<()>>;
 
+    /// Server-side limit on a single statement (§16), in milliseconds; 0
+    /// disables it. PG `statement_timeout` (all statements), MySQL
+    /// `max_execution_time` (read-only SELECT only), MariaDB
+    /// `max_statement_time` (all). Only called where
+    /// `Capabilities::server_side_timeout` holds.
+    fn set_statement_timeout(&self, ms: u32) -> BoxFuture<'_, DbResult<()>>;
+
     /// Asynchronous notices received so far (§6).
     fn drain_async_notices(&self) -> Vec<DbError>;
 

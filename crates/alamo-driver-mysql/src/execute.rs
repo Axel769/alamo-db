@@ -417,6 +417,22 @@ pub async fn set_idle_txn_timeout(
         .map_err(MyError::from)
 }
 
+/// Per-statement server-side limit (§16), given in milliseconds. MySQL
+/// `max_execution_time` is in milliseconds but bounds only read-only
+/// SELECTs (5.7.8+); MariaDB `max_statement_time` is in seconds (a double)
+/// and bounds every statement. 0 disables it on both.
+pub async fn set_statement_timeout(conn: &mut Conn, mariadb: bool, ms: u32) -> Result<(), MyError> {
+    let sql = if mariadb {
+        format!(
+            "SET SESSION max_statement_time = {}",
+            f64::from(ms) / 1000.0
+        )
+    } else {
+        format!("SET SESSION max_execution_time = {ms}")
+    };
+    conn.query_drop(sql).await.map_err(MyError::from)
+}
+
 /// The user name of the connection as `PROCESSLIST.USER` shows it: cut at
 /// the LAST `@` of `CURRENT_USER()` (the name may contain one, the host
 /// cannot).

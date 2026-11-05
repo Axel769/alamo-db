@@ -827,6 +827,8 @@ const IT: Record<string, string> = {
   "An open transaction without statements for this long is rolled back, on every profile.": "Una transazione aperta senza istruzioni per questo tempo viene annullata, su ogni profilo.",
   "Confirm schema changes (DDL) on production": "Conferma le modifiche allo schema (DDL) in produzione",
   "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo.": "Le operazioni irreversibili si confermano sempre; questa aggiunge il DDL che un Rollback potrebbe annullare.",
+  "Query timeout (seconds, 0 = none)": "Timeout query (secondi, 0 = nessuno)",
+  "The server stops a statement past this time. On MySQL it bounds only SELECT; on PostgreSQL and MariaDB, every statement. Applies from the next query.": "Il server ferma un'istruzione oltre questo tempo. Su MySQL vale solo per le SELECT; su PostgreSQL e MariaDB per ogni istruzione. Vale dalla query successiva.",
   "Yes": "Sì",
   "No": "No",
   "Italiano": "Italiano",
@@ -845,6 +847,10 @@ const IT: Record<string, string> = {
 /// format strings: `{name}` / `{}` placeholders become wildcards. Grouped by
 /// crate; keep them in sync when a backend message changes.
 const MSG: Record<string, string> = {
+  // Server-side query timeout (§16): the engines' own words, made readable.
+  "canceling statement due to statement timeout": "istruzione fermata: superato il timeout query impostato in Impostazioni → Esecuzione",
+  "Query execution was interrupted, maximum statement execution time exceeded": "query fermata: superato il timeout impostato in Impostazioni → Esecuzione (su MySQL vale solo per le SELECT)",
+  "Query execution was interrupted (max_statement_time exceeded)": "query fermata: superato il timeout impostato in Impostazioni → Esecuzione",
   "result set of statement {n} was already released": "result set dello statement {n} già rilasciato",
   "opening file {name}: {e}": "apertura file {name}: {e}",
   "creating folder {dir}: {e}": "creazione cartella {dir}: {e}",

@@ -203,6 +203,8 @@ settings! {
             "An open transaction without statements for this long is rolled back, on every profile.";
         confirm_ddl_on_production: bool = false, "Confirm schema changes (DDL) on production",
             "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo.";
+        query_timeout_s: u32 [0..=86400] = 0, "Query timeout (seconds, 0 = none)",
+            "The server stops a statement past this time. On MySQL it bounds only SELECT; on PostgreSQL and MariaDB, every statement. Applies from the next query.";
     }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
@@ -219,6 +221,7 @@ impl Execution {
             idle_rollback: std::time::Duration::from_secs(
                 u64::from(self.idle_rollback_minutes) * 60,
             ),
+            query_timeout: std::time::Duration::from_secs(u64::from(self.query_timeout_s)),
         }
     }
 }

@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Settings → Execution: a query timeout (seconds, 0 = none). The server stops a statement that runs longer: on PostgreSQL and MariaDB every statement, on MySQL only SELECT. It applies from the next query and the error says the limit came from the settings.
 - Settings → Execution: rows fetched before a SQL tab pauses (was fixed at 200), rows per page of a table tab (500), memory per result set (384 MB), manual commit as the default of new connections, the idle time after which an open transaction is rolled back (15 minutes), and an extra confirmation of schema changes on production. The limits reach the open connections at once, also a fetch already running.
 - Settings → Editor: autocomplete on/off and its delay, keywords in upper case as you type (never inside strings, comments or quoted names), indent width, wrapping of long lines, what ⌘↵ (Ctrl+Enter) runs (statement at the cursor, selection or the whole script; the Run button says which), the confirmation of UPDATE and DELETE without WHERE on non-production profiles, and the size of the query history. All apply to the open editor at once.
 - Settings → Appearance: font and text size of the SQL editor and of the grid, grid density (compact rows of 26 px, or comfortable of 30 px) and high-contrast grid lines. They apply at once to the open tabs. The default monospace is now the system one on every platform (SF Mono, Consolas, DejaVu Sans Mono).

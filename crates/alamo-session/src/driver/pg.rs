@@ -281,6 +281,17 @@ impl Connection for PgConn {
         .boxed()
     }
 
+    fn set_statement_timeout(&self, ms: u32) -> BoxFuture<'_, DbResult<()>> {
+        async move {
+            self.0
+                .client
+                .batch_execute(&format!("SET statement_timeout = {ms}"))
+                .await
+                .map_err(boxed_pg)
+        }
+        .boxed()
+    }
+
     fn drain_async_notices(&self) -> Vec<DbError> {
         self.0.drain_notices()
     }

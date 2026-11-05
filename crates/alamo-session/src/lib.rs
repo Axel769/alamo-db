@@ -57,6 +57,10 @@ pub struct LimitsIn {
     /// §9.7.2: a transaction with no statement for this long is rolled
     /// back by the client.
     pub idle_rollback: std::time::Duration,
+    /// §16: server-side limit on a single statement (`statement_timeout`
+    /// and friends); zero disables it. Only honoured where
+    /// `Capabilities::server_side_timeout` holds.
+    pub query_timeout: std::time::Duration,
 }
 
 impl Default for LimitsIn {
@@ -66,6 +70,7 @@ impl Default for LimitsIn {
             page_rows: 500,
             soft_budget_bytes: 384 * 1024 * 1024,
             idle_rollback: std::time::Duration::from_secs(900),
+            query_timeout: std::time::Duration::ZERO,
         }
     }
 }
@@ -76,6 +81,8 @@ struct Limits {
     pause_rows: std::sync::atomic::AtomicU64,
     page_rows: std::sync::atomic::AtomicU64,
     soft_budget_bytes: std::sync::atomic::AtomicU64,
+    /// Statement timeout in ms (§16): 0 = none.
+    query_timeout_ms: std::sync::atomic::AtomicU64,
 }
 
 impl Limits {
@@ -85,11 +92,17 @@ impl Limits {
             pause_rows: AtomicU64::new(l.pause_rows),
             page_rows: AtomicU64::new(l.page_rows),
             soft_budget_bytes: AtomicU64::new(l.soft_budget_bytes),
+            query_timeout_ms: AtomicU64::new(l.query_timeout.as_millis() as u64),
         }
     }
 
     fn page_rows(&self) -> u64 {
         self.page_rows.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn query_timeout_ms(&self) -> u32 {
+        self.query_timeout_ms
+            .load(std::sync::atomic::Ordering::Relaxed) as u32
     }
 }
 
@@ -227,6 +240,17 @@ enum LaneRole {
     Catalog,
 }
 
+/// What `open_lane` needs beyond the connection basics: the profile regime
+/// and the role, plus the statement timeout to set on the query lanes
+/// (§16). Grouped so the function keeps a readable signature.
+#[derive(Clone, Copy)]
+struct LaneSetup {
+    production: bool,
+    read_only: bool,
+    role: LaneRole,
+    query_timeout_ms: u32,
+}
+
 /// The server refused the connection because the user has run out of them
 /// (`max_user_connections`). MySQL/MariaDB only for now.
 fn is_connection_limit(e: &DbError) -> bool {
@@ -344,9 +368,14 @@ impl Session {
             &opened,
             url,
             &tls,
-            production,
-            read_only,
-            LaneRole::Sticky,
+            LaneSetup {
+                production,
+                read_only,
+                role: LaneRole::Sticky,
+                // No session yet: the app applies the statement timeout to
+                // the sticky right after connect (`apply_query_timeout`).
+                query_timeout_ms: 0,
+            },
         )
         .await?;
         let transactional_ddl = sticky.dialect().capabilities().transactional_ddl;
@@ -385,7 +414,27 @@ impl Session {
         self.limits
             .soft_budget_bytes
             .store(l.soft_budget_bytes, Relaxed);
+        self.limits
+            .query_timeout_ms
+            .store(l.query_timeout.as_millis() as u64, Relaxed);
         self.txn.set_idle_rollback(l.idle_rollback);
+    }
+
+    /// Applies the statement timeout (§16) on the lanes that run user and
+    /// table queries — the sticky, and the shared one if it is open — right
+    /// away. Only where the engine supports it; a failure is reported to
+    /// the caller (a setting the user asked for must not fail in silence).
+    pub async fn apply_query_timeout(&self) -> Result<(), Box<DbError>> {
+        let sticky = self.sticky();
+        if !sticky.dialect().capabilities().server_side_timeout {
+            return Ok(());
+        }
+        let ms = self.limits.query_timeout_ms();
+        sticky.set_statement_timeout(ms).await?;
+        if let Some(shared) = self.shared.lock().await.as_ref() {
+            shared.set_statement_timeout(ms).await?;
+        }
+        Ok(())
     }
 
     pub fn limits(&self) -> LimitsIn {
@@ -395,6 +444,9 @@ impl Session {
             page_rows: self.limits.page_rows(),
             soft_budget_bytes: self.limits.soft_budget_bytes.load(Relaxed),
             idle_rollback: self.txn.idle_rollback(),
+            query_timeout: std::time::Duration::from_millis(u64::from(
+                self.limits.query_timeout_ms(),
+            )),
         }
     }
 
@@ -512,9 +564,12 @@ impl Session {
             &self.opened,
             &self.url,
             &self.tls,
-            self.production,
-            self.read_only,
-            LaneRole::Sticky,
+            LaneSetup {
+                production: self.production,
+                read_only: self.read_only,
+                role: LaneRole::Sticky,
+                query_timeout_ms: self.limits.query_timeout_ms(),
+            },
         )
         .await?;
         // On the server the old one may still be alive (see
@@ -542,9 +597,12 @@ impl Session {
             &self.opened,
             &self.url,
             &self.tls,
-            self.production,
-            self.read_only,
-            LaneRole::Sticky,
+            LaneSetup {
+                production: self.production,
+                read_only: self.read_only,
+                role: LaneRole::Sticky,
+                query_timeout_ms: self.limits.query_timeout_ms(),
+            },
         )
         .await?;
         let lost = self.txn.snapshot();
@@ -842,9 +900,12 @@ impl Session {
             &self.opened,
             &self.url,
             &self.tls,
-            self.production,
-            self.read_only,
-            role,
+            LaneSetup {
+                production: self.production,
+                read_only: self.read_only,
+                role,
+                query_timeout_ms: self.limits.query_timeout_ms(),
+            },
         )
         .await
         {
@@ -919,10 +980,14 @@ impl Session {
         opened: &std::sync::Mutex<Vec<ServerConnId>>,
         url: &str,
         tls: &TlsOptions,
-        production: bool,
-        read_only: bool,
-        role: LaneRole,
+        setup: LaneSetup,
     ) -> Result<DbConn, Box<DbError>> {
+        let LaneSetup {
+            production,
+            read_only,
+            role,
+            query_timeout_ms,
+        } = setup;
         let conn = driver.connect(url, tls).await?;
         opened.lock().unwrap().extend(conn.server_conn_id());
         // Read-only: if the SET fails, the opening fails — promising the
@@ -945,6 +1010,15 @@ impl Session {
         // without writes.
         if production && role == LaneRole::Sticky {
             let _ = conn.set_idle_txn_timeout(IDLE_TXN_TIMEOUT_SECS).await;
+        }
+        // §16: the statement timeout on the lanes that run user and table
+        // queries. Best-effort at open (no roundtrip when disabled or
+        // unsupported); `apply_query_timeout` reapplies it on a change.
+        if query_timeout_ms > 0
+            && matches!(role, LaneRole::Sticky | LaneRole::Shared)
+            && conn.dialect().capabilities().server_side_timeout
+        {
+            let _ = conn.set_statement_timeout(query_timeout_ms).await;
         }
         Ok(conn)
     }

@@ -228,6 +228,12 @@ impl AppState {
         .await
         .map_err(|e| ErrorOut::from(&*e))?;
         session.set_limits(exec.limits());
+        // The statement timeout (§16) is a server SET, not just an atomic:
+        // apply it to the sticky now (the lazy lanes pick it up at open).
+        session
+            .apply_query_timeout()
+            .await
+            .map_err(|e| ErrorOut::from(&*e))?;
         if exec.manual_commit_default && !profile.is_production && !profile.read_only {
             session
                 .set_manual_commit(true)
@@ -2876,11 +2882,18 @@ fn menu_follow_language(
 }
 
 /// The Execution settings (§16) pushed into every open session: after a
-/// settings change, so a fetch already running sees the new limits.
-fn apply_limits(app: &AppHandle, settings: &settings::Settings) {
+/// settings change, so a fetch already running sees the new limits. The
+/// statement timeout is a server SET (async, best-effort per session); the
+/// rest are atomics.
+async fn apply_limits(app: &AppHandle, settings: &settings::Settings) {
     let limits = settings.execution.limits();
-    for session in locked(&app.state::<AppState>().sessions).values() {
+    let sessions: Vec<Arc<Session>> = locked(&app.state::<AppState>().sessions)
+        .values()
+        .cloned()
+        .collect();
+    for session in sessions {
         session.set_limits(limits);
+        let _ = session.apply_query_timeout().await;
     }
 }
 
@@ -2902,7 +2915,7 @@ fn settings_get(store: State<'_, settings::SettingsStore>) -> SettingsOut {
 
 /// `patch`: `category.field` → value, all applied or none (§16).
 #[tauri::command]
-fn settings_set(
+async fn settings_set(
     app: AppHandle,
     store: State<'_, settings::SettingsStore>,
     patch: serde_json::Map<String, serde_json::Value>,
@@ -2910,7 +2923,7 @@ fn settings_set(
     let before = store.snapshot().appearance.language;
     let settings = store.apply(&patch)?;
     menu_follow_language(&app, before, &settings)?;
-    apply_limits(&app, &settings);
+    apply_limits(&app, &settings).await;
     Ok(SettingsOut {
         settings,
         issues: Vec::new(),
@@ -2919,7 +2932,7 @@ fn settings_set(
 
 /// Back to the defaults of one category, or of everything.
 #[tauri::command]
-fn settings_reset(
+async fn settings_reset(
     app: AppHandle,
     store: State<'_, settings::SettingsStore>,
     category: Option<String>,
@@ -2927,7 +2940,7 @@ fn settings_reset(
     let before = store.snapshot().appearance.language;
     let settings = store.reset(category.as_deref())?;
     menu_follow_language(&app, before, &settings)?;
-    apply_limits(&app, &settings);
+    apply_limits(&app, &settings).await;
     Ok(SettingsOut {
         settings,
         issues: Vec::new(),

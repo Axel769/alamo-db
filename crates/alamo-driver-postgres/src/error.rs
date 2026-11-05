@@ -126,9 +126,17 @@ pub fn from_pg_db_error(db: &PgDbError) -> DbError {
         None => (None, None, None),
     };
 
+    // 57014 is query_canceled for BOTH a user cancel and a statement
+    // timeout; only the message tells them apart. A timeout must not look
+    // like "cancelled by the user" (§16).
+    let category = if state == "57014" && db.message().contains("statement timeout") {
+        alamo_core::ErrorCategory::Timeout
+    } else {
+        classify_sqlstate(&state)
+    };
     DbError {
         severity: map_severity(db.severity()),
-        category: classify_sqlstate(&state),
+        category,
         code: ErrorCode::SqlState(state),
         message: db.message().to_owned(),
         detail: db.detail().map(str::to_owned),

@@ -21,7 +21,7 @@ pub use dialect::MyDialect;
 pub use error::MyError;
 pub use execute::{
     connection_budget, current_database, execute_streaming, explain_rows_estimate, fetch_warnings,
-    set_idle_txn_timeout, set_session_read_only, use_database,
+    set_idle_txn_timeout, set_session_read_only, set_statement_timeout, use_database,
 };
 pub use tls::{tls_status, TlsStatus};
 

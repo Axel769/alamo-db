@@ -371,6 +371,21 @@ impl Connection for MyConn {
         .boxed()
     }
 
+    /// MySQL `max_execution_time` (ms, SELECT only); MariaDB
+    /// `max_statement_time` (seconds, all statements). See the driver.
+    fn set_statement_timeout(&self, ms: u32) -> BoxFuture<'_, DbResult<()>> {
+        async move {
+            alamo_driver_mysql::set_statement_timeout(
+                &mut self.lock().await?.conn,
+                self.mariadb,
+                ms,
+            )
+            .await
+            .map_err(boxed)
+        }
+        .boxed()
+    }
+
     /// No asynchronous notices in MySQL: see `post_statement_warnings`.
     fn drain_async_notices(&self) -> Vec<DbError> {
         Vec::new()

@@ -30,6 +30,7 @@ export type Settings = {
     manual_commit_default: boolean;
     idle_rollback_minutes: number;
     confirm_ddl_on_production: boolean;
+    query_timeout_s: number;
   };
   updates: {
     skipped_version: string;
@@ -60,6 +61,7 @@ export type SettingValues = {
   "execution.manual_commit_default": boolean;
   "execution.idle_rollback_minutes": number;
   "execution.confirm_ddl_on_production": boolean;
+  "execution.query_timeout_s": number;
   "updates.skipped_version": string;
 };
 
@@ -105,6 +107,7 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "execution.manual_commit_default", category: "execution", kind: { kind: "bool" }, label: "Manual commit on new connections", help: "Production profiles always use manual commit." },
   { key: "execution.idle_rollback_minutes", category: "execution", kind: { kind: "int", min: 1, max: 120 }, label: "Roll back a transaction idle for (minutes)", help: "An open transaction without statements for this long is rolled back, on every profile." },
   { key: "execution.confirm_ddl_on_production", category: "execution", kind: { kind: "bool" }, label: "Confirm schema changes (DDL) on production", help: "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo." },
+  { key: "execution.query_timeout_s", category: "execution", kind: { kind: "int", min: 0, max: 86400 }, label: "Query timeout (seconds, 0 = none)", help: "The server stops a statement past this time. On MySQL it bounds only SELECT; on PostgreSQL and MariaDB, every statement. Applies from the next query." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -135,6 +138,7 @@ export const DEFAULTS: Settings = {
     "idle_rollback_minutes": 15,
     "manual_commit_default": false,
     "memory_budget_mb": 384,
+    "query_timeout_s": 0,
     "sql_pause_rows": 200,
     "table_page_rows": 500
   },
