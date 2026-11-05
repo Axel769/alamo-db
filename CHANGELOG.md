@@ -11,8 +11,9 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
-## Unreleased
+## [0.1.0-alpha.13] - 2026-11-05
 
+- Updates and downloads now come from github.com/Axel769/alamo-db, the public source repository. The old alamo-db-releases repository only keeps a pointer to this version, so that installations up to alpha.12 find the update.
 - Table tabs on production (or with manual commit): Save works while a SQL tab of the same connection shows a query paused at its first rows ("scroll for more rows"). The paused query stops, its rows stay. Before, Save failed with "running on the main connection: wait for it to finish".
 - Table tabs: ⌘S (Ctrl+S on Windows and Linux) with a cell still being edited saves that cell too, right away. Before, the cell had to be closed with Enter first, or ⌘S saved nothing.
 - Security section of a connection: the TLS modes are listed in words, each with one line on what it protects and a padlock (none, "if possible", required, verified against the CA, verified with the host name — recommended), the technical name next to it. A new production profile starts from "Verify certificate and host name", and the warning on a weaker choice names it and offers the fix. The root CA has "Browse…" and, once chosen, shows the certificate's subject, issuer and validity, or why the file is wrong (missing, not a PEM certificate). "Test connection" and the connection page now show what was really negotiated: TLS version, cipher, whether the server was verified, its certificate and expiry; a datum the engine cannot give reads "not available" (MySQL and MariaDB do not expose the certificate's subject). Before, the section was a list of codes (prefer, require, verify-full), the CA a bare path, and after connecting only "verified / not verified" was known.

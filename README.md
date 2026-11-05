@@ -22,8 +22,8 @@ from the code.
 - export to CSV, TSV, JSON and `INSERT`
 - English and Italian interface
 
-Builds and the in-app updater use
-[Axel769/alamo-db-releases](https://github.com/Axel769/alamo-db-releases/releases).
+Builds and the in-app updater use the
+[releases of this repository](https://github.com/Axel769/alamo-db/releases).
 User-visible changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Structure

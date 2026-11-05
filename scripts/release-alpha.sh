@@ -1,9 +1,12 @@
 #!/bin/bash
 # Alpha release from the Mac: macOS build (universal, signed with the personal
 # Apple Development certificate, see below) and
-# Windows build (NSIS installer compiled from macOS with cargo-xwin), publishing
-# to Axel769/alamo-db-releases with latest.json for the updater, tag
-# v<version> on this repo.
+# Windows build (NSIS installer compiled from macOS with cargo-xwin), published
+# as a GitHub release of THIS repo (tag v<version>, assets, latest.json for
+# the updater). Up to 0.1.0-alpha.12 the builds lived in
+# Axel769/alamo-db-releases (the source was private): that repo gets, once
+# per release until it is archived, a release carrying only a latest.json
+# that points here, so that older installations still find the update.
 #
 # The keys stay on this Mac (~/.tauri): no secrets on GitHub runners or on
 # the VPS. Beforehand: merge into main, "version" bumped in
@@ -14,7 +17,7 @@
 # `brew install nsis llvm lld` and `cargo install --locked cargo-xwin`.
 #
 # Usage: scripts/release-alpha.sh [--no-publish]
-#   --no-publish  builds and verifies, does not publish and does not tag.
+#   --no-publish  builds and verifies, publishes nothing (no release, no tag).
 set -euo pipefail
 
 publish=1
@@ -22,7 +25,9 @@ publish=1
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-repo=Axel769/alamo-db-releases
+repo=Axel769/alamo-db
+# Updater endpoint of the installations up to alpha.12 (see the header).
+bridge=Axel769/alamo-db-releases
 keys="$HOME/.tauri"
 target="${CARGO_TARGET_DIR:-$root/target}"
 # Homebrew's llvm and lld are keg-only: llvm-rc, clang-cl and lld-link for
@@ -113,19 +118,23 @@ fi
 
 echo "== publishing to $repo"
 # Draft until everything is there: the updater reads releases/latest and must
-# not see a release without latest.json.
+# not see a release without latest.json. The tag is created on the commit
+# when the draft is published.
 printf '%s\n' "$notes" > "$out/notes.txt"
-gh release create "$tag" -R "$repo" --draft --target main \
+gh release create "$tag" -R "$repo" --draft --target "$commit" \
   --title "Alamo DB $version" --notes-file "$out/notes.txt" \
   "$out"/Alamo.DB_*
 
-asset_url() {
-  gh api "repos/$repo/releases" \
-    -q ".[] | select(.tag_name == \"$tag\") | .assets[] | select(.name == \"$1\") | .url"
-}
-mac_url="$(asset_url "Alamo.DB_${version}_universal.app.tar.gz")"
-win_url="$(asset_url "Alamo.DB_${version}_x64-setup.exe")"
-[ -n "$mac_url" ] && [ -n "$win_url" ] || die "asset URLs not found"
+# Public download URLs, not the API ones: they stay valid for any client,
+# with no Accept header, and the bridge manifest can carry them as they are.
+mac_asset="Alamo.DB_${version}_universal.app.tar.gz"
+win_asset="Alamo.DB_${version}_x64-setup.exe"
+uploaded="$(gh release view "$tag" -R "$repo" --json assets -q '.assets[].name')"
+for a in "$mac_asset" "$win_asset"; do
+  grep -qxF "$a" <<< "$uploaded" || die "asset $a not uploaded"
+done
+mac_url="https://github.com/$repo/releases/download/$tag/$mac_asset"
+win_url="https://github.com/$repo/releases/download/$tag/$win_asset"
 
 # Same platform keys as tauri-action.
 jq -n \
@@ -147,7 +156,21 @@ jq -n \
 gh release upload "$tag" -R "$repo" "$out/latest.json"
 # Not a prerelease: releases/latest (the updater endpoint) skips those.
 gh release edit "$tag" -R "$repo" --draft=false --prerelease=false
-
-git tag -a "$tag" -m "Alamo DB $version" "$commit"
-git push -q origin "$tag"
+git fetch -q origin --tags
 echo "== published: https://github.com/$repo/releases/tag/$tag"
+
+# The bridge: same latest.json (URLs already point here) on the old endpoint,
+# so that installations up to alpha.12 update to this version and from then
+# on follow the new endpoint. Skipped once that repo is archived.
+if gh api "repos/$bridge" -q .archived | grep -qx false; then
+  echo "== bridge manifest on $bridge"
+  printf '%s\n' \
+    "Alamo DB is now released from https://github.com/$repo/releases." \
+    "" \
+    "This release carries only the updater manifest that points there, for" \
+    "installations up to 0.1.0-alpha.12. Download the app from the link above." \
+    > "$out/bridge-notes.txt"
+  gh release create "$tag" -R "$bridge" --target main \
+    --title "Alamo DB $version (moved to $repo)" --notes-file "$out/bridge-notes.txt" \
+    "$out/latest.json"
+fi
