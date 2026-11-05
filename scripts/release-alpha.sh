@@ -154,8 +154,10 @@ jq -n \
         "darwin-aarch64-app": $m, "darwin-x86_64-app": $m,
         "darwin-universal-app": $m}}' > "$out/latest.json"
 gh release upload "$tag" -R "$repo" "$out/latest.json"
-# Not a prerelease: releases/latest (the updater endpoint) skips those.
-gh release edit "$tag" -R "$repo" --draft=false --prerelease=false
+# Not a prerelease: releases/latest (the updater endpoint) skips those. And
+# explicitly the latest: GitHub otherwise ranks releases by the date of the
+# commit they point at, not by publication.
+gh release edit "$tag" -R "$repo" --draft=false --prerelease=false --latest
 git fetch -q origin --tags
 echo "== published: https://github.com/$repo/releases/tag/$tag"
 
@@ -170,7 +172,9 @@ if gh api "repos/$bridge" -q .archived | grep -qx false; then
     "This release carries only the updater manifest that points there, for" \
     "installations up to 0.1.0-alpha.12. Download the app from the link above." \
     > "$out/bridge-notes.txt"
-  gh release create "$tag" -R "$bridge" --target main \
+  # --latest matters here: every release of that repo points at the same
+  # commit of its main, so the ranking by commit date is a tie.
+  gh release create "$tag" -R "$bridge" --target main --latest \
     --title "Alamo DB $version (moved to $repo)" --notes-file "$out/bridge-notes.txt" \
     "$out/latest.json"
 fi
