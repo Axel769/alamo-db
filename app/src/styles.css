@@ -2791,6 +2791,32 @@ ul.transfer-hint {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
+/* Occasional surfaces get a 180 ms entrance (fade + scale from 0.97, centre
+   origin: modals are not anchored to a trigger). Exit stays instant. The
+   palette and the side panel are keyboard, hundreds of times a day: no
+   animation there. */
+.dialog-overlay {
+  animation: overlay-in 150ms var(--ease-out);
+}
+
+.dialog {
+  transform-origin: center;
+  animation: dialog-in 180ms var(--ease-out);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
 .dialog-title {
   display: flex;
   align-items: center;
@@ -3662,6 +3688,7 @@ svg.lucide {
   --ui-hover: color-mix(in oklab, var(--cell-fg) 7%, transparent);
   --ui-focus: color-mix(in oklab, var(--cell-selection-border) 55%, transparent);
   --ui-ease: 120ms ease-out;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* strong ease-out: entrances */
 }
 
 .btn {
@@ -3848,6 +3875,9 @@ select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+  }
+  .dialog {
+    animation-name: overlay-in; /* only the fade, no scale */
   }
 }
 
