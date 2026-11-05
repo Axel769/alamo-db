@@ -76,7 +76,9 @@ pub async fn schema_stats(conn: &mut Conn) -> Result<Vec<SchemaStats>, MyError> 
 pub async fn relations(conn: &mut Conn, schema: &str) -> Result<Vec<RelationInfo>, MyError> {
     let rows: Vec<(String, String, Option<u64>, Option<String>)> = conn
         .exec::<Row, _, _>(
-            "SELECT table_name, table_type, table_rows, NULLIF(table_comment, '')
+            "SELECT table_name, table_type, table_rows,
+                    CASE WHEN table_type = 'VIEW' THEN NULL
+                         ELSE NULLIF(table_comment, '') END
              FROM information_schema.tables
              WHERE table_schema = ?
                AND table_type IN ('BASE TABLE', 'VIEW', 'SYSTEM VIEW',

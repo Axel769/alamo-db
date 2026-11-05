@@ -662,6 +662,8 @@ const IT: Record<string, string> = {
   "Reload the tree (the cache is invalidated, nodes reload on demand)": "Ricarica l'albero (la cache si invalida, i nodi si ricaricano al bisogno)",
   "Header row": "Riga di intestazione",
   "row {n}": "riga {n}",
+  "default: {v}": "predefinito: {v}",
+  "default: {n} characters": "predefinito: {n} caratteri",
   "result": "risultato",
   "ROLLBACK the open transaction": "ROLLBACK della transazione aperta",
   "Save": "Salva",

@@ -118,13 +118,16 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
             >
               <button
                 className="conn-main"
-                title={`${c.profile.username}@${c.profile.host}:${c.profile.port}${
+                // The name is cut by the panel: whole on the first line.
+                title={`${c.profile.name}\n${c.profile.username}@${c.profile.host}:${c.profile.port}${
                   c.currentDb ? " · " + c.currentDb : ""
                 }`}
                 onClick={() => useStore.setState({ activeConnId: c.connId })}
               >
                 <span className="swatch" style={{ background: connColor(c.profile) }} />
-                <span className="tree-label">{c.profile.name}</span>
+                <span className="tree-label" dir="auto">
+                  {c.profile.name}
+                </span>
                 {c.profile.is_production && <span className="prod-tag">prod</span>}
                 {c.txn && (
                   <span
@@ -163,11 +166,13 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
           <div key={p.id} className={"conn-item" + (p.is_production ? " prod" : "")}>
             <button
               className="conn-main"
-              title={t("{dest} — connect…", { dest: `${p.username}@${p.host}:${p.port}` })}
+              title={`${p.name}\n${t("{dest} — connect…", { dest: `${p.username}@${p.host}:${p.port}` })}`}
               onClick={() => onOpenDialog(p.id)}
             >
               <span className="swatch" style={{ background: connColor(p) }} />
-              <span className="tree-label">{p.name}</span>
+              <span className="tree-label" dir="auto">
+                {p.name}
+              </span>
               {p.is_production && <span className="prod-tag">prod</span>}
             </button>
           </div>

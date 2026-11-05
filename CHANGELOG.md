@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Tree, connections panel and tab bar: a name cut with "…" is whole in its tooltip (table, schema, column, connection); the column tooltip shows the type and a short default, not a 2 KB one; MySQL views no longer show "VIEW" as their comment; a tab title in Japanese or Chinese keeps a readable tail; names written right to left are cut on the right side.
 - A long server error (a trigger's message of a few KB) no longer runs past the results pane: it scrolls inside it and leaves half of the pane to the grid. The cell panel cuts a 64-character column name with "…" (whole in the tooltip) and keeps its buttons in sight in a narrow pane. The "all tabs" list no longer widens to most of the window with long names.
 - With "reduce motion" on in the system, buttons and tabs keep their short colour fade on hover and focus; only movement is dropped.
 - Dialogs (connection, settings, export, update and the others) open with a short fade instead of appearing at once; closing stays instant. The command palette and the side panel do not animate. With "reduce motion" on in the system, only the fade remains.

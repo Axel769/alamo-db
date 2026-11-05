@@ -15,7 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { memo, useDeferredValue, useMemo, useState } from "react";
 import CatalogError from "./CatalogError";
 import { t, useLang } from "./i18n";
-import { ipc, RelationKind, RelationOut } from "./ipc";
+import { ColumnInfoOut, ipc, RelationKind, RelationOut } from "./ipc";
 import { ConnUi, hasDbFilter, profileConns, profileDatabase, rootConnId, useStore } from "./store";
 import { connForDatabase, openConnFor } from "./databases";
 import { makePermanent, openTablePreview } from "./tabs";
@@ -145,7 +145,9 @@ function ConnRoot({
       >
         <span className="tree-caret">{open ? <IconChevronDown /> : <IconChevronRight />}</span>
         <span className="swatch" style={{ background: connColor(conn.profile) }} />
-        <span className="tree-label">{conn.profile.name}</span>
+        <span className="tree-label" dir="auto">
+          {conn.profile.name}
+        </span>
         {conn.profile.is_production && <span className="prod-tag">prod</span>}
       </button>
       {open &&
@@ -247,13 +249,16 @@ function DatabaseNode({
     <>
       <button
         className="tree-node database"
+        title={name}
         onClick={() => {
           if (!open && !live) connect();
           setOpen(!open);
         }}
       >
         <span className="tree-caret">{effOpen ? <IconChevronDown /> : <IconChevronRight />}</span>
-        <span className="tree-label">{name}</span>
+        <span className="tree-label" dir="auto">
+          {name}
+        </span>
       </button>
       {effOpen && (
         <div className="tree-db">
@@ -458,9 +463,11 @@ const SchemaNode = memo(function SchemaNode({
   const effOpen = open || filtering || favLimited;
   return (
     <>
-      <button className="tree-node schema" onClick={() => setOpen(!open)}>
+      <button className="tree-node schema" title={name} onClick={() => setOpen(!open)}>
         <span className="tree-caret">{effOpen ? <IconChevronDown /> : <IconChevronRight />}</span>
-        <span className="tree-label">{name}</span>
+        <span className="tree-label" dir="auto">
+          {name}
+        </span>
         {shown && <span className="tree-count">{shown.length}</span>}
         <FavStar favs={favs} schema={name} />
       </button>
@@ -490,7 +497,8 @@ const RelationNode = memo(function RelationNode({
     <>
       <div
         className="tree-node rel"
-        title={rel.comment ?? undefined}
+        // A 64-character name is cut by the panel: whole here, then the comment.
+        title={rel.comment ? `${rel.name}\n${rel.comment}` : rel.name}
         onClick={() => openTablePreview(connId, rel.schema, rel.name)}
         onDoubleClick={() => {
           const id = openTablePreview(connId, rel.schema, rel.name);
@@ -507,7 +515,9 @@ const RelationNode = memo(function RelationNode({
           {open ? <IconChevronDown /> : <IconChevronRight />}
         </span>
         <span className={"rel-icon " + rel.kind}><RelIcon kind={rel.kind} /></span>
-        <span className="tree-label">{rel.name}</span>
+        <span className="tree-label" dir="auto">
+          {rel.name}
+        </span>
         <span className="tree-count">{fmtRows(rel.estimated_rows)}</span>
         <FavStar favs={favs} schema={rel.schema} table={rel.name} />
       </div>
@@ -515,6 +525,16 @@ const RelationNode = memo(function RelationNode({
     </>
   );
 });
+
+/// Tooltip of a column row: the name and the type are cut by the panel (a
+/// 450-character enum, a 64-character name), the default only if short — a
+/// 2 KB base64 default is not a tooltip.
+function columnTitle(c: ColumnInfoOut): string {
+  const head = `${c.name} · ${c.type_display}${c.nullable ? "?" : ""}`;
+  if (c.default === null) return head;
+  if (c.default.length <= 80) return `${head}\n${t("default: {v}", { v: c.default })}`;
+  return `${head}\n${t("default: {n} characters", { n: c.default.length.toLocaleString() })}`;
+}
 
 /// Columns of an open table. Separate component: the query (and its
 /// observer in the TanStack cache) exists only for the open tables, not
@@ -529,9 +549,11 @@ function RelationColumns({ connId, rel }: { connId: number; rel: RelationOut }) 
     <>
       {cols.isLoading && <div className="tree-note nested">…</div>}
       {cols.data?.map((c) => (
-        <div className="tree-node col" key={c.name} title={c.default ?? undefined}>
+        <div className="tree-node col" key={c.name} title={columnTitle(c)}>
           <span className="col-pk">{c.is_primary_key ? "⚿" : ""}</span>
-          <span className="tree-label mono">{c.name}</span>
+          <span className="tree-label mono" dir="auto">
+            {c.name}
+          </span>
           <span className="col-type">
             {c.type_display}
             {c.nullable ? "?" : ""}

@@ -302,11 +302,12 @@ export default function TabBar() {
                   (conn && connPage === conn.connId ? " active" : "")
                 }
                 style={style}
-                title={
+                // The label is cut at 260 px: the whole name first.
+                title={`${profile?.name ?? t("no profile")}\n${
                   conn
                     ? `${profile?.username}@${profile?.host}:${profile?.port} — ${t("databases and tables of the connection")}`
                     : t("Connection closed: its tabs remain, disconnected")
-                }
+                }`}
                 onClick={() =>
                   conn ? useStore.getState().openConnPage(conn.connId) : activateTab(g.tabs[0].id)
                 }
@@ -314,7 +315,9 @@ export default function TabBar() {
               >
                 <span className="tab-group-dot" />
                 <span className="tab-text">
-                  <span className="tab-title">{profile?.name ?? t("no profile")}</span>
+                  <span className="tab-title" dir="auto">
+                    {profile?.name ?? t("no profile")}
+                  </span>
                   <span className="tab-sub">
                     {profile ? engineShortName(profile.dialect) : ""}
                     {profile?.is_production ? " · PROD" : ""}
@@ -338,7 +341,9 @@ export default function TabBar() {
                       onContextMenu={(e) => setMenu({ dbGid: g.gid, db: subs[i], ...menuAt(e) })}
                     >
                       <IconDb />
-                      <span className="tab-db-name">{g.short.get(subs[i])}</span>
+                      <span className="tab-db-name" dir="auto">
+                        {g.short.get(subs[i])}
+                      </span>
                     </button>
                   )}
                   <Tab
@@ -389,7 +394,9 @@ export default function TabBar() {
               }}
             >
               <span className="tab-list-kind">{t.kind === "table" ? <IconTable /> : <IconSql />}</span>
-              <span className={"tab-list-title" + (t.preview ? " preview" : "")}>{t.title}</span>
+              <span className={"tab-list-title" + (t.preview ? " preview" : "")} dir="auto">
+                {t.title}
+              </span>
               {contextOf.get(t.id) && <span className="tab-list-db">{contextOf.get(t.id)}</span>}
               {t.pinned && <span className="tab-pin"><IconPin /></span>}
               {t.running && <span className="tab-running">●</span>}
@@ -555,12 +562,26 @@ function shortNames(contexts: string[]): Map<string, string> {
 // leaves the window black (it really happened).
 /// A shrunk tab cuts its title in the middle (gt_…routes): the tables of a
 /// database often share a prefix, the end is what tells them apart. The
-/// tail is the last "_" word when short, otherwise the last 6 characters;
-/// a head shorter than 3 characters is not worth a cut.
+/// tail is the last "_" word when short, otherwise the last 6 characters —
+/// counted in widths: a CJK ideogram is two, and six of them would not fit
+/// the tab floor; a head shorter than 3 characters is not worth a cut.
 function titleParts(title: string): [string, string] {
   const i = title.lastIndexOf("_");
-  const cut = i > 0 && title.length - i - 1 <= 10 ? i + 1 : title.length - 6;
+  const cut = i > 0 && title.length - i - 1 <= 10 ? i + 1 : title.length - tailLength(title);
   return cut < 3 ? ["", title] : [title.slice(0, cut), title.slice(cut)];
+}
+
+const WIDE = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/;
+
+/// How many trailing characters make about six narrow ones.
+function tailLength(title: string): number {
+  let width = 0;
+  let n = 0;
+  while (n < title.length && width < 6) {
+    width += WIDE.test(title[title.length - 1 - n]) ? 2 : 1;
+    n++;
+  }
+  return n;
 }
 
 function Tab({
@@ -618,7 +639,7 @@ function Tab({
     >
       <span className="tab-icon">{tab.kind === "table" ? <IconTable /> : <IconSql />}</span>
       <span className="tab-text">
-        <span className="tab-title">
+        <span className="tab-title" dir="auto">
           {head && <span className="tab-title-head">{head}</span>}
           <span>{tail}</span>
         </span>
