@@ -8,6 +8,7 @@
 //! change the state: on PG the transaction stays open (aborted) until a
 //! ROLLBACK closes it, and that is exactly what the tracking reflects.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -28,15 +29,11 @@ pub struct TxnStateOut {
     /// Milliseconds since it was opened, for the timer with the progressive warning.
     pub open_for_ms: Option<u64>,
     /// Milliseconds since the last statement on the sticky: at
-    /// `IDLE_ROLLBACK` the transaction is rolled back (§9.7.2).
+    /// `idle_rollback_ms` the transaction is rolled back (§9.7.2).
     pub idle_for_ms: Option<u64>,
-    /// `IDLE_ROLLBACK` in milliseconds, so the UI counts down to it.
+    /// The idle limit in milliseconds, so the UI counts down to it.
     pub idle_rollback_ms: u64,
 }
-
-/// Idle transaction rolled back by the client (§9.7.2): before the
-/// server-side net (`IDLE_TXN_TIMEOUT_SECS`), and on MySQL, which has none.
-pub const IDLE_ROLLBACK: Duration = Duration::from_secs(900);
 
 /// Transaction log (§9.7.2): the first `LOG_MAX` writes, each cut at
 /// `LOG_SQL_MAX` characters — a 10,000-INSERT script must not keep its
@@ -91,14 +88,30 @@ pub struct TxnTracker {
     inner: Mutex<Inner>,
     /// Transactional DDL of the dialect: feeds the classifier.
     transactional_ddl: bool,
+    /// §9.7.2 idle limit, in ms; atomic so the watcher and the UI read it
+    /// without the state lock.
+    idle_rollback_ms: AtomicU64,
 }
 
 impl TxnTracker {
-    pub fn new(transactional_ddl: bool) -> Self {
+    /// `idle_rollback`: §9.7.2, the client's own rollback of a transaction
+    /// left idle — before the server-side net (`IDLE_TXN_TIMEOUT_SECS`), and
+    /// on MySQL, which has none. A setting (§16): `set_idle_rollback`.
+    pub fn new(transactional_ddl: bool, idle_rollback: Duration) -> Self {
         TxnTracker {
             inner: Mutex::new(Inner::CLOSED),
             transactional_ddl,
+            idle_rollback_ms: AtomicU64::new(idle_rollback.as_millis() as u64),
         }
+    }
+
+    pub fn idle_rollback(&self) -> Duration {
+        Duration::from_millis(self.idle_rollback_ms.load(Ordering::Relaxed))
+    }
+
+    pub fn set_idle_rollback(&self, d: Duration) {
+        self.idle_rollback_ms
+            .store(d.as_millis() as u64, Ordering::Relaxed);
     }
 
     pub fn snapshot(&self) -> TxnStateOut {
@@ -109,7 +122,7 @@ impl TxnTracker {
             writes: g.total,
             open_for_ms: millis(g.started_at),
             idle_for_ms: millis(g.last_activity),
-            idle_rollback_ms: IDLE_ROLLBACK.as_millis() as u64,
+            idle_rollback_ms: self.idle_rollback_ms.load(Ordering::Relaxed),
         }
     }
 
@@ -205,7 +218,7 @@ mod tests {
 
     #[test]
     fn pg_client_side_round_trip() {
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         assert!(!t.snapshot().open);
         t.apply_statement("BEGIN", true, None, None);
         assert!(t.snapshot().open);
@@ -222,7 +235,7 @@ mod tests {
 
     #[test]
     fn error_does_not_close_the_transaction() {
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         t.apply_statement("BEGIN", true, None, None);
         t.apply_statement("SELECT sbagliata", false, None, None);
         assert!(t.snapshot().open, "on PG it stays open (aborted)");
@@ -232,7 +245,7 @@ mod tests {
 
     #[test]
     fn server_truth_wins_and_covers_mysql_ddl() {
-        let t = TxnTracker::new(false);
+        let t = TxnTracker::new(false, Duration::from_secs(900));
         t.apply_statement("BEGIN", true, Some(true), None);
         t.apply_statement("INSERT INTO t VALUES (1)", true, Some(true), None);
         assert!(t.snapshot().has_writes);
@@ -246,7 +259,7 @@ mod tests {
 
     #[test]
     fn unknown_statement_counts_as_write() {
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         t.apply_statement("BEGIN", true, None, None);
         t.apply_statement("CALL opaca()", true, None, None);
         assert!(t.snapshot().has_writes, "\u{a7}9.7.3: unknown = write");
@@ -254,7 +267,7 @@ mod tests {
 
     #[test]
     fn idle_counts_from_the_last_statement() {
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         assert!(
             !t.idle_expired(Duration::ZERO),
             "no transaction, nothing to expire"
@@ -270,7 +283,7 @@ mod tests {
 
     #[test]
     fn log_lists_the_writes_of_the_open_transaction() {
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         t.apply_statement("BEGIN", true, None, None);
         t.apply_statement("SELECT 1", true, None, None);
         t.apply_statement("  UPDATE t SET a=1 WHERE id=2 ", true, None, Some(1));
@@ -300,7 +313,7 @@ mod tests {
     fn reset_clears_everything() {
         // Dead connection (terminate §7.2, transport broken on COMMIT):
         // the UI must not keep showing a ghost transaction.
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         t.apply_statement("BEGIN", true, None, None);
         t.apply_statement("INSERT INTO t VALUES (1)", true, None, None);
         t.reset();
@@ -312,7 +325,7 @@ mod tests {
 
     #[test]
     fn and_chain_reopens_and_clears() {
-        let t = TxnTracker::new(true);
+        let t = TxnTracker::new(true, Duration::from_secs(900));
         t.apply_statement("BEGIN", true, None, None);
         t.apply_statement("INSERT INTO t VALUES (1)", true, None, None);
         t.apply_statement("COMMIT AND CHAIN", true, None, None);

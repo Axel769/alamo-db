@@ -38,15 +38,60 @@ use registry::{LiveResult, Registry};
 pub use table::{CellAssign, ColumnFilter, FilterOp, OrderBy, RowUpdate, TableQuery, TableWrite};
 pub use txn::TxnStateOut;
 
-/// Page size of SQL tab queries (like DBeaver): after this many rows the fetch
-/// stops; scrolling to the bottom brings another page, "Load all" removes
-/// the pause. The SQL is not rewritten (§5.2): no `LIMIT` added.
-pub const SQL_PAUSE_ROWS: u64 = 200;
+/// The execution limits of a session (§16): what the user tunes in the
+/// settings, pushed into the open sessions by the app (`set_limits`) and
+/// read by every task without a lock. The defaults are the M0 values; the
+/// settings of the app default to the same ones (a test there checks it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitsIn {
+    /// SQL tab (like DBeaver): after this many rows the fetch stops;
+    /// scrolling to the bottom brings another page, "Load all" removes the
+    /// pause. The SQL is not rewritten (§5.2): no `LIMIT` added.
+    pub pause_rows: u64,
+    /// Page of the table tab (§9.5): the first page arrives with
+    /// `fetch_table`, the following ones are appended with
+    /// `fetch_table_more` (`OFFSET`, not keyset).
+    pub page_rows: u64,
+    /// Soft memory budget of a result set (§5): the fetch pauses there.
+    pub soft_budget_bytes: u64,
+    /// §9.7.2: a transaction with no statement for this long is rolled
+    /// back by the client.
+    pub idle_rollback: std::time::Duration,
+}
 
-/// Page size of the table tab (§9.5). Constant and not negotiated: the first
-/// page arrives with `fetch_table`, the following ones are appended with
-/// `fetch_table_more` (`OFFSET`, not keyset).
-pub const TABLE_PAGE_LIMIT: u64 = 500;
+impl Default for LimitsIn {
+    fn default() -> Self {
+        LimitsIn {
+            pause_rows: 200,
+            page_rows: 500,
+            soft_budget_bytes: 384 * 1024 * 1024,
+            idle_rollback: std::time::Duration::from_secs(900),
+        }
+    }
+}
+
+/// `LimitsIn` as the session holds it: atomics, so a settings change
+/// reaches a fetch in progress on another task without a lock.
+struct Limits {
+    pause_rows: std::sync::atomic::AtomicU64,
+    page_rows: std::sync::atomic::AtomicU64,
+    soft_budget_bytes: std::sync::atomic::AtomicU64,
+}
+
+impl Limits {
+    fn new(l: LimitsIn) -> Self {
+        use std::sync::atomic::AtomicU64;
+        Limits {
+            pause_rows: AtomicU64::new(l.pause_rows),
+            page_rows: AtomicU64::new(l.page_rows),
+            soft_budget_bytes: AtomicU64::new(l.soft_budget_bytes),
+        }
+    }
+
+    fn page_rows(&self) -> u64 {
+        self.page_rows.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
 
 /// Outcome of `fetch_table_more`: how many rows the result set has now, how
 /// many the page added and whether there can be another one (full page).
@@ -96,7 +141,7 @@ const CATALOG_LANE_RETRY: std::time::Duration = std::time::Duration::from_secs(6
 pub const PAUSE_TIMEOUT_DEFAULT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Server-side net on the idle transaction of prod profiles (§9.7.2): after
-/// the client's own rollback (`txn::IDLE_ROLLBACK`, 15 min), for when the
+/// the client's own rollback (`LimitsIn::idle_rollback`, 15 min by default), for when the
 /// app cannot do it (frozen, network gone). The server closes the session
 /// and the transaction dies in a rollback; the lost work is reported by the
 /// UI at the next statement.
@@ -254,6 +299,8 @@ pub struct Session {
     /// ends: after a sleep they may still be alive there (§3.2,
     /// `server_conn_ids`).
     opened: std::sync::Mutex<Vec<ServerConnId>>,
+    /// Execution limits (§16); the idle rollback lives in `txn`.
+    limits: Limits,
 }
 
 /// A cell as text, the whole value even when it is a `Lob`.
@@ -320,9 +367,57 @@ impl Session {
             production,
             manual_commit: std::sync::atomic::AtomicBool::new(production),
             read_only,
-            txn: Arc::new(txn::TxnTracker::new(transactional_ddl)),
+            txn: Arc::new(txn::TxnTracker::new(
+                transactional_ddl,
+                LimitsIn::default().idle_rollback,
+            )),
             opened,
+            limits: Limits::new(LimitsIn::default()),
         })
+    }
+
+    /// The execution limits (§16), from the settings: effective at once,
+    /// also for a fetch already running.
+    pub fn set_limits(&self, l: LimitsIn) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.limits.pause_rows.store(l.pause_rows, Relaxed);
+        self.limits.page_rows.store(l.page_rows, Relaxed);
+        self.limits
+            .soft_budget_bytes
+            .store(l.soft_budget_bytes, Relaxed);
+        self.txn.set_idle_rollback(l.idle_rollback);
+    }
+
+    pub fn limits(&self) -> LimitsIn {
+        use std::sync::atomic::Ordering::Relaxed;
+        LimitsIn {
+            pause_rows: self.limits.pause_rows.load(Relaxed),
+            page_rows: self.limits.page_rows(),
+            soft_budget_bytes: self.limits.soft_budget_bytes.load(Relaxed),
+            idle_rollback: self.txn.idle_rollback(),
+        }
+    }
+
+    /// Fetch options of a table tab: the memory budget, no pause in rows
+    /// (the page is in the SQL).
+    pub fn fetch_options(&self) -> FetchOptions {
+        FetchOptions {
+            soft_budget_bytes: Some(self.limits().soft_budget_bytes as usize),
+            ..FetchOptions::default()
+        }
+    }
+
+    /// Fetch options of the SQL tab: budget and pause after `pause_rows`.
+    pub fn editor_fetch_options(&self) -> FetchOptions {
+        FetchOptions {
+            pause_after_rows: Some(self.limits().pause_rows),
+            ..self.fetch_options()
+        }
+    }
+
+    /// §9.7.2: how long a transaction may stay without statements.
+    pub fn idle_rollback(&self) -> std::time::Duration {
+        self.txn.idle_rollback()
     }
 
     /// The connections this session opened on the server. When it ends
@@ -1036,7 +1131,13 @@ impl Session {
         emit: impl Fn(ExecEvent) + Send + Sync + 'static,
     ) -> Result<u64, Box<DbError>> {
         let dialect = self.sticky().dialect();
-        let sql = table::table_sql(dialect.as_ref(), schema, table, query, TABLE_PAGE_LIMIT);
+        let sql = table::table_sql(
+            dialect.as_ref(),
+            schema,
+            table,
+            query,
+            self.limits.page_rows(),
+        );
         let read_only_txn = self.check_table_query(&sql, query)?;
         // Advisory check BEFORE the await: on MySQL `healthy()` (inside
         // `shared_session`) takes the session mutex — if the shared one
@@ -1098,8 +1199,9 @@ impl Session {
         // The check of the hand-written WHERE is on the first page: OFFSET
         // changes neither the number of statements nor what the SELECT reads.
         let dialect = self.sticky().dialect();
+        let page_rows = self.limits.page_rows();
         let read_only_txn = self.check_table_query(
-            &table::table_sql(dialect.as_ref(), schema, table, query, TABLE_PAGE_LIMIT),
+            &table::table_sql(dialect.as_ref(), schema, table, query, page_rows),
             query,
         )?;
         // Advisory check before the await, as in `fetch_table`.
@@ -1130,7 +1232,7 @@ impl Session {
             schema,
             table,
             query,
-            TABLE_PAGE_LIMIT,
+            page_rows,
             live.server_offset(),
         );
         self.registry
@@ -1217,7 +1319,7 @@ impl Session {
             rows,
             added,
             layout_bytes,
-            more: added >= TABLE_PAGE_LIMIT,
+            more: added >= page_rows,
         })
     }
 
@@ -1229,7 +1331,13 @@ impl Session {
     /// SQL of its filters — nothing hidden.
     pub fn table_sql(&self, schema: &str, table: &str, query: &TableQuery) -> String {
         let dialect = self.sticky().dialect();
-        table::table_sql(dialect.as_ref(), schema, table, query, TABLE_PAGE_LIMIT)
+        table::table_sql(
+            dialect.as_ref(),
+            schema,
+            table,
+            query,
+            self.limits.page_rows(),
+        )
     }
 
     pub fn update_sql(

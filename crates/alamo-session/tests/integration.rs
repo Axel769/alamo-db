@@ -784,8 +784,8 @@ async fn table_data_runs_on_shared_lane_while_sticky_executes() {
             })
             .expect("no result set from the table tab")
     };
-    // LIMIT of the first page (TABLE_PAGE_LIMIT).
-    assert_eq!(rows, alamo_session::TABLE_PAGE_LIMIT);
+    // LIMIT of the first page (`LimitsIn::page_rows`).
+    assert_eq!(rows, alamo_session::LimitsIn::default().page_rows);
     wait_done(&c_sticky).await;
 }
 
@@ -1004,12 +1004,15 @@ async fn pg_read_only_typed_where_runs_in_a_read_only_txn() {
     .expect("fetch_table");
     wait_done(&c).await;
     let (rid, rows) = table_result(&c);
-    assert_eq!(rows, alamo_session::TABLE_PAGE_LIMIT);
+    assert_eq!(rows, alamo_session::LimitsIn::default().page_rows);
     let more = ro
         .fetch_table_more("public", "typed_where_ro", &query, rid)
         .await
         .expect("next page");
-    assert_eq!(more.added, 600 - alamo_session::TABLE_PAGE_LIMIT);
+    assert_eq!(
+        more.added,
+        600 - alamo_session::LimitsIn::default().page_rows
+    );
     let again = ro
         .fetch_table_more("public", "typed_where_ro", &query, rid)
         .await
@@ -1041,7 +1044,7 @@ fn table_result(c: &Collected) -> (u64, u64) {
 }
 
 /// Pages through the table to the end: 2500 rows, full pages of
-/// `TABLE_PAGE_LIMIT` and the last one short (or empty, if 2500 is a multiple).
+/// `LimitsIn::page_rows` and the last one short (or empty, if 2500 is a multiple).
 /// The rows are appended to the SAME result set, in order.
 async fn page_through_fixture(session: &Session, schema: &str) {
     let query = TableQuery {
@@ -1065,7 +1068,7 @@ async fn page_through_fixture(session: &Session, schema: &str) {
         .expect("fetch_table");
     wait_done(&c).await;
     let (rid, rows) = table_result(&c);
-    let page = alamo_session::TABLE_PAGE_LIMIT;
+    let page = alamo_session::LimitsIn::default().page_rows;
     assert_eq!(rows, page);
 
     let mut total = page;
@@ -1142,6 +1145,87 @@ async fn table_more_appends_next_pages_pg() {
         .expect("execute");
     wait_done(&c).await;
     page_through_fixture(&session, "public").await;
+}
+
+/// §16: `set_limits` changes the SQL-tab pause and the table-tab page
+/// end-to-end. The session is born with the defaults; a settings change
+/// makes a 300-row query pause at 50 and a table page hold 100.
+#[tokio::test]
+async fn set_limits_changes_pause_and_page_pg() {
+    let url = require_url!();
+    let session = Session::connect(&url).await.expect("connection");
+    session.set_limits(alamo_session::LimitsIn {
+        pause_rows: 50,
+        page_rows: 100,
+        ..alamo_session::LimitsIn::default()
+    });
+
+    // SQL tab: the fetch pauses at the new row limit, reported as a row pause.
+    let (c, emit) = collector();
+    let exec_id = session
+        .execute(
+            "SELECT g AS id FROM generate_series(1, 300) g".into(),
+            session.editor_fetch_options(),
+            emit,
+        )
+        .expect("execute");
+    let paused = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Some(p) = c.events.lock().unwrap().iter().find_map(|e| match e {
+                ExecEvent::BudgetPaused { rows, by_rows, .. } => Some((*rows, *by_rows)),
+                _ => None,
+            }) {
+                break p;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("row pause never arrived");
+    assert_eq!(paused, (50, true));
+    // Free the sticky: a paused fetch holds the connection (§5.1).
+    session.budget_resume(exec_id);
+    wait_done(&c).await;
+
+    // Table tab: the first page holds the new page size, with more to come.
+    let (c, emit) = collector();
+    session
+        .execute(
+            "DROP TABLE IF EXISTS limits_fixture;
+             CREATE TABLE limits_fixture (id int PRIMARY KEY);
+             INSERT INTO limits_fixture SELECT g FROM generate_series(1, 300) g"
+                .into(),
+            FetchOptions::default(),
+            emit,
+        )
+        .expect("execute");
+    wait_done(&c).await;
+    let query = TableQuery {
+        order_by: vec![OrderBy {
+            column: "id".into(),
+            desc: false,
+        }],
+        ..Default::default()
+    };
+    let (c, emit) = collector();
+    session
+        .fetch_table(
+            "public",
+            "limits_fixture",
+            &query,
+            session.fetch_options(),
+            emit,
+        )
+        .await
+        .expect("fetch_table");
+    wait_done(&c).await;
+    let (rid, rows) = table_result(&c);
+    assert_eq!(rows, 100);
+    let more = session
+        .fetch_table_more("public", "limits_fixture", &query, rid)
+        .await
+        .expect("next page");
+    assert_eq!((more.added, more.more), (100, true));
 }
 
 #[tokio::test]
@@ -2128,7 +2212,7 @@ async fn mysql_fetch_table_returns_full_first_page() {
     };
     assert_eq!(
         rows,
-        676.min(alamo_session::TABLE_PAGE_LIMIT),
+        676.min(alamo_session::LimitsIn::default().page_rows),
         "state: {state}"
     );
     assert_eq!(state, "complete");
@@ -2222,7 +2306,10 @@ async fn mysql_fetch_table_wide_types_full_page() {
         .expect("no result set");
     assert_eq!(
         (rows, state),
-        (676.min(alamo_session::TABLE_PAGE_LIMIT), "complete"),
+        (
+            676.min(alamo_session::LimitsIn::default().page_rows),
+            "complete"
+        ),
         "events: {events:?}"
     );
 }

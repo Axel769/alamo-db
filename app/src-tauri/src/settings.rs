@@ -191,8 +191,35 @@ settings! {
             "On production profiles the confirmation is always asked, whatever this setting.";
         history_size: u32 [50..=2000] = 200, "Query history entries";
     }
+    execution: Execution ("Execution") {
+        sql_pause_rows: u32 [50..=100_000] = 200, "Rows fetched before the SQL tab pauses",
+            "Scrolling to the bottom brings another page; \"Load all\" removes the pause. The SQL is never rewritten.";
+        table_page_rows: u32 [100..=10_000] = 500, "Rows per page of a table tab";
+        memory_budget_mb: u32 [64..=8192] = 384, "Memory per result set (MB)",
+            "The fetch pauses when a result set reaches this size; the rows already loaded stay.";
+        manual_commit_default: bool = false, "Manual commit on new connections",
+            "Production profiles always use manual commit.";
+        idle_rollback_minutes: u32 [1..=120] = 15, "Roll back a transaction idle for (minutes)",
+            "An open transaction without statements for this long is rolled back, on every profile.";
+        confirm_ddl_on_production: bool = false, "Confirm schema changes (DDL) on production",
+            "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo.";
+    }
     updates: Updates ("Updates") {
         skipped_version: String = String::new(), "Skipped version";
+    }
+}
+
+impl Execution {
+    /// The limits a session takes (§16).
+    pub fn limits(&self) -> alamo_session::LimitsIn {
+        alamo_session::LimitsIn {
+            pause_rows: u64::from(self.sql_pause_rows),
+            page_rows: u64::from(self.table_page_rows),
+            soft_budget_bytes: u64::from(self.memory_budget_mb) * 1024 * 1024,
+            idle_rollback: std::time::Duration::from_secs(
+                u64::from(self.idle_rollback_minutes) * 60,
+            ),
+        }
     }
 }
 
@@ -607,6 +634,17 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect()
+    }
+
+    /// The session's own defaults are the M0 values; the settings must
+    /// default to the same, or a fresh install would behave differently
+    /// from the tests of the session crate.
+    #[test]
+    fn execution_defaults_match_the_session() {
+        assert_eq!(
+            Execution::default().limits(),
+            alamo_session::LimitsIn::default()
+        );
     }
 
     #[test]

@@ -321,11 +321,12 @@ function StudioInner() {
         .then((st) => useStore.getState().setTxnState(connId, st))
         .catch(() => {});
       const name = connById(useStore.getState(), connId)?.profile.name ?? "";
+      const min = setting("execution.idle_rollback_minutes");
       setConnNote({
         warn: writes,
         text: writes
-          ? t("{name}: transaction idle for 15 minutes, rolled back (ROLLBACK). Its uncommitted writes were lost.", { name })
-          : t("{name}: transaction idle for 15 minutes, closed (ROLLBACK).", { name }),
+          ? t("{name}: transaction idle for {min} minutes, rolled back (ROLLBACK). Its uncommitted writes were lost.", { name, min })
+          : t("{name}: transaction idle for {min} minutes, closed (ROLLBACK).", { name, min }),
       });
     };
     window.addEventListener("alamo:txn-idle-rollback", onRollback);
@@ -695,6 +696,7 @@ function StudioInner() {
             base,
             firstWrite: false,
             irreversible: [],
+            ddl: [],
             unknown: [],
             unfiltered: unfiltered.map((c) => statementSnippet(sql, classes, c)),
           });
@@ -721,6 +723,7 @@ function StudioInner() {
               base,
               firstWrite: false,
               irreversible: [],
+              ddl: [],
               unknown: unknown.map((c) => statementSnippet(sql, classes, c)),
               unfiltered: [],
             });
@@ -728,8 +731,12 @@ function StudioInner() {
           }
         } else {
           const irreversible = classes.filter((c) => c.irreversible);
+          // DDL a Rollback could undo: confirmed only when the setting asks.
+          const ddl = setting("execution.confirm_ddl_on_production")
+            ? classes.filter((c) => c.class === "ddl" && !c.irreversible)
+            : [];
           const firstWrite = classes.some((c) => c.is_write) && !conn.txn?.hasWrites;
-          if (firstWrite || irreversible.length > 0) {
+          if (firstWrite || irreversible.length > 0 || ddl.length > 0) {
             setWriteGate({
               connId,
               tabId: tab.id,
@@ -737,6 +744,7 @@ function StudioInner() {
               base,
               firstWrite,
               irreversible: irreversible.map((c) => statementSnippet(sql, classes, c)),
+              ddl: ddl.map((c) => statementSnippet(sql, classes, c)),
               unknown: [],
               unfiltered: [],
             });
@@ -2215,6 +2223,9 @@ type WriteGate = {
   firstWrite: boolean;
   /// Snippets of the statements that cannot be undone, to list them plainly.
   irreversible: string[];
+  /// Prod with "Confirm schema changes" on (§16): the transactional DDL,
+  /// listed apart from the irreversible ones because a Rollback undoes it.
+  ddl: string[];
   /// Snippets of the statements opaque to the classifier on read-only prod:
   /// the server net should stop them if they write, but on prod the
   /// confirmation remains (§9.7.3).
@@ -2257,7 +2268,8 @@ function TxnBadge({ txn, onOpen }: { txn: TxnUi; onOpen: () => void }) {
       className={"txn-badge" + level}
       onClick={onOpen}
       title={t(
-        "Open transaction on the editor connection (§9.7): it closes with Commit or Rollback, or by itself with a ROLLBACK after 15 minutes without statements. Left open for long, it blocks vacuum and holds locks on the server. Click: the writes waiting for Commit."
+        "Open transaction on the editor connection (§9.7): it closes with Commit or Rollback, or by itself with a ROLLBACK after {min} minutes without statements. Left open for long, it blocks vacuum and holds locks on the server. Click: the writes waiting for Commit.",
+        { min: Math.round(txn.idleRollbackMs / 60000) }
       )}
     >
       {closing
@@ -2359,6 +2371,18 @@ function WriteGateDialog({
                   })}
                 </div>
               )}
+            </div>
+          )}
+          {gate.ddl.length > 0 && (
+            <div className="banner warn gate-warn">
+              {t("Schema changes, confirmed as asked in Settings → Execution (a Rollback undoes them):")}
+              <ul className="gate-list">
+                {gate.ddl.map((s, i) => (
+                  <li key={i} className="mono">
+                    {s}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {gate.unfiltered.length > 0 && (

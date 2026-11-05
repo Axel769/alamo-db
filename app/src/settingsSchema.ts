@@ -23,6 +23,14 @@ export type Settings = {
     confirm_unfiltered_writes: boolean;
     history_size: number;
   };
+  execution: {
+    sql_pause_rows: number;
+    table_page_rows: number;
+    memory_budget_mb: number;
+    manual_commit_default: boolean;
+    idle_rollback_minutes: number;
+    confirm_ddl_on_production: boolean;
+  };
   updates: {
     skipped_version: string;
   };
@@ -46,6 +54,12 @@ export type SettingValues = {
   "editor.run_shortcut": "current" | "selection" | "all";
   "editor.confirm_unfiltered_writes": boolean;
   "editor.history_size": number;
+  "execution.sql_pause_rows": number;
+  "execution.table_page_rows": number;
+  "execution.memory_budget_mb": number;
+  "execution.manual_commit_default": boolean;
+  "execution.idle_rollback_minutes": number;
+  "execution.confirm_ddl_on_production": boolean;
   "updates.skipped_version": string;
 };
 
@@ -63,6 +77,7 @@ export type SettingDef = { key: SettingKey; category: string; kind: SettingKind;
 export const SETTING_CATEGORIES: readonly { id: string; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "editor", label: "Editor" },
+  { id: "execution", label: "Execution" },
   { id: "updates", label: "Updates" },
 ];
 
@@ -84,6 +99,12 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "editor.run_shortcut", category: "editor", kind: { kind: "enum", values: ["current", "selection", "all"], labels: ["Statement at the cursor, or the selection", "Selection, otherwise the whole script", "The whole script"] }, label: "Run (⌘↵ / Ctrl+Enter) executes", help: "⇧⌘↵ (Shift+Ctrl+Enter) always runs the whole script." },
   { key: "editor.confirm_unfiltered_writes", category: "editor", kind: { kind: "bool" }, label: "Confirm UPDATE and DELETE without WHERE", help: "On production profiles the confirmation is always asked, whatever this setting." },
   { key: "editor.history_size", category: "editor", kind: { kind: "int", min: 50, max: 2000 }, label: "Query history entries", help: "" },
+  { key: "execution.sql_pause_rows", category: "execution", kind: { kind: "int", min: 50, max: 100000 }, label: "Rows fetched before the SQL tab pauses", help: "Scrolling to the bottom brings another page; \"Load all\" removes the pause. The SQL is never rewritten." },
+  { key: "execution.table_page_rows", category: "execution", kind: { kind: "int", min: 100, max: 10000 }, label: "Rows per page of a table tab", help: "" },
+  { key: "execution.memory_budget_mb", category: "execution", kind: { kind: "int", min: 64, max: 8192 }, label: "Memory per result set (MB)", help: "The fetch pauses when a result set reaches this size; the rows already loaded stay." },
+  { key: "execution.manual_commit_default", category: "execution", kind: { kind: "bool" }, label: "Manual commit on new connections", help: "Production profiles always use manual commit." },
+  { key: "execution.idle_rollback_minutes", category: "execution", kind: { kind: "int", min: 1, max: 120 }, label: "Roll back a transaction idle for (minutes)", help: "An open transaction without statements for this long is rolled back, on every profile." },
+  { key: "execution.confirm_ddl_on_production", category: "execution", kind: { kind: "bool" }, label: "Confirm schema changes (DDL) on production", help: "Irreversible operations are always confirmed; this adds the DDL that a Rollback could undo." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
 ];
 
@@ -108,6 +129,14 @@ export const DEFAULTS: Settings = {
     "run_shortcut": "current",
     "tab_size": 2,
     "uppercase_keywords": false
+  },
+  "execution": {
+    "confirm_ddl_on_production": false,
+    "idle_rollback_minutes": 15,
+    "manual_commit_default": false,
+    "memory_budget_mb": 384,
+    "sql_pause_rows": 200,
+    "table_page_rows": 500
   },
   "updates": {
     "skipped_version": ""

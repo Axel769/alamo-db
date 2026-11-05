@@ -139,10 +139,6 @@ export type SshProfileOut = SshProfile & {
 
 export type SortOut = { rows: number; incomplete: boolean };
 
-/// Rows per page of the table tab: mirror of the backend's
-/// `TABLE_PAGE_LIMIT`. A full first page = maybe there is another one.
-export const TABLE_PAGE = 500;
-
 /// Result of `tableDataMore`: total rows now in the result set, rows and
 /// bytes added, and whether the page was full (there may be another one).
 export type TableMoreOut = {

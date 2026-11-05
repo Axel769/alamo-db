@@ -124,9 +124,9 @@ fn signal_quit_blocked(app: &AppHandle) {
     dom_event(app, "alamo:quit-blocked");
 }
 
-/// §9.7.2: every 15 s, ROLLBACK of the transactions idle for
-/// `txn::IDLE_ROLLBACK`, on every connection — MySQL has no server-side
-/// net. The UI learns it from a DOM event (same reason as
+/// §9.7.2: every 15 s, ROLLBACK of the transactions idle for the session's
+/// `idle_rollback` (a setting, §16), on every connection — MySQL has no
+/// server-side net. The UI learns it from a DOM event (same reason as
 /// `signal_quit_blocked`) and says whether writes were lost.
 fn watch_idle_transactions(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -138,9 +138,7 @@ fn watch_idle_transactions(app: AppHandle) {
                 .map(|(id, s)| (*id, Arc::clone(s)))
                 .collect();
             for (conn_id, session) in sessions {
-                let Ok(Some(before)) = session
-                    .rollback_if_idle(alamo_session::txn::IDLE_ROLLBACK)
-                    .await
+                let Ok(Some(before)) = session.rollback_if_idle(session.idle_rollback()).await
                 else {
                     continue;
                 };
@@ -206,18 +204,21 @@ impl AppState {
     /// commit/rollback; the read-only flag sets server-side read-only
     /// transactions on every lane. §12: the TLS regime travels next to the
     /// string, on every lane.
+    /// `exec`: the Execution settings (§16) the session is born with —
+    /// limits, and manual commit when asked for (production has it anyway).
     async fn open_session(
         &self,
         profile: &storage::Profile,
         password: &str,
         tunnel_port: Option<u16>,
+        exec: &settings::Execution,
     ) -> Result<Session, ErrorOut> {
         let driver = self
             .drivers
             .get(&profile.dialect)
             .ok_or_else(|| internal(format!("unsupported engine «{}»", profile.dialect)))?;
         let url = driver.conn_string(&storage::connect_target(profile, password, tunnel_port));
-        Session::connect_opts(
+        let session = Session::connect_opts(
             driver,
             &url,
             profile.is_production,
@@ -225,7 +226,14 @@ impl AppState {
             storage::tls_options(profile, tunnel_port.is_some()),
         )
         .await
-        .map_err(|e| ErrorOut::from(&*e))
+        .map_err(|e| ErrorOut::from(&*e))?;
+        session.set_limits(exec.limits());
+        if exec.manual_commit_default && !profile.is_production && !profile.read_only {
+            session
+                .set_manual_commit(true)
+                .map_err(|e| ErrorOut::from(&*e))?;
+        }
+        Ok(session)
     }
 
     fn insert(&self, session: Session) -> u64 {
@@ -529,9 +537,10 @@ async fn open_profile(
     } else {
         None
     };
+    let exec = app.state::<settings::SettingsStore>().snapshot().execution;
     let session = app
         .state::<AppState>()
-        .open_session(&profile, &password, tunnel_port)
+        .open_session(&profile, &password, tunnel_port, &exec)
         .await?;
     Ok(OpenedProfile {
         profile,
@@ -826,6 +835,7 @@ async fn server_databases(
 #[tauri::command]
 async fn open_database(
     state: State<'_, AppState>,
+    settings: State<'_, settings::SettingsStore>,
     conn_id: u64,
     db: String,
 ) -> Result<ConnectOut, ErrorOut> {
@@ -855,7 +865,8 @@ async fn open_database(
         None => {
             let port = locked(&state.tunnels).get(&root).map(|t| t.port);
             profile.database = db.clone();
-            let session = state.open_session(&profile, &password, port).await?;
+            let exec = settings.snapshot().execution;
+            let session = state.open_session(&profile, &password, port, &exec).await?;
             // Two opens of the same database at once (tree and page): the
             // second one gives up its session for the first one's.
             match existing(&state) {
@@ -1583,12 +1594,8 @@ async fn execute(
     let session = state
         .session(conn_id)
         .map_err(|m| ErrorOut::from(&alamo_core::error::DbError::internal(m)))?;
-    let opts = FetchOptions {
-        pause_after_rows: Some(alamo_session::SQL_PAUSE_ROWS),
-        ..FetchOptions::default()
-    };
     session
-        .execute(sql, opts, move |ev| {
+        .execute(sql, session.editor_fetch_options(), move |ev| {
             // The channel may already be closed (tab closed, §9.3): ignored.
             let _ = on_event.send(ev);
         })
@@ -1615,7 +1622,7 @@ async fn table_data(
             &schema,
             &table,
             &query,
-            FetchOptions::default(),
+            session.fetch_options(),
             move |ev| {
                 let _ = on_event.send(ev);
             },
@@ -2868,6 +2875,15 @@ fn menu_follow_language(
     Ok(())
 }
 
+/// The Execution settings (§16) pushed into every open session: after a
+/// settings change, so a fetch already running sees the new limits.
+fn apply_limits(app: &AppHandle, settings: &settings::Settings) {
+    let limits = settings.execution.limits();
+    for session in locked(&app.state::<AppState>().sessions).values() {
+        session.set_limits(limits);
+    }
+}
+
 /// The settings (§16) as the frontend receives them, with the problems
 /// found in the file at load: only the first `settings_get` carries them.
 #[derive(Serialize)]
@@ -2894,6 +2910,7 @@ fn settings_set(
     let before = store.snapshot().appearance.language;
     let settings = store.apply(&patch)?;
     menu_follow_language(&app, before, &settings)?;
+    apply_limits(&app, &settings);
     Ok(SettingsOut {
         settings,
         issues: Vec::new(),
@@ -2910,6 +2927,7 @@ fn settings_reset(
     let before = store.snapshot().appearance.language;
     let settings = store.reset(category.as_deref())?;
     menu_follow_language(&app, before, &settings)?;
+    apply_limits(&app, &settings);
     Ok(SettingsOut {
         settings,
         issues: Vec::new(),

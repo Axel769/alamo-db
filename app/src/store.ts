@@ -20,12 +20,12 @@ import {
   OrderBy,
   OutcomeOut,
   Profile,
-  TABLE_PAGE,
   TableMoreOut,
   TableQuery,
   TxnState,
 } from "./ipc";
 import { canSwitchDb } from "./engines";
+import { setting } from "./settings";
 
 export type StatementUi = {
   index: number;
@@ -1080,6 +1080,7 @@ export function tableMayHaveMore(tab: TabUi): boolean {
   const st = tab.statements[0];
   if (tab.kind !== "table" || !st || st.resultId === null) return false;
   if (st.outcome?.kind !== "row_set" || st.outcome.state !== "complete") return false;
-  if (st.rows < TABLE_PAGE) return false;
+  // A first page shorter than the page size (a setting, §16) is the whole table.
+  if (st.rows < setting("execution.table_page_rows")) return false;
   return !(tab.more?.resultId === st.resultId && tab.more.done);
 }
