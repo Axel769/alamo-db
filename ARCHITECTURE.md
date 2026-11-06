@@ -1854,6 +1854,41 @@ configuration file of a professional tool must be (DataGrip, DBeaver).
   with a label and a help line like a setting, found by the search, that
   answer on their own row with a line or with the backend's message. They
   are not values and never touch settings.json.
+- **Keyboard shortcuts** (decided 2026-11-06). One registry in
+  `app/src/keymap.ts`: every action a key can trigger has an id, an English
+  label (i18n key), a context (`global`, `editor`, `table`, `grid`) and
+  Alamo's default combos. Only actions the app really has are listed (a
+  button or a key today); dialog Enter/Esc, the palette's arrows and
+  CodeMirror's own editing keys stay where they are. One notation,
+  CodeMirror's (`Shift-Mod-Enter`, `Alt-Insert`, `F5`; `Mod` is ⌘ on macOS
+  and Ctrl elsewhere), serves the editor keymap and the DOM alike, so a
+  binding is parsed once and shown once (`formatCombo`: glyphs on macOS,
+  `Ctrl+Shift+Enter` elsewhere). Rejected: a second notation for the DOM, and
+  per-platform defaults in the registry (`Mod` covers Alamo's; only the
+  presets need a macOS form, where the other tool itself differs).
+  - **One dispatcher** on the window replaces the `keydown` listeners that
+    were spread over the components. Components register handlers for the
+    actions they serve while mounted (`useAction`); the last registered is
+    tried first and a handler keeps its own guards (focus in the grid, the
+    data sub-tab, no dialog open). Grid actions run in the capture phase,
+    before Glide's own keys; the others in the bubble phase, after CodeMirror
+    and the dialogs, which stop what they handle. The editor actions are a
+    CodeMirror keymap in a `Compartment` at the highest precedence, rebuilt on
+    a change of the bindings and on a tab switch (compartments are per state);
+    the keys the registry owns leave the fixed CodeMirror keymaps, so a
+    remapping leaves nothing behind.
+  - **The combo in force** is the user's override (`shortcuts.overrides`, a
+    map action id → combo, `""` = no shortcut), else the preset's
+    (`shortcuts.preset`), else Alamo's default. Overrides are a `Kind::Map`
+    of the settings macro: Rust validates the shape and the combo grammar
+    with the same table as every other setting, and an action id this build
+    does not know is kept and ignored, the same policy as an unknown key of
+    the file (a newer build's shortcuts survive a downgrade). A recorded key
+    is saved with `Mod` for the primary modifier, so the file reads the same
+    on every OS. The presets (DBeaver, DataGrip) hold only the actions the
+    two tools document with a default key; the rest keep Alamo's. Two
+    actions on one key in the same context, or one of them global, are shown
+    in red and both kept: the user decides, as in DBeaver.
 - **What is not a setting**: anything that rewrites the user's SQL or adds a
   `COUNT(*)` (§5.2); the confirmation of irreversible operations on
   production (§9.7 point 3), which no setting can turn off; telemetry.
@@ -1871,7 +1906,8 @@ separator, characters per cell, binary rendering: §8.2), Copy (separator,
 header line, quotes), Export defaults (format, CSV delimiter, byte order
 mark, line ending, INSERT batch), Connections (connect timeout, TCP and SSH
 keep-alive, automatic reconnection, password policy) and Updates (check at
-startup, check now, diagnostics, settings folder). Keyboard shortcuts are
-the phase left.
+startup, check now, diagnostics, settings folder). Phase three closes the
+plan: the keymap registry and the editable shortcuts with the DBeaver and
+DataGrip presets.
 
 ---
