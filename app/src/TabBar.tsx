@@ -609,6 +609,9 @@ function Tab({
   onActivate: () => void;
 }) {
   const [head, tail] = titleParts(tab.title);
+  // A title shorter than the floor of a full bar ("…services"): the tab
+  // fits its text instead of leaving slack between the title and the ×.
+  const short = tab.title.length <= 8 && !WIDE.test(tab.title);
   return (
     <div
       role="tab"
@@ -617,6 +620,7 @@ function Tab({
       className={
         "tab" +
         (active ? " active" : "") +
+        (short ? " short" : "") +
         (tab.preview ? " preview" : "") +
         (tab.connId === null ? " off" : "") +
         (dragging ? " dragging" : "") +

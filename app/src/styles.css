@@ -4426,8 +4426,14 @@ select:focus-visible {
   min-width: 106px;
 }
 
-/* A title shorter than the floor leaves slack: the title takes it, so the
-   × sits at the right edge of every tab, not in the middle of a short one. */
+/* A title under the floor ("SQL 3", `.short` from the TabBar) gets a tab
+   as wide as its text, × right after it, never cut; a longer one shrinks
+   to the floor and is cut with "…". Any slack left goes to the title, so
+   the × sits at the right edge, not in the middle of the tab. */
+.tab.short {
+  min-width: min-content;
+}
+
 .tab-text {
   flex: 1 1 auto;
 }
