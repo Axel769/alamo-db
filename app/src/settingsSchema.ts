@@ -63,6 +63,10 @@ export type Settings = {
     check_at_startup: boolean;
     skipped_version: string;
   };
+  shortcuts: {
+    preset: "alamo" | "dbeaver" | "datagrip";
+    overrides: Record<string, string>;
+  };
 };
 
 /// The same values by `category.field` key.
@@ -111,6 +115,8 @@ export type SettingValues = {
   "connections.password_policy": "keychain" | "ask";
   "updates.check_at_startup": boolean;
   "updates.skipped_version": string;
+  "shortcuts.preset": "alamo" | "dbeaver" | "datagrip";
+  "shortcuts.overrides": Record<string, string>;
 };
 
 export type SettingKey = keyof SettingValues;
@@ -119,7 +125,8 @@ export type SettingKind =
   | { kind: "enum"; values: readonly string[]; labels: readonly string[] }
   | { kind: "str" }
   | { kind: "bool" }
-  | { kind: "int"; min: number; max: number };
+  | { kind: "int"; min: number; max: number }
+  | { kind: "map" };
 
 export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string; help: string };
 
@@ -134,6 +141,7 @@ export const SETTING_CATEGORIES: readonly { id: string; label: string; overridab
   { id: "export", label: "Export", overridable: false },
   { id: "connections", label: "Connections", overridable: false },
   { id: "updates", label: "Updates", overridable: false },
+  { id: "shortcuts", label: "Shortcuts", overridable: false },
 ];
 
 /// Every setting, in declaration order: what the window renders.
@@ -182,6 +190,8 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "connections.password_policy", category: "connections", kind: { kind: "enum", values: ["keychain", "ask"], labels: ["Save in the keychain when asked", "Always ask, never save"] }, label: "Passwords", help: "\"Always ask\": the save box disappears and passwords already saved are removed at the next connection." },
   { key: "updates.check_at_startup", category: "updates", kind: { kind: "bool" }, label: "Check for updates at startup", help: "Once, when the app opens; \"Check now\" here at any time." },
   { key: "updates.skipped_version", category: "updates", kind: { kind: "str" }, label: "Skipped version", help: "" },
+  { key: "shortcuts.preset", category: "shortcuts", kind: { kind: "enum", values: ["alamo", "dbeaver", "datagrip"], labels: ["Alamo", "DBeaver", "DataGrip"] }, label: "Preset", help: "DBeaver and DataGrip change only the actions Alamo has; the rest keep Alamo's keys." },
+  { key: "shortcuts.overrides", category: "shortcuts", kind: { kind: "map" }, label: "Custom shortcuts", help: "The shortcuts changed below, over the preset." },
 ];
 
 /// The defaults of this build.
@@ -241,6 +251,10 @@ export const DEFAULTS: Settings = {
     "format": "csv",
     "insert_batch": 500,
     "line_ending": "lf"
+  },
+  "shortcuts": {
+    "overrides": {},
+    "preset": "alamo"
   },
   "updates": {
     "check_at_startup": true,

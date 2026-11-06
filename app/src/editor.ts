@@ -432,6 +432,7 @@ function editorSettingsExt(): Extension {
 }
 
 const editorSection = (s: Settings) => JSON.stringify(s.editor);
+const shortcutsSection = (s: Settings) => JSON.stringify(s.shortcuts);
 
 /// The editor actions of the registry (keymap.ts) as a CodeMirror keymap:
 /// Run follows the setting at the moment of the key, Run all is always
@@ -506,6 +507,7 @@ export class SqlEditor {
       if (editorSection(s.settings) !== editorSection(prev.settings)) {
         this.view.dispatch({ effects: this.editorSettingsCompartment.reconfigure(editorSettingsExt()) });
       }
+      if (shortcutsSection(s.settings) !== shortcutsSection(prev.settings)) this.applyKeymap();
     });
   }
 
@@ -637,6 +639,7 @@ export class SqlEditor {
     this.view.setState(state);
     this.applySchema();
     this.applyPhrases();
+    this.applyKeymap();
     if (state.field(rangesField).stale) this.scheduleSplit(0);
     this.emitContext();
   }
@@ -721,6 +724,13 @@ export class SqlEditor {
 
   private applyPhrases(): void {
     this.view.dispatch({ effects: this.phrasesCompartment.reconfigure(phrasesExt()) });
+  }
+
+  /// The shortcuts in force (keymap.ts): on a change of the Shortcuts
+  /// section, and on a tab switch (the state may have been born under
+  /// other bindings).
+  private applyKeymap(): void {
+    this.view.dispatch({ effects: this.keymapCompartment.reconfigure(actionKeymap(this.onRun)) });
   }
 
   sql(): string {

@@ -10,11 +10,20 @@
 import { useEffect, useRef, useState } from "react";
 import { searchText, t, tMsg } from "./i18n";
 import { patchSettings, resetSettings, settingOf, useSettings } from "./settings";
-import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingKey, SettingValues } from "./settingsSchema";
+import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingKey, SettingKind, SettingValues } from "./settingsSchema";
 import { SETTING_ACTIONS, SettingAction } from "./settingsActions";
+import ShortcutsSection, { matchingActions } from "./ShortcutsSection";
+import { IconSearch, IconX } from "./icons";
 
 type Value = SettingValues[SettingKey];
-import { IconSearch, IconX } from "./icons";
+
+/// A setting with a generic control. A `map` has none: the section that
+/// owns it draws it (Shortcuts).
+type ScalarDef = SettingDef & { kind: Exclude<SettingKind, { kind: "map" }> };
+const isScalar = (d: SettingDef): d is ScalarDef => d.kind.kind !== "map";
+
+/// Same value, objects included (`===` would always say a map changed).
+const same = (a: unknown, b: unknown) => a === b || (typeof a === "object" && typeof b === "object" && JSON.stringify(a) === JSON.stringify(b));
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useSettings((s) => s.settings);
@@ -55,13 +64,16 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   const actions = SETTING_ACTIONS.filter(
     (a) => q === "" || searchText(a.label).includes(q) || searchText(a.help).includes(q) || searchText(categoryLabel(a.category)).includes(q)
   );
+  // The keyboard actions count as settings of the Shortcuts category.
+  const keyActions = q === "" || searchText(categoryLabel("shortcuts")).includes(q) ? 0 : matchingActions(q).length;
+  const count = (c: string) => found.filter((d) => d.category === c).length + (c === "shortcuts" ? keyActions : 0);
   // Without a query, one section; with a query, every category that has a
   // match, so the user sees where the setting lives.
   const shown =
     q === ""
       ? SETTING_CATEGORIES.filter((c) => c.id === category)
-      : SETTING_CATEGORIES.filter((c) => found.some((d) => d.category === c.id) || actions.some((a) => a.category === c.id));
-  const isDefault = (d: SettingDef) => settingOf(settings, d.key) === settingOf(DEFAULTS, d.key);
+      : SETTING_CATEGORIES.filter((c) => count(c.id) > 0 || actions.some((a) => a.category === c.id));
+  const isDefault = (d: SettingDef) => same(settingOf(settings, d.key), settingOf(DEFAULTS, d.key));
 
   return (
     <div className="dialog-overlay">
@@ -75,7 +87,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
         <div className="dialog-body">
           <nav className="settings-nav">
             {SETTING_CATEGORIES.map((c) => {
-              const n = q === "" ? 0 : found.filter((d) => d.category === c.id).length;
+              const n = q === "" ? 0 : count(c.id);
               return (
                 <button
                   key={c.id}
@@ -125,7 +137,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
             {error && <div className="app-update-error">{error}</div>}
             {shown.length === 0 && <div className="settings-empty">{t("No setting matches \"{q}\".", { q: query.trim() })}</div>}
             {shown.map((c) => {
-              const defs = found.filter((d) => d.category === c.id);
+              const defs = found.filter((d) => d.category === c.id).filter(isScalar);
               const allDefault = SETTING_DEFS.filter((d) => d.category === c.id).every(isDefault);
               return (
                 <section key={c.id} className="settings-section">
@@ -154,6 +166,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
                     .map((a) => (
                       <ActionRow key={a.id} action={a} />
                     ))}
+                  {c.id === "shortcuts" && <ShortcutsSection query={searchText(categoryLabel(c.id)).includes(q) ? "" : q} onError={save} />}
                 </section>
               );
             })}
@@ -201,7 +214,7 @@ function ActionRow({ action }: { action: SettingAction }) {
 
 /// The default of a setting as the user reads it: the option's label for
 /// an enum, yes/no for a switch, the text or number itself otherwise.
-function defaultText(def: SettingDef): string {
+function defaultText(def: ScalarDef): string {
   const v = settingOf(DEFAULTS, def.key);
   switch (def.kind.kind) {
     case "enum": {
@@ -217,7 +230,7 @@ function defaultText(def: SettingDef): string {
   }
 }
 
-function SettingRow({ def, value, modified, onChange }: { def: SettingDef; value: Value; modified: boolean; onChange: (v: Value) => void }) {
+function SettingRow({ def, value, modified, onChange }: { def: ScalarDef; value: Value; modified: boolean; onChange: (v: Value) => void }) {
   return (
     <div className={"setting-row" + (modified ? " modified" : "")} data-key={def.key} title={modified ? t("Changed from the default") : undefined}>
       <div className="setting-label">
@@ -230,7 +243,7 @@ function SettingRow({ def, value, modified, onChange }: { def: SettingDef; value
   );
 }
 
-function SettingControl({ def, value, onChange }: { def: SettingDef; value: Value; onChange: (v: Value) => void }) {
+function SettingControl({ def, value, onChange }: { def: ScalarDef; value: Value; onChange: (v: Value) => void }) {
   switch (def.kind.kind) {
     case "enum": {
       const { values, labels } = def.kind;
@@ -256,7 +269,7 @@ function SettingControl({ def, value, onChange }: { def: SettingDef; value: Valu
 /// A whole number within the declared range, written when the field is
 /// left or Enter is pressed; out of range, the field says so with the same
 /// words the backend would use and writes nothing.
-function NumberSetting({ def, min, max, value, onChange }: { def: SettingDef; min: number; max: number; value: number; onChange: (v: number) => void }) {
+function NumberSetting({ def, min, max, value, onChange }: { def: ScalarDef; min: number; max: number; value: number; onChange: (v: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   const [invalid, setInvalid] = useState(false);
   useEffect(() => {

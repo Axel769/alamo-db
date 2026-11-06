@@ -10,9 +10,15 @@
 // `Space` for the space bar). One string serves the DOM dispatcher and the
 // editor alike.
 //
+// The combo in force is the user's override (settings `shortcuts.overrides`,
+// "" = none), else the preset's (`shortcuts.preset`: DBeaver or DataGrip
+// for the actions they share with Alamo), else Alamo's default.
+//
 // Lives outside React (§9.2): the editor and the handlers read it directly.
 import { useEffect, useRef } from "react";
 import { t } from "./i18n";
+import { useSettings } from "./settings";
+import { Settings } from "./settingsSchema";
 
 export const isMac = /Mac/.test(navigator.platform);
 
@@ -20,6 +26,13 @@ export const isMac = /Mac/.test(navigator.platform);
 /// a SQL tab (`editor`), a table tab (`table`) or a focused grid (`grid`)
 /// is in front. Conflicts are checked within a context and against `global`.
 export type KeyContext = "global" | "editor" | "table" | "grid";
+
+export const CONTEXTS: readonly { id: KeyContext; label: string }[] = [
+  { id: "global", label: "Everywhere" },
+  { id: "editor", label: "SQL editor" },
+  { id: "table", label: "Table tab" },
+  { id: "grid", label: "Grid" },
+];
 
 export interface ActionDef {
   readonly id: string;
@@ -68,6 +81,55 @@ export function actionDef(id: ActionId): ActionDef {
   return ACTIONS.find((a) => a.id === id)!;
 }
 
+/// A preset's combo: one for every platform, or one per platform where the
+/// tool itself differs (DBeaver's Commit is Ctrl+Alt+Shift+K on Windows
+/// and ⌃4 on macOS).
+type PresetKey = string | { mac: string; other: string };
+type Preset = Partial<Record<ActionId, PresetKey>>;
+
+/// Only the actions the tool documents with a default key (DBeaver:
+/// dbeaver.com/docs/dbeaver/Shortcuts; DataGrip: jetbrains.com/help/datagrip,
+/// keymap reference, data editor, run queries). Where the documentation gives
+/// only the Windows form, macOS takes ⌘ for Ctrl.
+const PRESETS: Record<Exclude<Settings["shortcuts"]["preset"], "alamo">, Preset> = {
+  dbeaver: {
+    run: "Mod-Enter",
+    "run.all": "Alt-x",
+    "txn.commit": { mac: "Ctrl-4", other: "Ctrl-Alt-Shift-k" },
+    "txn.rollback": { mac: "Ctrl-8", other: "Ctrl-Alt-Shift-r" },
+    "tab.new_query": { mac: "Ctrl-]", other: "Ctrl-]" },
+    "tab.close": { mac: "Mod-w", other: "Ctrl-F4" },
+    "tab.prev": "Ctrl-PageUp",
+    "tab.next": "Ctrl-PageDown",
+    "editor.complete": "Ctrl-Space",
+    "editor.toggle_comment": "Ctrl-/",
+    "table.save": "Mod-s",
+    "table.discard": "Ctrl-r",
+    "grid.row_add": "Alt-Insert",
+    "grid.row_delete": "Alt-Delete",
+    "grid.row_duplicate": "Ctrl-Alt-Insert",
+  },
+  datagrip: {
+    run: "Mod-Enter",
+    "run.cancel": "Mod-F2",
+    "txn.commit": "Mod-Alt-Shift-Enter",
+    "tab.close": { mac: "Mod-w", other: "Ctrl-F4" },
+    "tab.prev": { mac: "Shift-Mod-[", other: "Alt-ArrowLeft" },
+    "tab.next": { mac: "Shift-Mod-]", other: "Alt-ArrowRight" },
+    "table.back": { mac: "Mod-[", other: "Ctrl-Alt-ArrowLeft" },
+    "table.forward": { mac: "Mod-]", other: "Ctrl-Alt-ArrowRight" },
+    "editor.complete": "Ctrl-Space",
+    "editor.toggle_comment": "Mod-/",
+    "table.save": "Mod-Enter",
+    "table.discard": "Mod-Alt-z",
+    "table.reload": "Mod-F5",
+    "grid.row_add": { mac: "Mod-n", other: "Alt-Insert" },
+    "grid.row_delete": { mac: "Mod-Backspace", other: "Ctrl-y" },
+    "grid.set_null": "Mod-Alt-n",
+    "settings.open": { mac: "Mod-,", other: "Ctrl-Alt-s" },
+  },
+};
+
 /// A combo with `Mod` resolved for this platform.
 export interface Combo {
   ctrl: boolean;
@@ -80,13 +142,9 @@ export interface Combo {
 
 const MODIFIERS: Record<string, keyof Omit<Combo, "key">> = {
   ctrl: "ctrl",
-  control: "ctrl",
   alt: "alt",
-  option: "alt",
   shift: "shift",
   meta: "meta",
-  cmd: "meta",
-  command: "meta",
   mod: isMac ? "meta" : "ctrl",
 };
 
@@ -186,19 +244,37 @@ export function formatCombo(text: string): string {
 
 // ---- bindings in force --------------------------------------------------
 
-/// Combos per action in force now: the defaults.
-export function bindings(): ReadonlyMap<ActionId, readonly string[]> {
-  return DEFAULTS;
+type Bindings = ReadonlyMap<ActionId, readonly string[]>;
+
+const presetKey = (k: PresetKey | undefined): string | undefined => (typeof k === "object" ? (isMac ? k.mac : k.other) : k);
+
+/// The combos of the action under the given settings, overrides left out:
+/// the preset's, else Alamo's default.
+export function presetKeys(id: ActionId, shortcuts: Settings["shortcuts"]): readonly string[] {
+  const p = shortcuts.preset === "alamo" ? undefined : presetKey(PRESETS[shortcuts.preset][id]);
+  return p !== undefined ? [p] : actionDef(id).keys;
 }
 
-const DEFAULTS: ReadonlyMap<ActionId, readonly string[]> = new Map(ACTIONS.map((a) => [a.id, a.keys]));
+function compute(shortcuts: Settings["shortcuts"]): Bindings {
+  const out = new Map<ActionId, readonly string[]>();
+  for (const a of ACTIONS) {
+    const o = shortcuts.overrides[a.id];
+    out.set(a.id, o !== undefined && parseCombo(o) !== null ? [o] : o === "" ? [] : presetKeys(a.id, shortcuts));
+  }
+  return out;
+}
 
-/// Combo → actions, for the dispatcher. Rebuilt when the bindings change.
-let byCombo: Map<string, ActionId[]> | null = null;
-function index(): Map<string, ActionId[]> {
-  if (byCombo) return byCombo;
-  byCombo = new Map();
-  for (const [id, keys] of bindings()) {
+let cache: { key: string; bindings: Bindings; byCombo: Map<string, ActionId[]> } | null = null;
+
+/// Combos per action in force now, from the settings; recomputed when the
+/// Shortcuts section changes.
+export function bindings(): Bindings {
+  const shortcuts = useSettings.getState().settings.shortcuts;
+  const key = JSON.stringify(shortcuts);
+  if (cache?.key === key) return cache.bindings;
+  const b = compute(shortcuts);
+  const byCombo = new Map<string, ActionId[]>();
+  for (const [id, keys] of b) {
     for (const k of keys) {
       const c = parseCombo(k);
       if (!c) continue;
@@ -208,7 +284,23 @@ function index(): Map<string, ActionId[]> {
       else byCombo.set(slot, [id]);
     }
   }
-  return byCombo;
+  cache = { key, bindings: b, byCombo };
+  return b;
+}
+
+/// Actions whose combo is also another action's, in the same context or
+/// across `global` and another: the Shortcuts section shows them in red.
+export function conflicts(): ReadonlyMap<ActionId, ActionId[]> {
+  bindings();
+  const out = new Map<ActionId, ActionId[]>();
+  for (const ids of cache!.byCombo.values()) {
+    for (const a of ids) {
+      const ca = actionDef(a).context;
+      const others = ids.filter((b) => b !== a && (actionDef(b).context === ca || ca === "global" || actionDef(b).context === "global"));
+      if (others.length) out.set(a, [...(out.get(a) ?? []), ...others]);
+    }
+  }
+  return out;
 }
 
 /// The first combo of the action, formatted; "" when it has none.
@@ -252,14 +344,21 @@ export function useAction(id: ActionId, h: ActionHandler): void {
   useEffect(() => bindAction(id, (e) => ref.current(e)), [id]);
 }
 
+/// While the Shortcuts section records a key, no action fires.
+let recording = false;
+export function setRecording(on: boolean): void {
+  recording = on;
+}
+
 /// Grid actions run in the capture phase, before Glide's own keys (Delete,
 /// Enter): the others in the bubble phase, after CodeMirror and the
 /// dialogs, which stop what they handle.
 function dispatch(e: KeyboardEvent, capture: boolean): void {
-  if (e.defaultPrevented) return;
+  if (e.defaultPrevented || recording) return;
   const c = comboOf(e);
   if (!c) return;
-  const ids = index().get(comboKey(c));
+  bindings();
+  const ids = cache!.byCombo.get(comboKey(c));
   if (!ids) return;
   for (const id of ids) {
     if ((actionDef(id).context === "grid") !== capture) continue;

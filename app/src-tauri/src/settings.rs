@@ -16,6 +16,7 @@
 //! is kept and written back untouched, so a newer build's settings survive
 //! a downgrade.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 use std::time::Duration;
@@ -36,6 +37,12 @@ pub enum Kind {
     Bool,
     /// A whole number within the range, both ends included.
     Int { min: i64, max: i64 },
+    /// Key combos by action id (the keyboard shortcuts, §16): an object of
+    /// strings, each empty (no shortcut) or a combo in CodeMirror's
+    /// notation. The ids are the frontend's: one this build does not know
+    /// is kept and ignored, like an unknown key of the file. No generic
+    /// control: the Shortcuts section draws it.
+    Map,
 }
 
 /// A type usable as a setting: says which `Kind` it is.
@@ -49,6 +56,35 @@ impl SettingType for String {
 
 impl SettingType for bool {
     const KIND: Kind = Kind::Bool;
+}
+
+/// Action id → key combo (`""` = no shortcut). A `BTreeMap`, not a
+/// `HashMap`: the keys come out sorted, so the file is written the same
+/// way every time and two values compare by content.
+pub type ShortcutMap = BTreeMap<String, String>;
+
+impl SettingType for ShortcutMap {
+    const KIND: Kind = Kind::Map;
+}
+
+/// `[Mod-|Ctrl-|Alt-|Shift-|Meta-]*key`, CodeMirror's notation, as the
+/// frontend's `parseCombo` reads it: the key is the last part, non-empty
+/// and without spaces (a trailing `-` is the minus key itself).
+fn valid_combo(s: &str) -> bool {
+    let (mods, key) = match s.strip_suffix("--") {
+        Some(m) => (m, "-"),
+        None if s == "-" => ("", "-"),
+        None => s.rsplit_once('-').unwrap_or(("", s)),
+    };
+    !key.is_empty()
+        && !key.contains(char::is_whitespace)
+        && (mods.is_empty()
+            || mods.split('-').all(|m| {
+                matches!(
+                    m.to_ascii_lowercase().as_str(),
+                    "mod" | "ctrl" | "alt" | "shift" | "meta"
+                )
+            }))
 }
 
 /// The `Kind` of a field: from its range when declared (`u32 [9..=32]`,
@@ -97,6 +133,14 @@ setting_enum!(RunShortcut {
     Current = "current" => "Statement at the cursor, or the selection",
     Selection = "selection" => "Selection, otherwise the whole script",
     All = "all" => "The whole script",
+});
+
+// Keyboard shortcuts (§16): the preset names the combos of the actions
+// Alamo has in common with the other tool; the frontend holds the tables.
+setting_enum!(ShortcutsPreset {
+    Alamo = "alamo" => "Alamo",
+    Dbeaver = "dbeaver" => "DBeaver",
+    Datagrip = "datagrip" => "DataGrip",
 });
 
 // Data display (§8.2): presentation only, the canonical value stays in
@@ -313,6 +357,12 @@ settings! {
             "Once, when the app opens; \"Check now\" here at any time.";
         skipped_version: String = String::new(), "Skipped version";
     }
+    shortcuts: Shortcuts ("Shortcuts") {
+        preset: ShortcutsPreset = ShortcutsPreset::Alamo, "Preset",
+            "DBeaver and DataGrip change only the actions Alamo has; the rest keep Alamo's keys.";
+        overrides: ShortcutMap = ShortcutMap::new(), "Custom shortcuts",
+            "The shortcuts changed below, over the preset.";
+    }
 }
 
 impl Connections {
@@ -363,6 +413,7 @@ fn typescript() -> String {
         Kind::Str => "string".into(),
         Kind::Bool => "boolean".into(),
         Kind::Int { .. } => "number".into(),
+        Kind::Map => "Record<string, string>".into(),
     };
     let ts_kind = |kind: Kind| match kind {
         Kind::Enum(values) => format!(
@@ -381,6 +432,7 @@ fn typescript() -> String {
         Kind::Str => "{ kind: \"str\" }".into(),
         Kind::Bool => "{ kind: \"bool\" }".into(),
         Kind::Int { min, max } => format!("{{ kind: \"int\", min: {min}, max: {max} }}"),
+        Kind::Map => "{ kind: \"map\" }".into(),
     };
     let mut out = String::from(
         "// Generated from app/src-tauri/src/settings.rs by `cargo xtask gen-settings`:\n\
@@ -409,7 +461,8 @@ fn typescript() -> String {
          \x20 | { kind: \"enum\"; values: readonly string[]; labels: readonly string[] }\n\
          \x20 | { kind: \"str\" }\n\
          \x20 | { kind: \"bool\" }\n\
-         \x20 | { kind: \"int\"; min: number; max: number };\n\n\
+         \x20 | { kind: \"int\"; min: number; max: number }\n\
+         \x20 | { kind: \"map\" };\n\n\
          export type SettingDef = { key: SettingKey; category: string; kind: SettingKind; label: string; help: string };\n\n\
          /// The categories, in declaration order, with the English label (i18n\n\
          /// key) and whether a connection profile may override them (§16).\n\
@@ -658,6 +711,22 @@ fn validate(def: &SettingDef, v: &Value) -> Result<(), String> {
                 def.label
             )),
         },
+        Kind::Map => {
+            let Some(o) = v.as_object() else {
+                return Err(format!("{} must be an object of key combos", def.label));
+            };
+            for (action, combo) in o {
+                match combo.as_str() {
+                    Some(c) if c.is_empty() || valid_combo(c) => {}
+                    _ => {
+                        return Err(format!(
+                            "Shortcut for {action} is not a valid key combination"
+                        ))
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1065,9 +1134,11 @@ mod tests {
         }
     }
 
+    /// A `Map` setting is a leaf: its object is the value.
     fn collect_leaves(v: &Value, prefix: String, out: &mut Vec<&'static str>) {
+        let is_map = DEFS.iter().any(|d| d.key == prefix && d.kind == Kind::Map);
         match v.as_object() {
-            Some(o) => {
+            Some(o) if !is_map => {
                 for (k, child) in o {
                     let key = if prefix.is_empty() {
                         k.clone()
@@ -1077,8 +1148,43 @@ mod tests {
                     collect_leaves(child, key, out);
                 }
             }
-            None => out.push(Box::leak(prefix.into_boxed_str())),
+            _ => out.push(Box::leak(prefix.into_boxed_str())),
         }
+    }
+
+    #[test]
+    fn shortcut_overrides_validate_as_a_map_of_combos() {
+        let d = dir();
+        let store = SettingsStore::load(d.path());
+        let patch = |v: Value| patch(&[("shortcuts.overrides", v)]);
+        let s = store
+            .apply(&patch(
+                json!({"run": "F5", "tab.close": "", "future.action": "Shift-Mod-x"}),
+            ))
+            .unwrap();
+        assert_eq!(s.shortcuts.overrides["run"], "F5");
+        assert_eq!(s.shortcuts.overrides["tab.close"], "");
+        assert_eq!(
+            read(d.path())["shortcuts"]["overrides"],
+            json!({"future.action": "Shift-Mod-x", "run": "F5", "tab.close": ""})
+        );
+        assert_eq!(
+            store.apply(&patch(json!("F5"))).unwrap_err(),
+            "Custom shortcuts must be an object of key combos"
+        );
+        assert_eq!(
+            store.apply(&patch(json!({"run": "Hyper-x"}))).unwrap_err(),
+            "Shortcut for run is not a valid key combination"
+        );
+        assert_eq!(
+            store.apply(&patch(json!({"run": 5}))).unwrap_err(),
+            "Shortcut for run is not a valid key combination"
+        );
+        assert!(valid_combo("Mod--"));
+        assert!(valid_combo("Ctrl-Alt-Insert"));
+        assert!(!valid_combo("Mod-"));
+        assert!(!valid_combo("Mod-a b"));
+        assert_eq!(store.reset(Some("shortcuts")).unwrap(), Settings::default());
     }
 
     /// The frontend's table is this one: `ALAMO_GEN_SETTINGS=1` writes it

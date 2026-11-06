@@ -335,6 +335,46 @@ body,
   padding-left: 18px;
 }
 
+/* Shortcuts (§16): the actions by context; the combo is a button that
+   records the next key when clicked. */
+.shortcuts-context {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shortcuts-context-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cell-muted-fg);
+  padding: 10px 10px 2px;
+}
+
+.shortcut-keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.shortcut-key {
+  min-width: 120px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.shortcut-key.empty {
+  color: var(--cell-muted-fg);
+}
+
+.shortcut-key.recording {
+  border-color: var(--cell-selection-border);
+  color: var(--cell-muted-fg);
+  font-style: italic;
+}
+
 .activity-btn {
   position: relative;
   width: 42px;
