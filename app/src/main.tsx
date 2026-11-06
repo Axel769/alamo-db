@@ -6,12 +6,16 @@ import "./styles.css";
 import { applyTheme } from "./theme";
 import { bootSettings } from "./settings";
 import { installTooltips } from "./tooltip";
+import { installKeymap, isMac } from "./keymap";
 
 // macOS: integrated title bar (tauri.conf.json, titleBarStyle
 // Overlay) — the toolbar leaves room for the window buttons.
-if (/Mac/.test(navigator.platform) && "__TAURI_INTERNALS__" in window) {
+if (isMac && "__TAURI_INTERNALS__" in window) {
   document.documentElement.classList.add("mac-titlebar");
 }
+
+// Keyboard shortcuts (§16): one dispatcher, the components register handlers.
+installKeymap();
 
 // Inside Tauri the right click shows the WebView's native menu: "Reload"
 // (reloads the page and throws away connections and editor) and, in debug,

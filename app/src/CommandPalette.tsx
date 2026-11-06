@@ -8,6 +8,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
+import { keyHint } from "./keymap";
 import { ipc } from "./ipc";
 import { activeTab, profileConns, useStore } from "./store";
 import { activateTab, makePermanent, newSqlTab, openTablePreview } from "./tabs";
@@ -157,13 +158,13 @@ export default function CommandPalette({ onClose, onOpenDialog, onPanel, onSetti
     ]);
     add(t("Actions"), [
       { key: t("New query"), item: { group: "", icon: <IconPlus />, title: t("New query"), sub: conn?.profile.name, run: act(() => newSqlTab()) } },
-      { key: t("Show schema"), item: { group: "", icon: <IconDatabase size={14} />, title: t("Show schema"), sub: "⌘B", run: act(() => onPanel("schema")) } },
+      { key: t("Show schema"), item: { group: "", icon: <IconDatabase size={14} />, title: t("Show schema"), sub: keyHint("sidebar.toggle"), run: act(() => onPanel("schema")) } },
       { key: t("Query history"), item: { group: "", icon: <IconHistory size={14} />, title: t("Query history"), run: act(() => onPanel("history")) } },
       { key: t("New connection…"), item: { group: "", icon: <IconPlus />, title: t("New connection…"), run: act(() => onOpenDialog(null)) } },
       { key: t("Export connections…"), item: { group: "", icon: <IconExport />, title: t("Export connections…"), run: act(() => onTransfer("export")) } },
       { key: t("Import connections…"), item: { group: "", icon: <IconImport />, title: t("Import connections…"), run: act(() => onTransfer("import")) } },
       { key: t("SSH profiles…"), item: { group: "", icon: <IconKey size={14} />, title: t("SSH profiles…"), run: act(onSshProfiles) } },
-      { key: t("Settings"), item: { group: "", icon: <IconSettings size={14} />, title: t("Settings"), run: act(onSettings) } },
+      { key: t("Settings"), item: { group: "", icon: <IconSettings size={14} />, title: t("Settings"), sub: keyHint("settings.open"), run: act(onSettings) } },
     ]);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps

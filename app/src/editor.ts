@@ -11,7 +11,7 @@ import {
   CompletionContext,
   CompletionResult,
 } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentLess, indentMore, toggleComment } from "@codemirror/commands";
 import { sql, PostgreSQL, SQLNamespace } from "@codemirror/lang-sql";
 import { ensureSyntaxTree, getIndentUnit, HighlightStyle, indentUnit, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { highlightTree, tags } from "@lezer/highlight";
@@ -22,6 +22,7 @@ import { lang } from "./i18n";
 import { setting, useSettings } from "./settings";
 import { Settings, SettingValues } from "./settingsSchema";
 import { editorFont } from "./appearance";
+import { ActionId, bindings } from "./keymap";
 import {
   Compartment,
   countColumn,
@@ -37,6 +38,7 @@ import {
   Decoration,
   DecorationSet,
   EditorView,
+  KeyBinding,
   keymap,
   lineNumbers,
 } from "@codemirror/view";
@@ -412,9 +414,9 @@ const uppercaseKeywords = EditorView.inputHandler.of((view, from, to, text) => {
   return true;
 });
 
-/// The Editor settings (§16) as extensions: completion, indent, wrap,
-/// keyword case and what ⌘↵ runs. Rebuilt on a change of the section.
-function editorSettingsExt(onRun: (mode: RunMode) => void): Extension {
+/// The Editor settings (§16) as extensions: completion, indent, wrap and
+/// keyword case. Rebuilt on a change of the section.
+function editorSettingsExt(): Extension {
   const e = useSettings.getState().settings.editor;
   return [
     autocompletion({
@@ -426,19 +428,34 @@ function editorSettingsExt(onRun: (mode: RunMode) => void): Extension {
     indentUnit.of(" ".repeat(e.tab_size)),
     e.line_wrap ? EditorView.lineWrapping : [],
     e.uppercase_keywords ? uppercaseKeywords : [],
-    keymap.of([
-      {
-        key: "Mod-Enter",
-        run: () => {
-          onRun(e.run_shortcut);
-          return true;
-        },
-      },
-    ]),
   ];
 }
 
 const editorSection = (s: Settings) => JSON.stringify(s.editor);
+
+/// The editor actions of the registry (keymap.ts) as a CodeMirror keymap:
+/// Run follows the setting at the moment of the key, Run all is always
+/// "all". Highest precedence: a shortcut the user chose beats the built-in
+/// bindings. Rebuilt when the bindings change.
+function actionKeymap(onRun: (mode: RunMode) => void): Extension {
+  const commands: Partial<Record<ActionId, Command>> = {
+    run: () => (onRun(setting("editor.run_shortcut")), true),
+    "run.all": () => (onRun("all"), true),
+    "editor.complete": startCompletion,
+    "editor.search": openSearchPanel,
+    "editor.toggle_comment": toggleComment,
+  };
+  const out: KeyBinding[] = [];
+  for (const [id, run] of Object.entries(commands) as [ActionId, Command][]) {
+    for (const key of bindings().get(id) ?? []) out.push({ key, run });
+  }
+  return Prec.highest(keymap.of(out));
+}
+
+/// The keys the registry owns, taken out of CodeMirror's fixed keymaps so a
+/// remapping leaves nothing behind.
+const REGISTRY_KEYS = new Set(["Mod-f", "Mod-/"]);
+const fixedKeymap = (...maps: readonly (readonly KeyBinding[])[]) => maps.flat().filter((b) => !b.key || !REGISTRY_KEYS.has(b.key));
 
 /// Font and text size of the editor from the settings.
 function appearanceExt(): Extension {
@@ -459,8 +476,10 @@ export class SqlEditor {
   /// Font and text size from the settings (§16), applied at once.
   private appearanceCompartment = new Compartment();
   /// The Editor section of the settings (§16): completion, indent, wrap,
-  /// keyword case, what ⌘↵ runs.
+  /// keyword case.
   private editorSettingsCompartment = new Compartment();
+  /// The shortcuts of the editor actions (keymap.ts), from the registry.
+  private keymapCompartment = new Compartment();
   private onRun: (mode: RunMode) => void = () => {};
 
   /// Who computes the statement boundaries (the Studio, via IPC on the
@@ -485,7 +504,7 @@ export class SqlEditor {
         this.view.dispatch({ effects: this.appearanceCompartment.reconfigure(appearanceExt()) });
       }
       if (editorSection(s.settings) !== editorSection(prev.settings)) {
-        this.view.dispatch({ effects: this.editorSettingsCompartment.reconfigure(editorSettingsExt(this.onRun)) });
+        this.view.dispatch({ effects: this.editorSettingsCompartment.reconfigure(editorSettingsExt()) });
       }
     });
   }
@@ -522,30 +541,15 @@ export class SqlEditor {
         // on non-US layouts `Alt-\`` IS how you type the backtick (MySQL
         // quoting) and CodeMirror would eat it. Ctrl-Space remains — which
         // however on macOS belongs to the system by default (input source
-        // switch) and never reaches the editor: Ctrl-. is the alternative nobody steals.
-        this.editorSettingsCompartment.of(editorSettingsExt(onRun)),
+        // switch) and never reaches the editor: the registry's "Autocomplete"
+        // (Ctrl-. by default) is the alternative nobody steals.
+        this.editorSettingsCompartment.of(editorSettingsExt()),
         completionSpace(),
-        Prec.highest(
-          keymap.of([
-            ...completionKeymap.filter((b) => !b.mac?.startsWith("Alt-")),
-            { key: "Ctrl-.", run: startCompletion },
-          ])
-        ),
+        Prec.highest(keymap.of(completionKeymap.filter((b) => !b.mac?.startsWith("Alt-")))),
+        // Run, Run all, Autocomplete, Find, Comment: from the registry.
+        this.keymapCompartment.of(actionKeymap(onRun)),
         errorField,
-        keymap.of([
-          // ⌘↩ follows the setting (editorSettingsExt); ⇧⌘↩ = all, always.
-          {
-            key: "Shift-Mod-Enter",
-            run: () => {
-              onRun("all");
-              return true;
-            },
-          },
-          { key: "Tab", run: insertIndent, shift: indentLess },
-          ...defaultKeymap,
-          ...historyKeymap,
-          ...searchKeymap,
-        ]),
+        keymap.of([{ key: "Tab", run: insertIndent, shift: indentLess }, ...fixedKeymap(defaultKeymap, historyKeymap, searchKeymap)]),
         EditorView.theme({
           "&": { height: "100%" },
           // The default caret is black: in dark mode it disappears (black on black).

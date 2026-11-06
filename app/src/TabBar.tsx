@@ -13,6 +13,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CSSProperties, Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "./i18n";
+import { keyHint, withKey } from "./keymap";
 import { canSwitchDb, engineShortName } from "./engines";
 import { ipc } from "./ipc";
 import { ConnUi, tabDatabase, tabGroup, TabUi, useStore } from "./store";
@@ -429,7 +430,7 @@ export default function TabBar() {
             }}
           >
             {t("Close")}
-            {!menuTab.pinned && <span className="tab-menu-key">⌘W</span>}
+            {!menuTab.pinned && <span className="tab-menu-key">{keyHint("tab.close")}</span>}
           </button>
           <button
             className="tab-menu-item"
@@ -655,7 +656,7 @@ function Tab({
       ) : (
         <button
           className="tab-close"
-          title={t("Close") + " (⌘W)"}
+          title={withKey(t("Close"), "tab.close")}
           onClick={(e) => {
             e.stopPropagation();
             void closeTabsGuarded([tab.id]);

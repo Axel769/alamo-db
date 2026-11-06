@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ipc, AutocompleteOut, ErrorOut, Profile, ScriptItem, StatementClassOut } from "./ipc";
 import { RunContext, RunMode, SqlEditor } from "./editor";
 import { executionFor, setEffective, setting, useSettings } from "./settings";
+import { keyHint, useAction, withKey } from "./keymap";
 import {
   useStore,
   activeTab,
@@ -54,6 +55,7 @@ import {
   flushAutosave,
   loadWorkspace,
   newSqlTab,
+  newSqlTabFromContext,
   persistWorkspace,
   registerEditor,
   scheduleAutosave,
@@ -860,74 +862,71 @@ function StudioInner() {
     };
   }, [runMenu]);
 
-  // Tab navigation (§9.5): Ctrl+Tab in MRU order, Ctrl+PgUp/PgDn positional.
+  // Keyboard shortcuts (§16): the global and editor actions of the registry
+  // (keymap.ts). The dispatcher skips what CodeMirror or a dialog handled
+  // first (Ctrl+B/K inside CodeMirror on mac are emacs cursor keys).
+  // Tab navigation (§9.5): MRU order and positional.
+  useAction("tab.mru", () => (cycleMru(), true));
+  useAction("tab.prev", () => (cyclePositional(-1), true));
+  useAction("tab.next", () => (cyclePositional(1), true));
+  // Like VSCode: shows/hides the sidebar.
+  useAction("sidebar.toggle", () => (toggleSidebar(), true));
+  useAction("palette.toggle", () => (setPaletteOpen((v) => !v), true));
+  useAction("tab.new_query", () => (newSqlTabFromContext(), true));
+  // Search in the text of the active SQL tab. Inside CodeMirror its keymap
+  // handles it; here the case where the focus is elsewhere (grid, buttons)
+  // but the tab is a query.
+  useAction("editor.search", () => {
+    const s = useStore.getState();
+    if (s.connPage !== null || activeTab(s)?.kind !== "sql" || !editorRef.current) return false;
+    editorRef.current.openSearch();
+    return true;
+  });
+  // Closes the active tab, through the unsaved-changes guard. Same
+  // exemptions as the middle click (pinned, running). Not while a dialog,
+  // the palette or a cell editor (Glide's #portal) is open: the tab behind
+  // it would go.
+  useAction("tab.close", () => {
+    const s = useStore.getState();
+    const tab = s.connPage === null ? activeTab(s) : undefined;
+    if (!tab || tab.pinned || tab.running || document.querySelector(".dialog-overlay, .cmdk-overlay, #portal textarea")) return true;
+    void closeTabsGuarded([tab.id]);
+    return true;
+  });
+  // On macOS ⌘, is the menu accelerator and never reaches the DOM: this
+  // serves Windows, Linux and a remapped key.
+  useAction("settings.open", () => (setSettingsOpen(true), true));
+  // Cancel, Commit and Rollback as the buttons of the query bar allow them.
+  useAction("run.cancel", () => tabWorking && (cancelRun(), true));
+  useAction("txn.commit", () => {
+    if (!activeConn?.txn?.hasWrites || (anyRunning && !stickyPaused)) return false;
+    if (activeConn.profile.is_production) setTxnLogFor(activeConn.connId);
+    else void txnAction("commit");
+    return true;
+  });
+  useAction("txn.rollback", () => {
+    if (!activeConn?.txn || (anyRunning && !stickyPaused)) return false;
+    void txnAction("rollback");
+    return true;
+  });
+
+  // macOS: the native menu has no Undo/Redo (the Cmd+Z fix for CodeMirror,
+  // see main.rs) — but input/textarea fields relied on exactly that. Here
+  // the fallback; CodeMirror does not come through here (contenteditable,
+  // it has its own keymap). Not a shortcut of the registry: it restores a
+  // system key, it is not an action of the app.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "Tab") {
+      if (!e.metaKey || e.ctrlKey || e.altKey || e.key.toLowerCase() !== "z") return;
+      const t = e.target;
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) {
         e.preventDefault();
-        cycleMru();
-      } else if (e.ctrlKey && e.key === "PageUp") {
-        e.preventDefault();
-        cyclePositional(-1);
-      } else if (e.ctrlKey && e.key === "PageDown") {
-        e.preventDefault();
-        cyclePositional(1);
-      } else if (
-        (e.metaKey || e.ctrlKey) &&
-        !e.altKey &&
-        e.key.toLowerCase() === "b" &&
-        !e.defaultPrevented
-      ) {
-        // ⌘B like VSCode: shows/hides the sidebar. defaultPrevented:
-        // Ctrl+B inside CodeMirror on mac is cursor left (emacs), CM
-        // consumes it and it must not toggle here.
-        e.preventDefault();
-        toggleSidebar();
-      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f" && !e.defaultPrevented) {
-        // ⌘F: search in the text of the active SQL tab. Inside CodeMirror
-        // its keymap handles it (defaultPrevented); here the case where the
-        // focus is elsewhere (grid, buttons) but the tab is a query.
-        const s = useStore.getState();
-        if (s.connPage === null && activeTab(s)?.kind === "sql" && editorRef.current) {
-          e.preventDefault();
-          editorRef.current.openSearch();
-        }
-      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k" && !e.defaultPrevented) {
-        // ⌘K: command palette. defaultPrevented as for ⌘B: Ctrl+K inside
-        // CodeMirror on mac is "delete to end of line" (emacs).
-        e.preventDefault();
-        setPaletteOpen((v) => !v);
-      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "w" && !e.defaultPrevented) {
-        // ⌘W: closes the active tab, through the unsaved-changes guard.
-        // Same exemptions as the middle click (pinned, running). Not while
-        // a dialog, the palette or a cell editor (Glide's #portal) is open:
-        // the tab behind it would go.
-        e.preventDefault();
-        const s = useStore.getState();
-        const tab = s.connPage === null ? activeTab(s) : undefined;
-        if (tab && !tab.pinned && !tab.running && !document.querySelector(".dialog-overlay, .cmdk-overlay, #portal textarea")) {
-          void closeTabsGuarded([tab.id]);
-        }
-      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key === ",") {
-        // Ctrl+, on Windows and Linux opens Settings, as in VSCode; on
-        // macOS ⌘, is the menu accelerator and never reaches the DOM.
-        e.preventDefault();
-        setSettingsOpen(true);
-      } else if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "z") {
-        // macOS: the native menu has no Undo/Redo (the Cmd+Z fix for
-        // CodeMirror, see main.rs) — but input/textarea fields relied on
-        // exactly that. Here the fallback; CodeMirror does not come through
-        // here (contenteditable, it has its own keymap).
-        const t = e.target;
-        if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) {
-          e.preventDefault();
-          document.execCommand(e.shiftKey ? "redo" : "undo");
-        }
+        document.execCommand(e.shiftKey ? "redo" : "undo");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleSidebar]);
+  }, []);
 
   // Autocomplete (§10): flat catalogue of the ACTIVE connection, handed to
   // CodeMirror. Per-connection cache in TanStack: the tree's ⟳ invalidates
@@ -1179,7 +1178,7 @@ function StudioInner() {
         <button className="cmd-box" onClick={() => setPaletteOpen(true)}>
           <IconSearch />
           <span>{t("Open table, query or action…")}</span>
-          <kbd>⌘K</kbd>
+          {keyHint("palette.toggle") && <kbd>{keyHint("palette.toggle")}</kbd>}
         </button>
         <div className="spacer" />
         {activeConn?.txn && (
@@ -1320,7 +1319,7 @@ function StudioInner() {
         <div className="activity-bar">
           <button
             className={"activity-btn" + (activePanel === "schema" ? " active" : "")}
-            title={t("Databases and tables (⌘B)")}
+            title={withKey(t("Databases and tables"), "sidebar.toggle")}
             aria-pressed={activePanel === "schema"}
             onClick={() => togglePanel("schema")}
           >
@@ -1502,7 +1501,7 @@ function StudioInner() {
                           ? t("Run query")
                           : t("Run all")
                         : t("Run")}{" "}
-                    <kbd>⌘↵</kbd>
+                    {keyHint("run") && <kbd>{keyHint("run")}</kbd>}
                   </>
                 )}
               </button>
@@ -1531,7 +1530,7 @@ function StudioInner() {
                       : runMode === "current"
                         ? t("Run query at cursor")
                         : t("Run all")}{" "}
-                    <kbd>⌘↵</kbd>
+                    {keyHint("run") && <kbd>{keyHint("run")}</kbd>}
                   </button>
                   <button
                     className="tab-menu-item"
@@ -1540,7 +1539,7 @@ function StudioInner() {
                       void run("all");
                     }}
                   >
-                    {t("Run all")} <kbd>⇧⌘↵</kbd>
+                    {t("Run all")} {keyHint("run.all") && <kbd>{keyHint("run.all")}</kbd>}
                   </button>
                 </div>
               )}
@@ -1689,7 +1688,9 @@ function StudioInner() {
                   <div className="hint">{t("No tabs open. Create one with the + in the bar.")}</div>
                 )}
                 {tab && !sel && !store.connectError && (
-                  <div className="hint">{t("Write SQL and press ⌘↵. Results appear here.")}</div>
+                  <div className="hint">
+                    {keyHint("run") ? t("Write SQL and press {key}. Results appear here.", { key: keyHint("run") }) : t("Write SQL and press Run. Results appear here.")}
+                  </div>
                 )}
               </div>
             </>

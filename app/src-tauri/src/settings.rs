@@ -245,8 +245,8 @@ settings! {
             "When a space or a bracket closes a keyword; never inside strings, comments or quoted names.";
         tab_size: u32 [2..=8] = 2, "Indent width (spaces)";
         line_wrap: bool = false, "Wrap long lines";
-        run_shortcut: RunShortcut = RunShortcut::Current, "Run (⌘↵ / Ctrl+Enter) executes",
-            "⇧⌘↵ (Shift+Ctrl+Enter) always runs the whole script.";
+        run_shortcut: RunShortcut = RunShortcut::Current, "Run executes",
+            "\"Run the whole script\" has its own shortcut and always runs everything.";
         confirm_unfiltered_writes: bool = true, "Confirm UPDATE and DELETE without WHERE",
             "On production profiles the confirmation is always asked, whatever this setting.";
         history_size: u32 [50..=2000] = 200, "Query history entries";
@@ -280,7 +280,7 @@ settings! {
             "Copy and export keep the database form (\\x hexadecimal).";
     }
     copy: Copy ("Copy") {
-        separator: CopySeparator = CopySeparator::Tab, "Separator between cells (⌘C / Ctrl+C)",
+        separator: CopySeparator = CopySeparator::Tab, "Separator between copied cells",
             "Paste into the grid always reads tabs, as spreadsheets write them.";
         headers: bool = false, "Column names on the first line",
             "When more than one cell is copied, also with \"Copy selection as\".";

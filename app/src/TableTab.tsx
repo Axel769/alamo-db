@@ -43,6 +43,7 @@ import {
   unsavedCount,
 } from "./store";
 import { locale, t, tMsg } from "./i18n";
+import { useAction, withKey } from "./keymap";
 import { ErrorPanel, StatementPane } from "./ResultPane";
 import { RunningNotice } from "./RunningNotice";
 import { cacheFor, dropCache } from "./rowCache";
@@ -514,20 +515,16 @@ export default function TableTab({
     return { fields, related };
   };
 
-  // ⌥← / ⌥→: back/forward in the tab, like in the browser. Not inside text
-  // fields, where ⌥+arrow moves the cursor by one word.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.metaKey || e.ctrlKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
-      e.preventDefault();
-      navStep(e.key === "ArrowLeft" ? -1 : 1);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab.id, tab.running, tab.navBack.length, tab.navFwd.length]);
+  // Back/forward in the tab, like in the browser. Not inside text fields,
+  // where ⌥+arrow moves the cursor by one word.
+  const navKey = (dir: -1 | 1) => (e: KeyboardEvent) => {
+    const el = e.target as HTMLElement | null;
+    if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return false;
+    navStep(dir);
+    return true;
+  };
+  useAction("table.back", navKey(-1));
+  useAction("table.forward", navKey(1));
 
   /// PK key of the row, with the current values from the cache. PK truncated
   /// in the window (>4KB): the full value via getCellFull. `null` = cell not
@@ -793,41 +790,30 @@ export default function TableTab({
   // that sees it. The editor is closed a task later: Glide answers every
   // key (⌘S too) with a timeout that would read the Enter's motion and
   // close it discarding the text.
-  const saveRef = useRef(save);
-  saveRef.current = save;
-  useEffect(() => {
-    if (tab.sub !== "data") return;
+  useAction("table.save", () => {
+    if (tab.sub !== "data") return false;
     const nextTask = () => new Promise((r) => window.setTimeout(r, 0));
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "s") return;
-      e.preventDefault();
-      void (async () => {
-        await nextTask();
-        if (commitCellEditor()) await nextTask();
-        await stageChain.current;
-        await nextTask();
-        await saveRef.current();
-      })();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [tab.sub]);
+    void (async () => {
+      await nextTask();
+      if (commitCellEditor()) await nextTask();
+      await stageChain.current;
+      await nextTask();
+      await save();
+    })();
+    return true;
+  });
+  useAction("table.discard", () => {
+    if (tab.sub !== "data" || saving || nUnsaved === 0) return false;
+    discard();
+    return true;
+  });
 
-  // ⌘F goes to the WHERE, ⇧⌘F opens "+ Filter": the bar without the mouse.
-  // The text search (Studio's ⌘F) applies only to the SQL tabs.
+  // Find goes to the WHERE, Add a filter opens "+ Filter": the bar without
+  // the mouse. The text search (Studio's) applies only to the SQL tabs.
   const whereRef = useRef<WhereInputHandle | null>(null);
   const filterAddRef = useRef<FilterAddHandle | null>(null);
-  useEffect(() => {
-    if (tab.sub !== "data") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== "f" || e.defaultPrevented) return;
-      e.preventDefault();
-      if (e.shiftKey) filterAddRef.current?.open();
-      else whereRef.current?.focus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [tab.sub]);
+  useAction("table.where", () => tab.sub === "data" && (whereRef.current?.focus(), true));
+  useAction("table.filter_add", () => tab.sub === "data" && (filterAddRef.current?.open(), true));
 
   // Structure and DDL stay in cache (infinite staleTime): a column added by
   // a query does not appear by itself. The ⟳ (or F5) re-reads both from the
@@ -843,31 +829,20 @@ export default function TableTab({
     for (const queryKey of metaKeys) void qc.invalidateQueries({ queryKey, exact: true });
   };
 
-  // F5 / Cmd+R: in Data reloads the data with the same query (filters and
-  // server sort stay), like the button. The pending changes stay: they are
-  // tied to the PK, not to the row. In Structure and DDL re-reads the table
-  // definition.
-  const refreshRef = useRef(() => {});
-  refreshRef.current = () => {
-    if (connId === null) return;
+  // Reload (F5 / ⌘R): in Data reloads the data with the same query (filters
+  // and server sort stay), like the button. The pending changes stay: they
+  // are tied to the PK, not to the row. In Structure and DDL re-reads the
+  // table definition. Always handled: in the webview F5/⌘R would reload
+  // the app.
+  useAction("table.reload", () => {
+    if (connId === null) return true;
     if (tab.sub !== "data") {
       if (!metaFetching) reloadMeta();
-      return;
+      return true;
     }
-    if (tab.running || saving) return;
-    void userReload();
-  };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const cmdR = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "r";
-      if (e.key !== "F5" && !cmdR) return;
-      // Always blocked: in the webview F5/Cmd+R would reload the app.
-      e.preventDefault();
-      refreshRef.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    if (!tab.running && !saving) void userReload();
+    return true;
+  });
 
   /// "View SQL": the UPDATEs and INSERTs that Save would run, in the
   /// confirmation dialog.
@@ -1181,7 +1156,7 @@ export default function TableTab({
             <button
               className="btn small"
               disabled={tab.navBack.length === 0 || tab.running}
-              title={t("Back (⌥←)")}
+              title={withKey(t("Back"), "table.back")}
               onClick={() => navStep(-1)}
             >
               <IconChevronLeft />
@@ -1189,7 +1164,7 @@ export default function TableTab({
             <button
               className="btn small"
               disabled={tab.navFwd.length === 0 || tab.running}
-              title={t("Forward (⌥→)")}
+              title={withKey(t("Forward"), "table.forward")}
               onClick={() => navStep(1)}
             >
               <IconChevronRight />
@@ -1216,7 +1191,7 @@ export default function TableTab({
           <span className="row-actions">
             <button
               className="btn small"
-              title={t("Adds a new row below the selected one; it is written with Save (⌥Insert)")}
+              title={withKey(t("Adds a new row below the selected one; it is written with Save"), "grid.row_add")}
               disabled={connId === null || tab.running || saving || !st?.columns}
               onClick={addRow}
             >
@@ -1224,7 +1199,7 @@ export default function TableTab({
             </button>
             <button
               className="btn small"
-              title={t("Duplicates the selected rows below them, with the key set to DEFAULT (⌃⌥Insert)")}
+              title={withKey(t("Duplicates the selected rows below them, with the key set to DEFAULT"), "grid.row_duplicate")}
               disabled={connId === null || tab.running || saving || selRows.length === 0}
               onClick={() => void duplicateRows(selRows)}
             >
@@ -1235,7 +1210,7 @@ export default function TableTab({
               title={
                 selAllDeleted
                   ? t("Unmarks the selected rows for deletion")
-                  : t("Marks the selected rows for deletion; they are deleted with Save (Del)")
+                  : withKey(t("Marks the selected rows for deletion; they are deleted with Save"), "grid.row_delete")
               }
               disabled={connId === null || tab.running || saving || selRows.length === 0}
               onClick={() => void deleteRows(selRows)}
@@ -1283,7 +1258,7 @@ export default function TableTab({
             </button>
             <button
               className="btn small primary"
-              title={t("Writes the changes to the database (⌘S)")}
+              title={withKey(t("Writes the changes to the database"), "table.save")}
               disabled={saving || tab.running}
               onClick={() => void save()}
             >
@@ -1315,7 +1290,7 @@ export default function TableTab({
           ) : (
             <button
               className="btn small"
-              title={t("Reload data (F5)")}
+              title={withKey(t("Reload data"), "table.reload")}
               disabled={connId === null}
               onClick={() => void userReload()}
             >
@@ -1325,7 +1300,7 @@ export default function TableTab({
         {tab.sub !== "data" && (
           <button
             className="btn small"
-            title={tab.sub === "ddl" ? t("Reload DDL (F5)") : t("Reload structure (F5)")}
+            title={withKey(tab.sub === "ddl" ? t("Reload DDL") : t("Reload structure"), "table.reload")}
             disabled={connId === null || metaFetching}
             onClick={reloadMeta}
           >
@@ -1344,9 +1319,11 @@ export default function TableTab({
               dialect={conn?.profile.dialect ?? ""}
               disabled={tab.running}
               placeholder={t("e.g. status = 'A' AND amount > 100 — Enter to apply")}
-              title={t(
-                "Hand-written SQL condition, ANDed with the filters (⌘F). Enter applies, Shift+Enter adds a line, Esc cancels. Ctrl+. shows the columns."
-              )}
+              title={
+                withKey(t("Hand-written SQL condition, ANDed with the filters"), "table.where") +
+                ". " +
+                t("Enter applies, Shift+Enter adds a line, Esc cancels. Ctrl+. shows the columns.")
+              }
               onChange={setWhereDraft}
               onCommit={commitWhere}
               onCancel={() => setWhereDraft(tq.where_sql)}

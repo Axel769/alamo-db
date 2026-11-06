@@ -4,6 +4,7 @@
 // here you type a piece of the name and press Enter.
 import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
+import { withKey } from "./keymap";
 import PickerSearch from "./PickerSearch";
 import type { WhereColumn } from "./WhereInput";
 
@@ -78,7 +79,7 @@ const FilterAdd = forwardRef<FilterAddHandle, FilterAddProps>(function FilterAdd
       <button
         className="filter-add"
         disabled={disabled || columns.length === 0}
-        title={t("Add a server-side filter on a column (⇧⌘F)")}
+        title={withKey(t("Add a server-side filter on a column"), "table.filter_add")}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

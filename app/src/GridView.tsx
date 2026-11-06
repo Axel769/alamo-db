@@ -9,7 +9,6 @@ import {
   GridCell,
   GridCellKind,
   GridColumn,
-  GridKeyEventArgs,
   GridSelection,
   CellClickedEventArgs,
   HeaderClickedEventArgs,
@@ -27,6 +26,7 @@ import { tokens } from "./theme";
 import { useSettings } from "./settings";
 import { clampText, DataSettings, displayText, isLong, nullText } from "./display";
 import { gridFont, gridRowHeight } from "./appearance";
+import { isMac, keyHint, useAction } from "./keymap";
 import { ExportDialog } from "./ExportDialog";
 
 const HEADER_HEIGHT = 28;
@@ -179,8 +179,7 @@ type ColumnCuts = ReadonlyMap<number, ReadonlySet<number>>;
 const NO_CUTS: ColumnCuts = new Map();
 
 /// The key that adds to a selection, the same one Glide reads.
-const isMultiKey = (e: { metaKey: boolean; ctrlKey: boolean }) =>
-  /Mac/.test(navigator.platform) ? e.metaKey : e.ctrlKey;
+const isMultiKey = (e: { metaKey: boolean; ctrlKey: boolean }) => (isMac ? e.metaKey : e.ctrlKey);
 
 const EMPTY_SELECTION: GridSelection = {
   columns: CompactSelection.empty(),
@@ -743,19 +742,17 @@ export default function GridView({
     [panelEditable, cellAt, pendingValue, toModelRow, onEditInPanel, data.max_cell_chars]
   );
 
-  // Shift+Enter (like DBeaver's value editor): any cell in the panel.
-  const onGridKeyDown = useCallback(
-    (e: GridKeyEventArgs) => {
-      if (e.key !== "Enter" || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
-      const cur = selection.current;
-      if (!cur || cur.range.width !== 1 || cur.range.height !== 1) return;
-      const [col, row] = cur.cell;
-      if (!panelEditable(row)) return;
-      e.cancel();
-      onEditInPanel!(toModelRow(row), col);
-    },
-    [selection, panelEditable, toModelRow, onEditInPanel]
-  );
+  // Edit in the panel (like DBeaver's value editor): any cell, from the
+  // registry's key; before Glide, which would open its own editor.
+  useAction("grid.edit_in_panel", () => {
+    if (!wrapRef.current?.contains(document.activeElement)) return false;
+    const cur = selection.current;
+    if (!cur || cur.range.width !== 1 || cur.range.height !== 1) return false;
+    const [col, row] = cur.cell;
+    if (!panelEditable(row)) return false;
+    onEditInPanel!(toModelRow(row), col);
+    return true;
+  });
 
   // Save from Glide's overlay: the cell goes pending (no write to the
   // database until saving).
@@ -894,40 +891,19 @@ export default function GridView({
     onSelectedRows?.(selectedRows(selection));
   }, [selection, selectedRows, onSelectedRows]);
 
-  // Row keys like DBeaver, before Glide (capture): Delete deletes the rows
-  // of the selection instead of setting NULL; NULL stays on ⇧Delete.
-  // Mac without an Insert key: "Help" is the same key on extended keyboards.
-  const rowKeysRef = useRef<(e: KeyboardEvent) => void>(() => {});
-  rowKeysRef.current = (e: KeyboardEvent) => {
-    if (!rowActions || !editable) return;
-    if (!wrapRef.current?.contains(document.activeElement)) return;
-    const insert = e.key === "Insert" || e.key === "Help";
-    const del = e.key === "Delete" || e.key === "Backspace";
-    const handled = () => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    if (insert && e.altKey && e.ctrlKey && !e.metaKey && !e.shiftKey) {
-      handled();
-      const rows = selectedRows(selection);
-      if (rows.length > 0) rowActions.onDuplicate(rows);
-    } else if (insert && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-      handled();
-      rowActions.onAdd();
-    } else if (del && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
-      handled();
-      onDelete(selection);
-    } else if (del && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      handled();
-      const rows = selectedRows(selection);
-      if (rows.length > 0) rowActions.onDelete(rows);
-    }
+  // Row keys like DBeaver, before Glide (the dispatcher runs the grid
+  // actions in the capture phase): Delete deletes the rows of the selection
+  // instead of setting NULL; NULL stays on ⇧Delete. Only with the focus in
+  // this grid and rows that can change.
+  const rowKey = (f: (rows: number[]) => void) => () => {
+    if (!rowActions || !editable || !wrapRef.current?.contains(document.activeElement)) return false;
+    f(selectedRows(selection));
+    return true;
   };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => rowKeysRef.current(e);
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
+  useAction("grid.row_duplicate", rowKey((rows) => rows.length > 0 && rowActions!.onDuplicate(rows)));
+  useAction("grid.row_add", rowKey(() => rowActions!.onAdd()));
+  useAction("grid.set_null", rowKey(() => onDelete(selection)));
+  useAction("grid.row_delete", rowKey((rows) => rows.length > 0 && rowActions!.onDelete(rows)));
 
   /// The cell (screen row) shows the link arrow: real row, not to delete,
   /// every column of the key read, not NULL, not truncated, not edited.
@@ -1294,7 +1270,6 @@ export default function GridView({
         onCellEdited={editable ? onCellEdited : undefined}
         onCellActivated={onCellActivated}
         onCellClicked={onCellClicked}
-        onKeyDown={onGridKeyDown}
         onDelete={onDelete}
         onCellContextMenu={onCellContextMenu}
         onColumnResize={onColumnResize}
@@ -1402,7 +1377,8 @@ export default function GridView({
             const single = r.width === 1 && r.height === 1;
             if (!single && (!onEditCells || !onPasteCells)) return null;
             let nullDisabled = false;
-            let nullTitle = t("Sets the selected cells to NULL; NOT NULL columns are left as they are (⇧Del)");
+            const nullKey = keyHint("grid.set_null");
+            let nullTitle = t("Sets the selected cells to NULL; NOT NULL columns are left as they are") + (nullKey ? ` (${nullKey})` : "");
             if (single) {
               const [col, row] = cur.cell;
               const v = cellAt(row, col);
@@ -1418,7 +1394,7 @@ export default function GridView({
                     ? t("The cell is already NULL")
                     : notNullable
                       ? t("Column {col} is NOT NULL", { col: colName })
-                      : t("Sets the cell to NULL (⇧Del)");
+                      : t("Sets the cell to NULL") + (nullKey ? ` (${nullKey})` : "");
             }
             return (
               <>
@@ -1494,7 +1470,7 @@ export default function GridView({
               <>
                 <div className="tab-menu-label">{rows.length > 1 ? t("Rows") : t("Row")}</div>
                 <button className="tab-menu-item" onClick={close(rowActions.onAdd)}>
-                  {t("Add row")} <span className="tab-menu-key">⌥Insert</span>
+                  {t("Add row")} <span className="tab-menu-key">{keyHint("grid.row_add")}</span>
                 </button>
                 <button
                   className="tab-menu-item"
@@ -1502,7 +1478,7 @@ export default function GridView({
                   onClick={close(() => rowActions.onDuplicate(rows))}
                 >
                   {rows.length > 1 ? t("Duplicate rows") : t("Duplicate row")}{" "}
-                  <span className="tab-menu-key">⌃⌥Insert</span>
+                  <span className="tab-menu-key">{keyHint("grid.row_duplicate")}</span>
                 </button>
                 <button
                   className="tab-menu-item"
@@ -1514,7 +1490,7 @@ export default function GridView({
                     : rows.length > 1
                       ? t("Delete rows")
                       : t("Delete row")}{" "}
-                  <span className="tab-menu-key">{t("Del")}</span>
+                  <span className="tab-menu-key">{keyHint("grid.row_delete")}</span>
                 </button>
               </>
             );
