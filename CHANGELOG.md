@@ -14,6 +14,9 @@ Before launching "Release (alpha)": bump `version` in
 ## Unreleased
 
 - New app icon: a poplar under an arch on green hills, in the Dock, the taskbar, the window and the connections dialog.
+- New look, from the icon: the title bar, the icon strip and the status bar are the deep green of the icon, with the app icon and name at the top left; buttons, selection and focus are pine green instead of blue; panels and grid keep a faint green instead of the cool grey. The dark theme is a green-black, not an inversion of the light one. The SQL editor and the result grid stay as readable as before: the colours of numbers, dates and text did not move.
+- The colour of a connection no longer tints the whole frame: it is on the pill at the top right, on the tab labels and on the avatars, where it is read. Tabs have rounded tops with a short bar in the connection colour.
+- Production: the marker is now red with a warning triangle everywhere (tree, tabs, dialogs, pill), and the status bar turns red while a production connection is in front.
 
 ## [0.1.0-alpha.14] - 2026-11-06
 
