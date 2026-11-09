@@ -13,7 +13,7 @@ use tokio_postgres::Client;
 use alamo_core::chunk::{ChunkBuilder, ChunkLimits};
 use alamo_core::column::ColumnKind;
 use alamo_core::dialect::Dialect;
-use alamo_core::meta::{ColumnMeta, NativeType};
+use alamo_core::meta::{ColumnMeta, ColumnSource, NativeType};
 use alamo_core::result_set::{ResultSet, ResultSetBuilder, ResultSetState};
 
 /// The types of the streaming contract moved up to `alamo-core` with M3
@@ -64,22 +64,24 @@ fn build_schema(stmt_columns: &[tokio_postgres::Column], dialect: &PgDialect) ->
         .map(|c| {
             let native = NativeType::Postgres {
                 oid: c.type_().oid(),
-                // `tokio-postgres` does not expose `atttypmod` on the
-                // `RowDescription`. Recovering it requires `postgres-protocol`:
-                // the same road as open decision 3 of §14.
-                type_modifier: -1,
+                type_modifier: c.type_modifier(),
             };
             let mut meta = ColumnMeta::new(c.name(), native.clone(), dialect.type_display(&native));
             meta.semantic_class = dialect.semantic_class(&native);
             meta.numeric_text = dialect.is_numeric_text(&native);
             meta.undecoded_wire_format = !is_decodable(c.type_().oid());
-            // TODO(M4): `source` (`table_oid` + `attnum`) unlocks grid editing
-            // (§4.3) and must be captured here. `tokio-postgres` does not
-            // expose it on the `RowDescription`; `postgres-protocol` is
-            // needed. Capturing it costs nothing, but it is not recoverable
-            // after execution: it must be done together with the work of
-            // open decision 3, not after.
-            meta.source = None;
+            // §4.3.1: the table and the attribute the column comes from, as
+            // the `RowDescription` says them. Only columns read straight from
+            // a relation have them (oid 0 = computed); resolving them to
+            // names is the session's job, on the catalog lane.
+            meta.source = c
+                .table_oid()
+                .zip(c.column_id())
+                .filter(|(oid, _)| *oid != 0)
+                .map(|(table_oid, column_attnum)| ColumnSource::Postgres {
+                    table_oid,
+                    column_attnum,
+                });
             meta
         })
         .collect()
