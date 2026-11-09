@@ -1,6 +1,7 @@
-// Unsaved grid edits (table tab): conversion into UPDATE, saving from
-// outside the tab and the "Save / Discard / Cancel" question before the
-// actions that would lose them (reload, filters, closing, quitting).
+// Unsaved grid edits (table and SQL tabs, §9.5.1): conversion into
+// writes, saving from outside the tab and the "Save / Discard / Cancel"
+// question before the actions that would lose them (reload, filters,
+// closing, quitting).
 import { create } from "zustand";
 import { asErrorOut } from "./errors";
 import { t } from "./i18n";
@@ -78,7 +79,9 @@ export function settleWrites(tabId: string, connId: number, writes: TableWrite[]
   }
   s.setPending(tabId, next);
   s.setDeleted(tabId, deleted);
-  if (insertsDone > 0) s.setNewRows(tabId, (tab?.newRows ?? []).slice(insertsDone));
+  const newRows = insertsDone > 0 ? (tab?.newRows ?? []).slice(insertsDone) : (tab?.newRows ?? []);
+  if (insertsDone > 0) s.setNewRows(tabId, newRows);
+  if (unsavedCount({ pending: next, newRows, deleted }) === 0) s.setEdit(tabId, null);
   // On prod the batch enters the sticky's transaction: the badge and the
   // Commit/Rollback buttons must notice right away.
   void ipc
@@ -91,13 +94,13 @@ export function settleWrites(tabId: string, connId: number, writes: TableWrite[]
 /// everything saved; otherwise the error (the unapplied ones stay pending).
 export async function savePendingEdits(tabId: string): Promise<ErrorOut | null> {
   const tab = useStore.getState().tabs.find((t) => t.id === tabId);
-  if (!tab || !tab.table || unsavedCount(tab) === 0) return null;
+  if (!tab || !tab.edit || unsavedCount(tab) === 0) return null;
   if (tab.connId === null) return asErrorOut(t("tab disconnected: reconnect the profile to save"));
   const connId = tab.connId;
-  const writes = pendingToWrites(tab, numericColumns(tab.statements[0]?.columns));
+  const writes = pendingToWrites(tab, new Set(tab.edit.numeric));
   try {
     await freeStickyForGridSave(connId);
-    const result = await ipc.tableWriteBatch(connId, tab.table.schema, tab.table.name, writes);
+    const result = await ipc.tableWriteBatch(connId, tab.edit.schema, tab.edit.table, writes);
     settleWrites(tabId, connId, writes, result);
     return result.error;
   } catch (e) {

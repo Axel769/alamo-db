@@ -90,7 +90,9 @@ export default function UnsavedDialog() {
           <ul className="quit-pending">
             {rows.map((x) => (
               <li key={x.id}>
-                <span className="mono">{x.table ? `${x.table.schema}.${x.table.name}` : x.title}</span>
+                <span className="mono">
+                  {x.edit ? `${x.edit.schema}.${x.edit.table}` + (x.kind === "sql" ? ` (${x.title})` : "") : x.title}
+                </span>
                 <span className="muted"> · {unsavedCount(x).toLocaleString(locale())}</span>
               </li>
             ))}

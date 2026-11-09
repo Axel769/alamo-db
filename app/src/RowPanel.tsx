@@ -45,7 +45,7 @@ export type RowEdit = {
   /// What a single line cannot hold (see `isLong`, truncated values) is
   /// edited in the cell panel at the bottom.
   onEditInPanel: (col: number) => void;
-  canSetNull: (column: string) => boolean;
+  canSetNull: (col: number) => boolean;
 };
 
 /// Readable JSON if the value is one; otherwise the text as it is.
@@ -213,7 +213,7 @@ export default function RowPanel({
                 } else if (
                   e.shiftKey &&
                   (e.key === "Delete" || e.key === "Backspace") &&
-                  edit.canSetNull(c.name)
+                  edit.canSetNull(i)
                 ) {
                   e.preventDefault();
                   edit.onEdit(i, null);

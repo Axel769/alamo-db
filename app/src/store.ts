@@ -162,6 +162,11 @@ export type TableMoreUi = {
 /// and the query it was being looked at with.
 export type TableNav = { table: TableRef; query: TableQuery };
 
+/// The result set the pending edits belong to and the table they are
+/// written to (§9.5.1). Set with the first change, cleared with the last;
+/// it survives a lost connection: the writes are by key, not by row.
+export type EditTarget = { resultId: number; schema: string; table: string; numeric: string[] };
+
 export type TabUi = {
   id: string;
   title: string;
@@ -226,6 +231,8 @@ export type TabUi = {
   /// saved: by PK id (`pendingRowId`) → key. They become DELETEs with Save,
   /// before everything else.
   deleted: Record<string, CellAssign[]>;
+  /// Where the pending changes go, `null` without any.
+  edit: EditTarget | null;
 };
 
 /// Pending new row: one value per column (DEFAULT = the server decides).
@@ -297,6 +304,7 @@ export function emptyTab(
     pending: {},
     newRows: [],
     deleted: {},
+    edit: null,
   };
 }
 
@@ -352,6 +360,7 @@ type Store = {
   setPending: (id: string, pending: PendingEdits) => void;
   setNewRows: (id: string, newRows: NewRow[]) => void;
   setDeleted: (id: string, deleted: Record<string, CellAssign[]>) => void;
+  setEdit: (id: string, edit: EditTarget | null) => void;
   /// Result set rows grown outside a load (inserted rows appended by the
   /// save): the grid gets longer without reloading.
   setStatementRows: (tabId: string, resultId: number, rows: number) => void;
@@ -523,6 +532,7 @@ function resetTableView(t: TabUi, table: TableRef, query: TableQuery): TabUi {
     pending: {},
     newRows: [],
     deleted: {},
+    edit: null,
   };
 }
 
@@ -750,14 +760,16 @@ export const useStore = create<Store>((set, get) => ({
   setDeleted: (id, deleted) =>
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, deleted } : t)) })),
 
+  setEdit: (id, edit) =>
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, edit } : t)) })),
+
   setStatementRows: (tabId, resultId, rows) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => {
-        if (t.id !== tabId) return t;
-        const st = t.statements[0];
-        if (!st || st.resultId !== resultId) return t;
-        return { ...t, statements: [{ ...st, rows }] };
-      }),
+      tabs: s.tabs.map((t) =>
+        t.id !== tabId
+          ? t
+          : { ...t, statements: t.statements.map((st) => (st.resultId === resultId ? { ...st, rows } : st)) }
+      ),
     })),
 
   setSub: (id, sub) =>

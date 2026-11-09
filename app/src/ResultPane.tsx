@@ -16,6 +16,7 @@ export function StatementPane({
   gridSize,
   onHeaderContext,
   editable,
+  cellEditable,
   onEditCell,
   pendingAt,
   canSetNull,
@@ -40,16 +41,18 @@ export function StatementPane({
   /// Context menu on the header (decision 10): only the table tab passes
   /// it — on SQL tabs the right click has no server actions.
   onHeaderContext?: (col: number, x: number, y: number) => void;
-  /// M4: cell editing — only the table tab with a PK (decision 6). SQL tabs
-  /// stay read-only: an arbitrary result set has no row identity.
+  /// M4: cell editing — the table tab with a PK (decision 6) and the SQL
+  /// tab when the result comes from one table with its key (§9.5.1).
   editable?: boolean;
+  /// Per column (position): computed columns stay read-only.
+  cellEditable?: (col: number) => boolean;
   /// `value === null` = set NULL (context menu / Delete).
   onEditCell?: (row: number, col: number, value: PendingValue) => void;
-  /// Pending value of the cell (table tab), see GridView.
+  /// Pending value of the cell, see GridView.
   pendingAt?: (row: number, col: number) => PendingValue | undefined;
-  canSetNull?: (column: string) => boolean;
+  canSetNull?: (col: number) => boolean;
   /// Default of the column (introspection) for "Set DEFAULT".
-  columnDefault?: (column: string) => string | null;
+  columnDefault?: (col: number) => string | null;
   /// Multi-cell and paste (decision 12): only the table tab passes them.
   onEditCells?: (rect: { x: number; y: number; width: number; height: number }, value: PendingValue) => void;
   onPasteCells?: (row: number, col: number, values: string[][]) => void;
@@ -209,6 +212,7 @@ export function StatementPane({
                 : `s:${tab.id}`
             }
             editable={editable}
+            cellEditable={cellEditable}
             onEditInPanel={editable && onEditCell ? editInPanel : undefined}
             onEditCell={onEditCell}
             pendingAt={pendingAt}
@@ -255,7 +259,7 @@ export function StatementPane({
               ? {
                   onEdit: (col, value) => onEditCell!(inspecting.row, col, value),
                   onEditInPanel: (col) => editInPanel(inspecting.row, col),
-                  canSetNull: (column) => canSetNull?.(column) ?? true,
+                  canSetNull: (col) => canSetNull?.(col) ?? true,
                 }
               : undefined
           }
