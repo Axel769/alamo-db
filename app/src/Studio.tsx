@@ -647,6 +647,7 @@ function StudioInner() {
     const s = useStore.getState();
     const tab = s.tabs.find((t) => t.id === tabId);
     if (!tab || tab.connId !== connId || stickyRunningTab(s, connId)) return;
+    if (unsavedCount(tab) > 0) return;
     for (const st of tab.statements) {
       if (st.resultId !== null) {
         void ipc.releaseResult(connId, st.resultId);
@@ -678,6 +679,8 @@ function StudioInner() {
     // execute from the editor; neither does a disconnected tab.
     if (!tab || tab.kind !== "sql" || tab.connId === null) return;
     const connId = tab.connId;
+    // §9.5.1: a run releases the results the pending edits belong to.
+    if (!(await guardUnsaved([tab.id]))) return;
     if (!(await stickyReady(connId))) return;
     if (!(await ensureLive(connId))) return;
     if (!(await syncDb(connId, tab.id))) return;
@@ -1667,7 +1670,12 @@ function StudioInner() {
                       ownsTab(st) ? (
                         <button
                           key={i}
-                          className={"stmt-tab" + (i === tab.selected ? " active" : "") + badgeClass(st)}
+                          className={
+                            "stmt-tab" +
+                            (i === tab.selected ? " active" : "") +
+                            badgeClass(st) +
+                            (tab.edit !== null && tab.edit.resultId === st.resultId ? " pending" : "")
+                          }
                           onClick={() => store.select(tab.id, i)}
                           title={stmtSnippet(tab.execSql, tab.statements, i, 200)}
                         >

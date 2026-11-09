@@ -275,6 +275,7 @@ export function useGridEditing({
   afterSave,
   reload,
   localSort,
+  onSaved,
 }: {
   tab: TabUi;
   st: StatementUi | undefined;
@@ -294,6 +295,8 @@ export function useGridEditing({
   /// When the grid cannot be updated in place.
   reload: () => void;
   localSort: SortSpec | null;
+  /// After a clean save that reached the grid.
+  onSaved?: () => void;
 }): GridEditing {
   const connId = source?.connId ?? null;
   const [batch, setBatch] = useState<BatchState | null>(null);
@@ -600,8 +603,10 @@ export function useGridEditing({
         // other way round the old values would show for an instant.
         const ok = await refreshSaved(writes, result);
         settle(writes, result);
-        if (ok) keepCursor(cursor, writes);
-        else reload();
+        if (ok) {
+          keepCursor(cursor, writes);
+          onSaved?.();
+        } else reload();
         return;
       }
       settle(writes, result);
@@ -846,7 +851,10 @@ export function useGridEditing({
       const result = await ipc.tableWriteBatch(connId, source.schema, source.table, batch.writes, appendTo());
       const refreshed = isClean(result) && (await refreshSaved(batch.writes, result));
       settle(batch.writes, result);
-      if (refreshed) keepCursor(cursor, batch.writes);
+      if (refreshed) {
+        keepCursor(cursor, batch.writes);
+        onSaved?.();
+      }
       setBatch((b) => (b ? { ...b, phase: "done", result, refreshed } : b));
     } catch (e) {
       setBatch((b) => (b ? { ...b, phase: "confirm", error: asErrorOut(e) } : b));

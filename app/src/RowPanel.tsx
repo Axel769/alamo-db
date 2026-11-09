@@ -46,6 +46,8 @@ export type RowEdit = {
   /// edited in the cell panel at the bottom.
   onEditInPanel: (col: number) => void;
   canSetNull: (col: number) => boolean;
+  /// `false` = the column is read-only (computed, §9.5.1).
+  cellEditable?: (col: number) => boolean;
 };
 
 /// Readable JSON if the value is one; otherwise the text as it is.
@@ -122,7 +124,7 @@ export default function RowPanel({
   };
 
   const startEdit = (i: number) => {
-    if (!edit) return;
+    if (!edit || edit.cellEditable?.(i) === false) return;
     const p = pendingAt?.(i);
     const v = fresh ? undefined : cache.cell(row, i);
     if (p === undefined && v === undefined) return;

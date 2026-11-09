@@ -260,6 +260,7 @@ export function StatementPane({
                   onEdit: (col, value) => onEditCell!(inspecting.row, col, value),
                   onEditInPanel: (col) => editInPanel(inspecting.row, col),
                   canSetNull: (col) => canSetNull?.(col) ?? true,
+                  cellEditable,
                 }
               : undefined
           }

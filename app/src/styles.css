@@ -2216,6 +2216,11 @@ body,
   color: var(--cell-fg);
 }
 
+/* The statement whose result holds unsaved changes (§9.5.1). */
+.stmt-tab.pending {
+  box-shadow: inset 0 -2px 0 var(--state-modified);
+}
+
 .stmt-tab {
   display: inline-flex;
   align-items: baseline;

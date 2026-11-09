@@ -3,6 +3,7 @@
 // carries the pending changes. The editing machinery is the table tab's
 // (`gridEditing.tsx`); what differs is where the columns come from
 // (`result_source`) and that a save keeps what was typed.
+import { useEffect, useState } from "react";
 import { useStore, connById, StatementUi, TabUi } from "./store";
 import { t } from "./i18n";
 import { StatementPane } from "./ResultPane";
@@ -30,6 +31,10 @@ export default function SqlResultPane({
   const otherResult = tab.edit !== null && tab.edit.resultId !== st.resultId ? tab.edit : null;
   const otherIndex = otherResult ? tab.statements.findIndex((s) => s.resultId === otherResult.resultId) : -1;
   const blocked = readOnlyProfile || arriving || otherResult !== null;
+  // After a save the grid shows what was typed, not what the server
+  // stored (§9.5.1): said once, until the next change or result.
+  const [saved, setSaved] = useState<number | null>(null);
+  useEffect(() => setSaved(null), [st.resultId]);
   const e = useGridEditing({
     tab,
     st,
@@ -41,7 +46,11 @@ export default function SqlResultPane({
     afterSave: "patch",
     reload: () => {},
     localSort: null,
+    onSaved: () => setSaved(Date.now()),
   });
+  useEffect(() => {
+    if (e.nUnsaved > 0) setSaved(null);
+  }, [e.nUnsaved]);
 
   const note =
     source === null
@@ -60,7 +69,7 @@ export default function SqlResultPane({
             ? t("Read-only while the rows are arriving")
             : null;
   const target = source ? `${source.schema}.${source.table}` : null;
-  const showBar = note !== null || (target !== null && e.nUnsaved > 0);
+  const showBar = note !== null || (target !== null && (e.nUnsaved > 0 || saved !== null));
 
   return (
     <>
@@ -68,17 +77,28 @@ export default function SqlResultPane({
         <div className="result-bar">
           {note !== null ? (
             <ReadOnlyNote text={note} />
-          ) : (
+          ) : e.nUnsaved > 0 ? (
             <span className="writes-to">
               {t("Writes to {table}", { table: "" })}
               <span className="mono">{target}</span>
+            </span>
+          ) : (
+            <span className="writes-to" role="status">
+              {t("Saved. The grid shows what you typed: run the query again to see the server's values.")}
             </span>
           )}
           <div className="spacer" />
           <PendingBar e={e} running={tab.running} />
         </div>
       )}
-      <StatementPane tab={tab} st={st} gridHost={gridHost} gridSize={gridSize} {...e.paneProps} editable={false} />
+      <StatementPane
+        tab={tab}
+        st={st}
+        gridHost={gridHost}
+        gridSize={gridSize}
+        {...e.paneProps}
+        columnDefault={() => null}
+      />
       {e.batch && target && (
         <BatchDialog
           batch={e.batch}
