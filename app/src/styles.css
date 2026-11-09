@@ -2377,10 +2377,18 @@ body,
 }
 
 .prod-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   color: var(--cell-prod);
+  white-space: nowrap;
+}
+
+.prod-tag svg {
+  flex: none;
 }
 
 /* Read-only (§9.7 point 4): informative, not an alarm — no red. */
@@ -4515,6 +4523,16 @@ select:focus-visible {
 
 .tab-group .tab-title {
   font-weight: 700;
+}
+
+/* Production label: red bar and dot whatever the profile colour, red name. */
+.tab-group.prod::before,
+.tab-group.prod .tab-group-dot {
+  background: var(--cell-prod);
+}
+
+.tab-group.prod .tab-title {
+  color: var(--cell-prod);
 }
 
 .tab-group.active {

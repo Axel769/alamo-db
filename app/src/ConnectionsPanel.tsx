@@ -3,6 +3,7 @@
 // password (never on disk, §9.1): clicking a profile opens the dialog
 // preselected — no direct connect from here.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ProdTag } from "./ProdTag";
 import { useEffect, useState } from "react";
 import { t } from "./i18n";
 import { ipc } from "./ipc";
@@ -128,7 +129,7 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
                 <span className="tree-label" dir="auto">
                   {c.profile.name}
                 </span>
-                {c.profile.is_production && <span className="prod-tag">prod</span>}
+                {c.profile.is_production && <ProdTag />}
                 {c.txn && (
                   <span
                     className={"conn-txn" + (c.txn.hasWrites ? " writes" : "")}
@@ -173,7 +174,7 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
               <span className="tree-label" dir="auto">
                 {p.name}
               </span>
-              {p.is_production && <span className="prod-tag">prod</span>}
+              {p.is_production && <ProdTag />}
             </button>
           </div>
         ))}

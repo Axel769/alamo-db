@@ -35,6 +35,7 @@ import {
   RotateCcw,
   Terminal,
   Trash2,
+  TriangleAlert,
   Table2,
   Upload,
   X,
@@ -63,6 +64,7 @@ export const IconCheck = (p: LucideProps) => <Check {...base} size={12} {...p} /
 export const IconLock = (p: LucideProps) => <Lock {...base} {...p} />;
 export const IconLockOpen = (p: LucideProps) => <LockOpen {...base} {...p} />;
 export const IconShieldCheck = (p: LucideProps) => <ShieldCheck {...base} {...p} />;
+export const IconAlert = (p: LucideProps) => <TriangleAlert {...base} size={11} {...p} />;
 export const IconGrip = (p: LucideProps) => <GripVertical {...base} size={13} {...p} />;
 export const IconSort = (p: LucideProps) => <ArrowUpDown {...base} size={13} {...p} />;
 export const IconKey = (p: LucideProps) => <KeyRound {...base} size={12} {...p} />;

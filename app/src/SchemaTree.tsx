@@ -12,6 +12,7 @@
 // Favorites (like HeidiSQL): star on databases/schemas and tables, per
 // profile (not per session: the connId changes at every connection).
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ProdTag } from "./ProdTag";
 import { memo, useDeferredValue, useMemo, useState } from "react";
 import CatalogError from "./CatalogError";
 import { t, useLang } from "./i18n";
@@ -154,7 +155,7 @@ function ConnRoot({
         <span className="tree-label" dir="auto">
           {conn.profile.name}
         </span>
-        {conn.profile.is_production && <span className="prod-tag">prod</span>}
+        {conn.profile.is_production && <ProdTag />}
       </button>
       {open &&
         (conn.oneDbPerConn ? (

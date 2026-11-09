@@ -2,6 +2,7 @@
 // M3.5: several connections open together (DBeaver model) — the toolbar
 // follows the active tab's connection; every connection has its sticky (§3).
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { ProdTag } from "./ProdTag";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ipc, AutocompleteOut, ErrorOut, Profile, ScriptItem, StatementClassOut } from "./ipc";
@@ -1243,7 +1244,7 @@ function StudioInner() {
           >
             <span className="swatch" style={{ background: connColor(profile) }} />
             {profile.name}
-            {profile.is_production && <span className="prod-tag">prod</span>}
+            {profile.is_production && <ProdTag />}
             {profile.read_only && <span className="ro-tag">{t("read-only")}</span>}
           </button>
         ) : (
@@ -1984,7 +1985,7 @@ function QuitDialog({
               <li key={c.connId}>
                 <span className="swatch" style={{ background: connColor(c.profile) }} />
                 <span>{c.profile.name}</span>
-                {c.profile.is_production && <span className="prod-tag">prod</span>}
+                {c.profile.is_production && <ProdTag />}
               </li>
             ))}
           </ul>
@@ -2341,7 +2342,7 @@ function WriteGateDialog({
         <div className="dialog-title">
           <span>
             {gate.unknown.length > 0 ? t("Confirm execution") : t("Confirm write")}
-            {profile?.is_production && <span className="prod-tag"> {t("production")}</span>}
+            {profile?.is_production && <> <ProdTag long /></>}
           </span>
           <button className="btn small dialog-close" onClick={onClose}>
             <IconX />

@@ -2,6 +2,7 @@
 // disk in cleartext — asked here or, if saved, it comes from the system
 // keychain straight into the backend (§12).
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ProdTag } from "./ProdTag";
 import { t, tMsg } from "./i18n";
 import { CertOut, ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut, TestOut } from "./ipc";
 import { SshPick, sshAuthLabel, sshSummary } from "./SshProfilesDialog";
@@ -575,7 +576,7 @@ export default function ConnectDialog({
                       {engineShortName(p.dialect)} · {p.host}:{p.port}
                     </span>
                   </span>
-                  {p.is_production && <span className="prod-tag">prod</span>}
+                  {p.is_production && <ProdTag />}
                   {openIds.includes(p.id) && <span className="profile-open" title={t("connection open")} />}
                 </button>
               ))}
@@ -621,7 +622,7 @@ export default function ConnectDialog({
               <span className="form-head-text">
                 <span className="form-head-name">
                   {draft.name.trim() || t("New profile")}
-                  {draft.is_production && <span className="prod-tag">prod</span>}
+                  {draft.is_production && <ProdTag />}
                   {draft.read_only && <span className="ro-tag">{t("read-only")}</span>}
                 </span>
                 <span className="profile-host">
