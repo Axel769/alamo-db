@@ -11,6 +11,10 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- New app icon: a poplar under an arch on green hills, in the Dock, the taskbar, the window and the connections dialog.
+
 ## [0.1.0-alpha.14] - 2026-11-06
 
 - Tab bar: a tab with a short name ("SQL 3") is as wide as its name, with the × right after it, instead of the fixed width that left a gap between the two. Long names keep their minimum width and the "…" cut when the bar is full.

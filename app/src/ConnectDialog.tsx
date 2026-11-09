@@ -7,7 +7,7 @@ import { CertOut, ConnectOut, ErrorOut, ipc, Profile, SshProfile, SshProfileOut,
 import { SshPick, sshAuthLabel, sshSummary } from "./SshProfilesDialog";
 import { connInitials } from "./ConnectionPage";
 import { IconLock, IconLockOpen, IconPlus, IconSettings, IconShieldCheck, IconTrash, IconX } from "./icons";
-import logoUrl from "../src-tauri/icons/icon.svg";
+import logoUrl from "../src-tauri/icons/icon.png";
 import { TLS_MODE_ORDER, TlsLevel, tlsMode, verifiesChain } from "./tlsModes";
 import { CertFacts, TlsFacts } from "./TlsFacts";
 import { useStore } from "./store";
