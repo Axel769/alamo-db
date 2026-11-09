@@ -43,7 +43,9 @@ use events::ExecEvent;
 use exec::Emit;
 use registry::{LiveResult, Registry};
 pub use source::{KeyColumnOut, NotEditable, ResultSourceOut};
-pub use table::{CellAssign, ColumnFilter, FilterOp, OrderBy, RowUpdate, TableQuery, TableWrite};
+pub use table::{
+    CellAssign, ColumnFilter, FilterOp, OrderBy, PatchRow, RowUpdate, TableQuery, TableWrite,
+};
 pub use txn::TxnStateOut;
 
 /// The execution limits of a session (§16): what the user tunes in the
@@ -1167,6 +1169,51 @@ impl Session {
             info.as_deref(),
             &self.capabilities(),
         ))
+    }
+
+    /// §9.5.1: after a save from a SQL tab the grid keeps what the user
+    /// typed: the saved cells are written into the open result set, row by
+    /// key, with no query. Gives the number of rows not found (sorted away
+    /// or hidden in the meantime: the caller reloads).
+    pub fn patch_result_cells(
+        &self,
+        result_id: u64,
+        key_cols: &[usize],
+        rows: &[PatchRow],
+    ) -> Result<u32, Box<DbError>> {
+        let live = self
+            .registry
+            .result(result_id)
+            .ok_or_else(|| Box::new(DbError::internal("result set no longer open")))?;
+        let ncols = live.schema().len();
+        if key_cols.is_empty() {
+            return Err(Box::new(DbError::internal(
+                "no key columns: the rows cannot be told apart",
+            )));
+        }
+        if let Some(bad) = key_cols
+            .iter()
+            .chain(rows.iter().flat_map(|r| r.set.iter().map(|(c, _)| c)))
+            .find(|&&c| c >= ncols)
+        {
+            return Err(Box::new(DbError::internal(format!(
+                "column {bad} is not in the result set ({ncols} columns)"
+            ))));
+        }
+        let keys: Vec<Vec<Option<String>>> = rows.iter().map(|r| r.key.clone()).collect();
+        let mut missing = 0;
+        for (row, phys) in rows.iter().zip(live.find_rows(key_cols, &keys)) {
+            let Some(phys) = phys else {
+                missing += 1;
+                continue;
+            };
+            let mut values = live.row_values(phys);
+            for (col, value) in &row.set {
+                values[*col] = value.clone();
+            }
+            live.patch_row(phys, values);
+        }
+        Ok(missing)
     }
 
     /// `Connection::resolve_sources` through the cache: only the sources

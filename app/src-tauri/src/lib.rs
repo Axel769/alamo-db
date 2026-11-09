@@ -2322,6 +2322,22 @@ async fn result_source(
         .map_err(|e| ErrorOut::from(&*e))
 }
 
+/// §9.5.1: after a save from a SQL tab, the typed values go into the open
+/// result set by key, no query. Returns the rows not found.
+#[tauri::command]
+fn result_patch_cells(
+    state: State<'_, AppState>,
+    conn_id: u64,
+    result_id: u64,
+    key_cols: Vec<usize>,
+    rows: Vec<alamo_session::PatchRow>,
+) -> Result<u32, ErrorOut> {
+    let session = state.session(conn_id).map_err(internal)?;
+    session
+        .patch_result_cells(result_id, &key_cols, &rows)
+        .map_err(|e| ErrorOut::from(&*e))
+}
+
 /// DDL rebuilt from the catalog (DDL sub-tab, §9.5).
 #[tauri::command]
 async fn table_ddl(
@@ -3428,6 +3444,7 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             table_write_batch,
             table_refresh_rows,
             result_source,
+            result_patch_cells,
             table_ddl,
             current_database,
             use_database,

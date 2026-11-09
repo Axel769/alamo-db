@@ -5512,3 +5512,85 @@ async fn result_source_mysql() {
     let out = session.result_source(rid).await.expect("result_source");
     assert_eq!(out.reason, Some(alamo_session::NotEditable::NoSource));
 }
+
+/// §9.5.1: the typed values land in the open result by key, aliases and
+/// local sort notwithstanding; a key nobody has is counted, not an error.
+async fn patch_cells_keeps_typed_values(session: &Session) {
+    use alamo_session::PatchRow;
+    let (c, emit) = collector();
+    session
+        .execute(
+            "DROP TABLE IF EXISTS m4_patch;
+             CREATE TABLE m4_patch (id INT PRIMARY KEY, nome VARCHAR(50), n INT);
+             INSERT INTO m4_patch VALUES (1, 'uno', 1), (2, 'due', 2), (3, 'tre', 3)"
+                .into(),
+            FetchOptions::default(),
+            emit,
+        )
+        .expect("execute");
+    wait_done(&c).await;
+    let rid = select_result(
+        session,
+        "SELECT id, nome AS label, n FROM m4_patch ORDER BY id",
+    )
+    .await;
+    let missing = session
+        .patch_result_cells(
+            rid,
+            &[0],
+            &[
+                PatchRow {
+                    key: vec![Some("2".into())],
+                    set: vec![(1, Some("DUE".into())), (2, None)],
+                },
+                PatchRow {
+                    key: vec![Some("9".into())],
+                    set: vec![(1, Some("nessuno".into()))],
+                },
+            ],
+        )
+        .expect("patch");
+    assert_eq!(missing, 1);
+    let live = session.registry.result(rid).expect("result");
+    let w = live.window(0..3, 0..3);
+    assert_eq!(w.columns[1].values[1], "DUE");
+    assert!(w.columns[2].nulls[1], "n of row 2 is NULL now");
+    assert_eq!(w.columns[1].values[0], "uno", "the other rows did not move");
+    assert_eq!(w.columns[1].values[2], "tre");
+    assert!(
+        session.patch_result_cells(rid, &[], &[]).is_err(),
+        "no key columns is refused"
+    );
+    assert!(
+        session
+            .patch_result_cells(
+                rid,
+                &[7],
+                &[PatchRow {
+                    key: vec![None],
+                    set: vec![]
+                }]
+            )
+            .is_err(),
+        "a column outside the result is refused"
+    );
+    let (c, emit) = collector();
+    session
+        .execute("DROP TABLE m4_patch".into(), FetchOptions::default(), emit)
+        .expect("execute");
+    wait_done(&c).await;
+}
+
+#[tokio::test]
+async fn patch_cells_keeps_typed_values_pg() {
+    let url = require_url!();
+    let session = Session::connect(&url).await.expect("connection");
+    patch_cells_keeps_typed_values(&session).await;
+}
+
+#[tokio::test]
+async fn patch_cells_keeps_typed_values_mysql() {
+    let url = require_mysql!();
+    let session = Session::connect(&url).await.expect("connection");
+    patch_cells_keeps_typed_values(&session).await;
+}

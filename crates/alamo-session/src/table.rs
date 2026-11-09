@@ -144,6 +144,15 @@ fn is_number_literal(v: &str) -> bool {
     digits(int) && frac.map_or(true, digits)
 }
 
+/// A saved row to write back into an open result set without a query
+/// (§9.5.1): the key values as the grid holds them, and the cells by
+/// result column index.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchRow {
+    pub key: Vec<Option<String>>,
+    pub set: Vec<(usize, Option<String>)>,
+}
+
 /// One row of the multi-cell batch (decision 12, single rectangle):
 /// SET of the touched cells + PK key of the row. Same shape as single-cell
 /// editing, in bulk.

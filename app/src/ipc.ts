@@ -710,6 +710,15 @@ export const ipc = {
   /// §4.3.1: can this result set be edited, and on which table.
   resultSource: (connId: number, resultId: number) =>
     invoke<ResultSourceOut>("result_source", { connId, resultId }),
+  /// §9.5.1: after a save from a SQL tab, writes the typed values into the
+  /// open result set by key, no query. `rows[i].set` pairs a result column
+  /// index with the value. Returns the rows not found.
+  resultPatchCells: (
+    connId: number,
+    resultId: number,
+    keyCols: number[],
+    rows: { key: (string | null)[]; set: [number, string | null][] }[]
+  ) => invoke<number>("result_patch_cells", { connId, resultId, keyCols, rows }),
   /// After a save: re-reads the saved rows and replaces them in the
   /// result set. `missing > 0` = some not found, better to reload.
   tableRefreshRows: (
