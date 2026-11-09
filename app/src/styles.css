@@ -1126,8 +1126,10 @@ body,
   top: -2px;
   bottom: 0;
   width: 2px;
+  height: auto;
   border-radius: 1px;
   background: var(--conn, var(--cell-fg));
+  opacity: 1;
 }
 
 .tab.drop-before::before {
@@ -4413,9 +4415,16 @@ select:focus-visible {
 
 .tabbar {
   height: 40px;
-  padding: 6px 6px 0;
+  padding: 0 6px 0 0;
   gap: 3px;
   align-items: stretch;
+}
+
+/* Tabs are pills raised from the strip; the connection labels and the
+   database markers (further down) are full-height blocks. */
+.tab,
+.tab-new {
+  margin-top: 6px;
 }
 
 .tab,
@@ -4481,6 +4490,10 @@ select:focus-visible {
   opacity: 0.5;
 }
 
+.tab-group::before {
+  top: 6px;
+}
+
 .tab.active {
   background: var(--cell-panel-bg);
 }
@@ -4497,6 +4510,28 @@ select:focus-visible {
 .tab:not(.active)::before {
   height: 2px;
   opacity: 0.35;
+}
+
+/* Drop indicator while dragging: a full-height line at the edge, not the
+   connection bar (same pseudo-element, these win over the bar rules). */
+.tab.drop-before::before,
+.tab.drop-after::before {
+  top: -2px;
+  bottom: 0;
+  height: auto;
+  width: 2px;
+  opacity: 1;
+  border-radius: 1px;
+}
+
+.tab.drop-before::before {
+  left: -3px;
+  right: auto;
+}
+
+.tab.drop-after::before {
+  left: auto;
+  right: -3px;
 }
 
 .tab:not(.active) .tab-title,
@@ -4599,15 +4634,12 @@ select:focus-visible {
   gap: 5px;
   max-width: 200px;
   padding: 0 9px 0 8px;
-  border-radius: 8px 8px 0 0;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
   color: var(--cell-fg);
   background: color-mix(in oklab, var(--conn) 6%, var(--cell-header-bg));
   white-space: nowrap;
-  border-top: none;
-  border-bottom: none;
-  border-left: none;
+  border: none;
   cursor: pointer;
   /* Pinned beside the label (pinMarkers), the run's tabs slide below it:
      opaque background, above the tabs, under the labels. */
@@ -4620,7 +4652,10 @@ select:focus-visible {
 }
 
 .tab-db.pinned {
-  box-shadow: 1px 0 0 var(--cell-border), 4px 0 6px -4px rgb(0 0 0 / 0.25);
+  box-shadow:
+    3px 0 0 var(--cell-header-bg),
+    4px 0 0 var(--cell-border),
+    7px 0 6px -4px rgb(0 0 0 / 0.25);
 }
 
 .tab-db svg.lucide {
@@ -4997,6 +5032,16 @@ button.profile-pill:hover {
 
 .tab-group.active {
   background: color-mix(in oklab, var(--conn) 30%, var(--cell-panel-bg));
+}
+
+/* Labels and markers stay full height and square: the tabs scrolling
+   under the pinned ones never show through (rounded corners would leave
+   gaps), and the 3px gap after a block is painted too, by the shadow. */
+.tab-group,
+.tab-group.active,
+.tab-db {
+  border-radius: 0;
+  box-shadow: 3px 0 0 var(--cell-header-bg);
 }
 
 .tab-group.active::after {
