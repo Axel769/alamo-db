@@ -42,7 +42,8 @@ import { recordHistory } from "./history";
 import TabBar from "./TabBar";
 import TableTab from "./TableTab";
 import { freeSticky } from "./sticky";
-import { ErrorPanel, resultIncomplete, singleSourceTable, StatementPane } from "./ResultPane";
+import { ErrorPanel, resultIncomplete, singleSourceTable } from "./ResultPane";
+import SqlResultPane from "./SqlResultPane";
 import { ExportDialog } from "./ExportDialog";
 import { dropCache } from "./rowCache";
 import { connForDatabase } from "./databases";
@@ -1686,7 +1687,7 @@ function StudioInner() {
                 {tab &&
                   sel &&
                   (ownsTab(sel) || tab.statements.length === 1 ? (
-                    <StatementPane tab={tab} st={sel} gridHost={gridHost} gridSize={gridSize} />
+                    <SqlResultPane tab={tab} st={sel} gridHost={gridHost} gridSize={gridSize} />
                   ) : (
                     <ScriptPane tab={tab} onSelect={(i) => store.select(tab.id, i)} />
                   ))}

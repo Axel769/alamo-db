@@ -9,20 +9,7 @@
 // `running` flags, no global counter.
 import { create } from "zustand";
 import {
-  CellAssign,
-  PendingValue,
-  emptyTableQuery,
-  ErrorOut,
-  ExecEvent,
-  ColumnOut,
-  ConnSecurity,
-  ipc,
-  OrderBy,
-  OutcomeOut,
-  Profile,
-  TableMoreOut,
-  TableQuery,
-  TxnState,
+  CellAssign, PendingValue, emptyTableQuery, ErrorOut, ExecEvent, ColumnOut, ConnSecurity, ipc, OrderBy, OutcomeOut, Profile, TableMoreOut, TableQuery, TxnState, ResultSourceOut,
 } from "./ipc";
 import { canSwitchDb } from "./engines";
 import { dropEffective, executionFor } from "./settings";
@@ -45,6 +32,9 @@ export type StatementUi = {
   budgetByRows: boolean;
   /// State of the result set while it arrives (§5.2: unknown total → "N+").
   streaming: boolean;
+  /// §9.5.1: the table the result can be written to, or why it cannot.
+  /// `undefined` = not asked yet, `null` = the question failed.
+  source?: ResultSourceOut | null;
 };
 
 function emptyStatement(index: number): StatementUi {
@@ -361,6 +351,7 @@ type Store = {
   setNewRows: (id: string, newRows: NewRow[]) => void;
   setDeleted: (id: string, deleted: Record<string, CellAssign[]>) => void;
   setEdit: (id: string, edit: EditTarget | null) => void;
+  setStatementSource: (tabId: string, resultId: number, source: ResultSourceOut | null) => void;
   /// Result set rows grown outside a load (inserted rows appended by the
   /// save): the grid gets longer without reloading.
   setStatementRows: (tabId: string, resultId: number, rows: number) => void;
@@ -763,6 +754,15 @@ export const useStore = create<Store>((set, get) => ({
   setEdit: (id, edit) =>
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, edit } : t)) })),
 
+  setStatementSource: (tabId, resultId, source) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id !== tabId
+          ? t
+          : { ...t, statements: t.statements.map((st) => (st.resultId === resultId ? { ...st, source } : st)) }
+      ),
+    })),
+
   setStatementRows: (tabId, resultId, rows) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -957,6 +957,7 @@ export const useStore = create<Store>((set, get) => ({
           st.resultId = ev.result_id;
           st.columns = ev.columns;
           st.streaming = true;
+          st.source = undefined;
           break;
         }
         case "rows": {

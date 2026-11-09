@@ -204,7 +204,7 @@ export function StatementPane({
             exportName={
               tab.kind === "table" && tab.table
                 ? `${tab.table.schema}.${tab.table.name}`
-                : (singleSourceTable(st.columns) ?? t("result"))
+                : (singleSourceTable(st.columns) ?? st.source?.table ?? t("result"))
             }
             widthKey={
               tab.kind === "table" && tab.table

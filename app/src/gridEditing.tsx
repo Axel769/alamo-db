@@ -15,10 +15,13 @@ import {
   ColumnOut,
   DEFAULT_CELL,
   ErrorOut,
+  ErrorOut as ErrorOutType,
   ipc,
   isDefaultCell,
+  NotEditable,
   PendingValue,
   Profile,
+  ResultSourceOut,
   RowUpdate,
   TableWrite,
 } from "./ipc";
@@ -42,7 +45,8 @@ import { asErrorOut } from "./errors";
 import { numericColumns, pendingToWrites, settleWrites } from "./pending";
 import { freeStickyForGridSave } from "./sticky";
 import { ProdTag } from "./ProdTag";
-import { IconDuplicate, IconPlus, IconTrash, IconX } from "./icons";
+import { tMsg } from "./i18n";
+import { IconDuplicate, IconLock, IconPlus, IconTrash, IconX } from "./icons";
 import { commitCellEditor } from "./GridView";
 import type { RowActions, RowsHandle, SortSpec } from "./GridView";
 
@@ -98,6 +102,107 @@ export function editSourceFromTable(
     defaults: columns.map((c) => byName.get(c.name)?.default ?? null),
     numeric: numericColumns(columns),
   };
+}
+
+/// The SQL tab (§9.5.1): the backend resolved every column to its table;
+/// `null` when the result cannot be edited (the reason is in `out`).
+export function editSourceFromResult(
+  connId: number,
+  resultId: number,
+  columns: ColumnOut[],
+  out: ResultSourceOut
+): EditSource | null {
+  if (!out.editable || out.schema === null || out.table === null || out.key.length === 0) return null;
+  const keyCols = new Set(out.key.map((k) => k.col));
+  return {
+    connId,
+    resultId,
+    schema: out.schema,
+    table: out.table,
+    colSource: out.columns,
+    key: out.key,
+    isKey: columns.map((_, i) => keyCols.has(i)),
+    nullable: out.nullable.map((n) => n ?? true),
+    defaults: out.defaults,
+    numeric: new Set(
+      columns.flatMap((c, i) => (c.type_display === "bit" && out.columns[i] ? [out.columns[i] as string] : []))
+    ),
+  };
+}
+
+/// Asks the backend once per result set whether it can be edited, and
+/// keeps the answer on the statement.
+export function useResultSource(
+  tab: TabUi,
+  st: StatementUi | undefined
+): { source: EditSource | null; reason: NotEditable | null; error: ErrorOutType | null } {
+  const connId = tab.connId;
+  const resultId = st?.resultId ?? null;
+  const columns = st?.columns ?? null;
+  const asked = st?.source;
+  const [error, setError] = useState<{ resultId: number; error: ErrorOutType } | null>(null);
+  useEffect(() => {
+    if (connId === null || resultId === null || !columns || asked !== undefined) return;
+    let alive = true;
+    ipc
+      .resultSource(connId, resultId)
+      .then((out) => {
+        if (alive) useStore.getState().setStatementSource(tab.id, resultId, out);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setError({ resultId, error: asErrorOut(e) });
+        useStore.getState().setStatementSource(tab.id, resultId, null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [connId, resultId, columns, asked, tab.id]);
+  const source = useMemo(
+    () => (connId !== null && resultId !== null && columns && asked ? editSourceFromResult(connId, resultId, columns, asked) : null),
+    [connId, resultId, columns, asked]
+  );
+  return {
+    source,
+    reason: asked?.reason ?? null,
+    error: error && error.resultId === resultId ? error.error : null,
+  };
+}
+
+/// Why a result stays read-only, in the user's words.
+export function reasonText(r: NotEditable): string {
+  const cols = "columns" in r ? r.columns.join(", ") : "";
+  switch (r.kind) {
+    case "no_source":
+      return t("Read-only: no column comes from a table");
+    case "several_tables":
+      return t("Read-only: the result joins several tables ({tables})", { tables: r.tables.join(", ") });
+    case "no_primary_key":
+      return t("Read-only: {table} has no primary key", { table: r.table });
+    case "key_missing":
+      return t("Read-only: the primary key of {table} is not in the result ({cols}) — add it to the SELECT", {
+        table: r.table,
+        cols,
+      });
+    case "key_renamed":
+      return t("Read-only: the key column {cols} is renamed in the result — select it with its own name", { cols });
+    case "key_shadowed":
+      return t("Read-only: another column of the result is named like the key column {cols} — rename it", { cols });
+  }
+}
+
+export function ReadOnlyNote({ text, title }: { text: string; title?: string }) {
+  return (
+    <span className="read-only-note" title={title}>
+      <IconLock size={12} />
+      {text}
+    </span>
+  );
+}
+
+/// The backend could not say: the message, with the detail one hover away.
+export function readOnlyErrorText(e: ErrorOutType): string {
+  return t("Cannot tell whether the result can be edited: {msg}", { msg: tMsg(e.message) });
 }
 
 /// Save of the pending changes in the dialog: preview ("View SQL", in

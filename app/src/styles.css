@@ -1572,6 +1572,43 @@ body,
   flex: 1;
 }
 
+/* SQL tab (§9.5.1): the strip above a result's grid, with the reason the
+   result cannot be edited or the pending changes. Only when it has
+   something to say. */
+.result-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--cell-border);
+  background: var(--cell-header-bg);
+}
+
+.result-bar .spacer {
+  flex: 1;
+}
+
+.read-only-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cell-muted-fg);
+}
+
+.read-only-note svg {
+  flex: none;
+}
+
+.result-bar .writes-to {
+  color: var(--cell-muted-fg);
+}
+
+.result-bar .writes-to .mono {
+  color: var(--cell-fg);
+}
+
 .subtab {
   font: inherit;
   font-size: 12.5px;
