@@ -468,3 +468,47 @@ pub async fn autocomplete_catalog(
         })
         .collect())
 }
+
+/// Names of the relations and attributes a result set was read from
+/// (§4.3.1): `refs` are the `(table oid, attnum)` pairs the
+/// `RowDescription` gave at execution, the answer is one entry per pair in
+/// the same order, `None` where the catalog no longer has it (dropped in
+/// the meantime). One query, however many columns: the two `ANY` lists
+/// over-fetch a few attributes of other tables, the map filters them.
+pub async fn resolve_columns(
+    client: &Client,
+    refs: &[(u32, i16)],
+) -> Result<Vec<Option<alamo_core::schema_info::SourceColumn>>, PgError> {
+    use std::collections::HashMap;
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let oids: Vec<u32> = refs.iter().map(|r| r.0).collect();
+    let attnums: Vec<i16> = refs.iter().map(|r| r.1).collect();
+    let rows = client
+        .query(
+            "SELECT a.attrelid, a.attnum, n.nspname, c.relname, a.attname
+             FROM pg_catalog.pg_attribute a
+             JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE a.attrelid = ANY($1::pg_catalog.oid[])
+               AND a.attnum = ANY($2::pg_catalog.int2[])
+               AND a.attnum > 0 AND NOT a.attisdropped",
+            &[&oids, &attnums],
+        )
+        .await?;
+    let found: HashMap<(u32, i16), alamo_core::schema_info::SourceColumn> = rows
+        .iter()
+        .map(|r| {
+            (
+                (r.get::<_, u32>(0), r.get::<_, i16>(1)),
+                alamo_core::schema_info::SourceColumn {
+                    schema: r.get(2),
+                    table: r.get(3),
+                    column: r.get(4),
+                },
+            )
+        })
+        .collect();
+    Ok(refs.iter().map(|r| found.get(r).cloned()).collect())
+}

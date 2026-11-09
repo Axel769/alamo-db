@@ -2307,6 +2307,21 @@ async fn table_refresh_rows(
         .map_err(|e| ErrorOut::from(&*e))
 }
 
+/// §4.3.1: the table a result set can be written to, with its key, or the
+/// reason it is read-only (SQL tab editing).
+#[tauri::command]
+async fn result_source(
+    state: State<'_, AppState>,
+    conn_id: u64,
+    result_id: u64,
+) -> Result<alamo_session::ResultSourceOut, ErrorOut> {
+    let session = state.session(conn_id).map_err(internal)?;
+    session
+        .result_source(result_id)
+        .await
+        .map_err(|e| ErrorOut::from(&*e))
+}
+
 /// DDL rebuilt from the catalog (DDL sub-tab, §9.5).
 #[tauri::command]
 async fn table_ddl(
@@ -3412,6 +3427,7 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             table_write_sql_batch,
             table_write_batch,
             table_refresh_rows,
+            result_source,
             table_ddl,
             current_database,
             use_database,

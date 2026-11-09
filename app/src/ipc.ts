@@ -209,6 +209,30 @@ export type RelationOut = {
   comment: string | null;
 };
 
+/// Why a result set stays read-only (§4.3.1), with what the user needs to
+/// fix the query.
+export type NotEditable =
+  | { kind: "no_source" }
+  | { kind: "several_tables"; tables: string[] }
+  | { kind: "no_primary_key"; table: string }
+  | { kind: "key_missing"; table: string; columns: string[] }
+  | { kind: "key_renamed"; table: string; columns: string[] }
+  | { kind: "key_shadowed"; table: string; columns: string[] };
+
+/// The table a result set can be written to (§4.3.1). Arrays are by result
+/// column position; `columns[i]` is the source column name, null for a
+/// computed column or a later duplicate.
+export type ResultSourceOut = {
+  schema: string | null;
+  table: string | null;
+  columns: (string | null)[];
+  key: { col: number; name: string }[];
+  nullable: (boolean | null)[];
+  defaults: (string | null)[];
+  editable: boolean;
+  reason: NotEditable | null;
+};
+
 export type ColumnInfoOut = {
   name: string;
   type_display: string;
@@ -683,6 +707,9 @@ export const ipc = {
     writes: TableWrite[],
     append: AppendTo | null = null
   ) => invoke<BatchUpdateOut>("table_write_batch", { connId, schema, table, writes, append }),
+  /// §4.3.1: can this result set be edited, and on which table.
+  resultSource: (connId: number, resultId: number) =>
+    invoke<ResultSourceOut>("result_source", { connId, resultId }),
   /// After a save: re-reads the saved rows and replaces them in the
   /// result set. `missing > 0` = some not found, better to reload.
   tableRefreshRows: (

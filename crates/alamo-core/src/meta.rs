@@ -34,7 +34,7 @@ pub enum NativeType {
 ///
 /// PG populates it only for columns that come directly from a table: on
 /// `SELECT a+b` it is `None`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ColumnSource {
     Postgres {
         table_oid: u32,

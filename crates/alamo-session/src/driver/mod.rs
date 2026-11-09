@@ -19,8 +19,9 @@ use std::sync::Arc;
 
 use alamo_core::dialect::{Capabilities, Dialect};
 use alamo_core::error::DbError;
+use alamo_core::meta::ColumnSource;
 use alamo_core::schema_info::{
-    ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats,
+    ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats, SourceColumn,
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
 use alamo_core::tls::{TlsInfo, TlsMode, TlsOptions};
@@ -293,6 +294,14 @@ pub trait Connection: Send + Sync + 'static {
         schema: &'a str,
         table: &'a str,
     ) -> BoxFuture<'a, DbResult<Vec<ColumnInfo>>>;
+
+    /// The catalog names of the sources captured at execution (§4.3.1), one
+    /// entry per input in the same order; `None` where there is no source
+    /// or the catalog no longer has it. Runs on the introspection lane.
+    fn resolve_sources<'a>(
+        &'a self,
+        sources: &'a [Option<ColumnSource>],
+    ) -> BoxFuture<'a, DbResult<Vec<Option<SourceColumn>>>>;
 
     fn foreign_keys<'a>(
         &'a self,

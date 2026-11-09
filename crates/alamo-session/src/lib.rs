@@ -18,6 +18,7 @@ pub mod exec;
 pub mod export;
 pub mod introspect;
 pub mod registry;
+pub mod source;
 pub mod table;
 pub mod txn;
 pub mod x509;
@@ -26,7 +27,12 @@ use std::sync::Arc;
 
 use alamo_core::dialect::{Capabilities, Dialect};
 use alamo_core::error::DbError;
-use alamo_core::schema_info::{ColumnInfo, ForeignKey, RelationInfo, SchemaInfo, SchemaStats};
+use std::collections::HashMap;
+
+use alamo_core::meta::ColumnSource;
+use alamo_core::schema_info::{
+    ColumnInfo, ForeignKey, RelationInfo, SchemaInfo, SchemaStats, SourceColumn,
+};
 use alamo_core::stream::FetchOptions;
 use alamo_core::tls::{TlsInfo, TlsOptions};
 pub use alamo_core::NetOptions;
@@ -36,6 +42,7 @@ use driver::{DbConn, Driver, ServerConnId};
 use events::ExecEvent;
 use exec::Emit;
 use registry::{LiveResult, Registry};
+pub use source::{KeyColumnOut, NotEditable, ResultSourceOut};
 pub use table::{CellAssign, ColumnFilter, FilterOp, OrderBy, RowUpdate, TableQuery, TableWrite};
 pub use txn::TxnStateOut;
 
@@ -325,6 +332,12 @@ pub struct Session {
     /// Transaction state of the sticky (§9.7): server truth on MySQL,
     /// tracking of control statements on PG.
     txn: Arc<txn::TxnTracker>,
+    /// §4.3.1: catalog names of the column sources already resolved, so a
+    /// result set on the same table costs no catalog query. Emptied when
+    /// the sticky is reopened and when the session runs DDL: a dropped and
+    /// recreated table gets a new oid (a miss, harmless), a renamed one
+    /// keeps it (a stale name, which this avoids for the app's own DDL).
+    source_cache: std::sync::Mutex<HashMap<ColumnSource, Option<SourceColumn>>>,
     /// Every connection opened on the server, kept for when the session
     /// ends: after a sleep they may still be alive there (§3.2,
     /// `server_conn_ids`).
@@ -429,6 +442,7 @@ impl Session {
                 transactional_ddl,
                 LimitsIn::default().idle_rollback,
             )),
+            source_cache: std::sync::Mutex::new(HashMap::new()),
             opened,
             limits: Limits::new(LimitsIn::default()),
         })
@@ -617,6 +631,7 @@ impl Session {
         fresh.kill_abandoned(conn.server_conn_id().as_slice()).await;
         *self.sticky.write().unwrap() = fresh;
         self.txn.reset();
+        self.source_cache.lock().unwrap().clear();
         self.touch();
         Ok(ReconnectOut {
             reconnected: true,
@@ -649,6 +664,7 @@ impl Session {
         .await?;
         let lost = self.txn.snapshot();
         let old = std::mem::replace(&mut *self.sticky.write().unwrap(), fresh.clone());
+        self.source_cache.lock().unwrap().clear();
         fresh.kill_abandoned(old.server_conn_id().as_slice()).await;
         for slot in [&self.introspect, &self.stats, &self.shared] {
             let Ok(mut lane) = slot.try_lock() else {
@@ -1129,6 +1145,80 @@ impl Session {
             .await
     }
 
+    /// §4.3.1: the table a result set can be written to, with the key, or
+    /// the reason it cannot. The sources captured at execution are
+    /// resolved to names on the introspection lane (cached), the primary
+    /// key and the defaults come from the catalog.
+    pub async fn result_source(&self, result_id: u64) -> Result<ResultSourceOut, Box<DbError>> {
+        let live = self
+            .registry
+            .result(result_id)
+            .ok_or_else(|| Box::new(DbError::internal("result set no longer open")))?;
+        let schema = live.schema();
+        let sources: Vec<Option<ColumnSource>> = schema.iter().map(|m| m.source.clone()).collect();
+        let resolved = self.resolve_sources(&sources).await?;
+        let info = match source::single_table(&resolved) {
+            Some((s, t)) => Some(self.columns(s, t).await?),
+            None => None,
+        };
+        Ok(source::classify(
+            &schema,
+            &resolved,
+            info.as_deref(),
+            &self.capabilities(),
+        ))
+    }
+
+    /// `Connection::resolve_sources` through the cache: only the sources
+    /// never seen go to the catalog.
+    async fn resolve_sources(
+        &self,
+        sources: &[Option<ColumnSource>],
+    ) -> Result<Vec<Option<SourceColumn>>, Box<DbError>> {
+        let missing: Vec<Option<ColumnSource>> = {
+            let cache = self.source_cache.lock().unwrap();
+            let mut seen = std::collections::HashSet::new();
+            sources
+                .iter()
+                .flatten()
+                .filter(|s| !cache.contains_key(*s) && seen.insert((*s).clone()))
+                .map(|s| Some(s.clone()))
+                .collect()
+        };
+        if !missing.is_empty() {
+            let names = self
+                .introspect_session()
+                .await?
+                .resolve_sources(&missing)
+                .await?;
+            let mut cache = self.source_cache.lock().unwrap();
+            for (s, n) in missing.into_iter().zip(names) {
+                if let Some(s) = s {
+                    cache.insert(s, n);
+                }
+            }
+        }
+        let cache = self.source_cache.lock().unwrap();
+        Ok(sources
+            .iter()
+            .map(|s| s.as_ref().and_then(|s| cache.get(s).cloned().flatten()))
+            .collect())
+    }
+
+    /// The app's own DDL may rename what the cache resolved.
+    fn forget_sources_on_ddl(&self, sql: &str) {
+        use alamo_core::classify::{classify_statement, StatementClass};
+        let caps = self.capabilities();
+        let ddl = alamo_core::splitter::split_statements(sql, caps.backslash_escapes)
+            .iter()
+            .any(|stmt| {
+                classify_statement(&stmt.sql, caps.transactional_ddl).class == StatementClass::Ddl
+            });
+        if ddl {
+            self.source_cache.lock().unwrap().clear();
+        }
+    }
+
     /// Foreign keys touching the table, in both directions.
     pub async fn foreign_keys(
         &self,
@@ -1222,6 +1312,7 @@ impl Session {
         emit: impl Fn(ExecEvent) + Send + Sync + 'static,
     ) -> Result<u64, Box<DbError>> {
         self.check_read_only(&sql)?;
+        self.forget_sources_on_ddl(&sql);
         self.touch();
         let exec_id = self
             .registry
