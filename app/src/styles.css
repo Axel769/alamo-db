@@ -119,8 +119,7 @@ body,
   align-items: center;
   padding-top: 4px;
   padding-bottom: 6px;
-  border-right: 1px solid var(--cell-divider);
-  background: var(--cell-header-bg);
+  background: var(--chrome-bg-deep);
 }
 
 /* Settings gear at the bottom, like VSCode. */
@@ -384,16 +383,20 @@ body,
   justify-content: center;
   border: none;
   background: none;
-  color: var(--cell-muted-fg);
+  color: var(--chrome-muted);
   cursor: pointer;
+  transition:
+    background-color var(--ui-ease),
+    color var(--ui-ease);
 }
 
 .activity-btn:hover {
-  color: var(--cell-fg);
+  color: var(--chrome-fg);
+  background: var(--chrome-hover);
 }
 
 .activity-btn.active {
-  color: var(--cell-fg);
+  color: var(--chrome-fg);
 }
 
 /* Active indicator like VSCode: small bar on the left edge. */
@@ -411,7 +414,7 @@ body,
   width: 22px;
   height: 1px;
   margin: 6px 0;
-  background: var(--cell-divider);
+  background: var(--chrome-line);
 }
 
 /* Dot of an open connection: initials and color of the profile. */
@@ -424,7 +427,7 @@ body,
   border-radius: 50%;
   border: 2px solid var(--conn);
   background: color-mix(in oklch, var(--conn) 18%, transparent);
-  color: var(--cell-fg);
+  color: var(--chrome-fg);
   font: inherit;
   font-size: 10px;
   font-weight: 700;
@@ -438,15 +441,16 @@ body,
 }
 
 .conn-av.add {
-  border: 1px dashed var(--cell-divider);
+  border: 1px dashed var(--chrome-muted);
   background: none;
-  color: var(--cell-muted-fg);
+  color: var(--chrome-muted);
   font-size: 14px;
   font-weight: 400;
 }
 
 .conn-av.add:hover {
-  color: var(--cell-fg);
+  color: var(--chrome-fg);
+  border-color: var(--chrome-fg);
 }
 
 /* Uncommitted writes on that connection (§9.7). */
@@ -458,7 +462,7 @@ body,
   height: 9px;
   border-radius: 50%;
   background: var(--cell-prod);
-  border: 2px solid var(--cell-header-bg);
+  border: 2px solid var(--chrome-bg-deep);
 }
 
 /* ------------------------------------------------------------- side panel */
@@ -1207,8 +1211,8 @@ body,
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--cell-header-bg);
-  border-bottom: 1px solid var(--cell-divider);
+  color: var(--chrome-fg);
+  background: var(--chrome-bg);
 }
 
 .toolbar .spacer {
@@ -1244,7 +1248,7 @@ body,
 
 .conn-label {
   font-size: 12px;
-  color: var(--cell-muted-fg);
+  color: var(--chrome-muted);
 }
 
 .btn {
@@ -2326,9 +2330,8 @@ body,
   gap: 16px;
   padding: 4px 10px;
   font-size: 12px;
-  color: var(--cell-muted-fg);
-  background: var(--cell-header-bg);
-  border-top: 1px solid var(--cell-divider);
+  color: var(--chrome-fg);
+  background: var(--chrome-bg-deep);
 }
 
 .statusbar-conns {
@@ -2340,33 +2343,14 @@ body,
   box-shadow: inset 0 3px 0 var(--cell-prod);
 }
 
-/* Connection color on the frame: toolbar and status bar tinted, colored
-   thread under the toolbar and under the tabs. The content (editor, grid)
-   stays neutral: the data colors must not compete. Without a color on the
-   profile the frame stays as it was. Mix in oklab: in oklch the tint
-   towards the dark (bluish) background would rotate red into purple. */
-.studio.tinted .toolbar {
-  background: color-mix(in oklab, var(--conn) 13%, var(--cell-header-bg));
-  border-bottom: 2px solid color-mix(in oklab, var(--conn) 75%, var(--cell-header-bg));
-}
-
-.studio.tinted .tabbar-row {
-  border-bottom-color: color-mix(in oklab, var(--conn) 45%, var(--cell-divider));
-}
-
-.studio.tinted .statusbar {
-  background: color-mix(in oklab, var(--conn) 16%, var(--cell-header-bg));
-  border-top-color: color-mix(in oklab, var(--conn) 55%, var(--cell-divider));
-  color: var(--cell-fg);
-}
-
-/* Production: the tint is stronger, besides the §9.7 thread at the top. */
-.studio.tinted.prod .toolbar {
-  background: color-mix(in oklab, var(--conn) 22%, var(--cell-header-bg));
-}
-
-.studio.tinted.prod .statusbar {
-  background: color-mix(in oklab, var(--conn) 30%, var(--cell-header-bg));
+/* The frame (toolbar, activity bar, status bar) is the chrome green in
+   both themes (§9.6.1): the connection colour is read in the profile pill,
+   the tab labels and the avatars, not on the bars. The content (editor,
+   grid) stays neutral: the data colors must not compete. Production: the
+   status bar is tinted too, besides the §9.7 thread at the top, so the
+   alarm is at both ends of the window. */
+.studio.prod .statusbar {
+  background: color-mix(in oklab, var(--cell-prod) 30%, var(--chrome-bg-deep));
 }
 
 .btn.small {
@@ -4352,7 +4336,6 @@ select:focus-visible {
   width: 48px;
   padding: 8px 0;
   gap: 4px;
-  border-right: 1px solid var(--cell-border);
 }
 
 .activity-btn {
@@ -4362,8 +4345,8 @@ select:focus-visible {
 }
 
 .activity-btn.active {
-  color: var(--cell-selection-border);
-  background: var(--ui-accent-soft);
+  color: var(--chrome-fg);
+  background: var(--chrome-active);
 }
 
 .activity-btn.active::before {
@@ -4390,9 +4373,9 @@ select:focus-visible {
 }
 
 .tabbar {
-  height: 38px;
-  padding: 0;
-  gap: 0;
+  height: 40px;
+  padding: 6px 6px 0;
+  gap: 3px;
   align-items: stretch;
 }
 
@@ -4404,8 +4387,7 @@ select:focus-visible {
   flex: none;
   margin: 0;
   border: none;
-  border-right: 1px solid var(--cell-border);
-  border-radius: 0;
+  border-radius: 8px 8px 0 0;
   background: transparent;
 }
 
@@ -4446,15 +4428,16 @@ select:focus-visible {
   flex: none;
 }
 
-/* The strip at the top is the connection color. */
+/* The short bar at the top is the connection color. */
 .tab::before,
 .tab-group::before {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
+  left: 10px;
+  right: 10px;
+  top: 4px;
   height: 3px;
+  border-radius: 2px;
   background: var(--conn, var(--cell-border));
   opacity: 0.5;
 }
@@ -4491,9 +4474,7 @@ select:focus-visible {
 }
 
 .tab.active {
-  box-shadow:
-    inset 1px 0 0 var(--cell-divider),
-    inset -1px 0 0 var(--cell-divider);
+  box-shadow: 0 0 0 1px var(--cell-border);
 }
 
 /* The active tab merges with the content: it covers the border under the bar. */
@@ -4569,7 +4550,7 @@ select:focus-visible {
   gap: 5px;
   max-width: 200px;
   padding: 0 9px 0 8px;
-  border-right: 1px solid var(--cell-border);
+  border-radius: 8px 8px 0 0;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
   color: var(--cell-fg);
@@ -4610,7 +4591,7 @@ select:focus-visible {
 
 .tab-new {
   padding: 0 12px;
-  border-radius: 0;
+  border-radius: 8px 8px 0 0;
 }
 
 .tab-sub {
@@ -4624,7 +4605,6 @@ select:focus-visible {
   box-sizing: border-box;
   padding: 0 12px;
   font-size: 11.5px;
-  border-top: 1px solid var(--cell-border);
 }
 
 /* ---- filter labels: pills in the accent */
@@ -4650,16 +4630,20 @@ select:focus-visible {
   padding: 5px 8px 5px 10px;
   font: inherit;
   font-size: 12.5px;
-  color: var(--cell-muted-fg);
-  background: var(--cell-panel-bg);
-  border: 1px solid var(--ui-border-strong);
+  color: var(--chrome-muted);
+  background: var(--chrome-field);
+  border: 1px solid var(--chrome-line);
   border-radius: 8px;
   cursor: pointer;
-  transition: border-color var(--ui-ease);
+  transition:
+    border-color var(--ui-ease),
+    background-color var(--ui-ease);
 }
 
 .cmd-box:hover {
-  border-color: var(--cell-selection-border);
+  color: var(--chrome-fg);
+  background: var(--chrome-hover);
+  border-color: var(--chrome-muted);
 }
 
 .cmd-box span {
@@ -4678,21 +4662,105 @@ select:focus-visible {
   border-radius: 4px;
 }
 
+.cmd-box kbd {
+  border-color: var(--chrome-line);
+}
+
+/* Controls on the chrome: glass over the green. */
+.toolbar .btn {
+  color: var(--chrome-fg);
+  background: var(--chrome-field);
+  border-color: var(--chrome-line);
+}
+
+.toolbar .btn:hover:not(:disabled) {
+  background: var(--chrome-hover);
+  border-color: var(--chrome-muted);
+}
+
+.toolbar .btn:active:not(:disabled) {
+  background: var(--chrome-active);
+}
+
+.toolbar .btn.active {
+  color: var(--chrome-fg);
+  border-color: var(--chrome-fg);
+}
+
+.toolbar .txn-badge {
+  color: var(--chrome-fg);
+  background: var(--chrome-field);
+  border-color: var(--chrome-line);
+}
+
+.toolbar .txn-badge.warn {
+  color: var(--chrome-warn);
+  border-color: var(--chrome-warn);
+}
+
+.toolbar .txn-badge.danger {
+  color: var(--chrome-danger);
+  border-color: var(--chrome-danger);
+}
+
+/* The brand at the left of the title bar: a drag area, like the rest. */
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--chrome-fg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app-brand img {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  pointer-events: none;
+}
+
 /* The connection being worked on: tinted pill, opens its page. */
 button.profile-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--cell-fg);
-  padding: 4px 11px;
-  background: color-mix(in oklab, var(--conn, var(--cell-divider)) 18%, transparent);
-  border-color: transparent;
+  color: var(--chrome-fg);
+  padding: 3px 11px;
+  background: color-mix(in oklab, var(--conn, var(--cell-divider)) 40%, transparent);
+  border: 1px solid color-mix(in oklab, var(--conn, var(--cell-divider)) 60%, var(--chrome-fg));
+  border-radius: 999px;
   cursor: pointer;
   transition: background-color var(--ui-ease);
 }
 
 button.profile-pill:hover {
-  background: color-mix(in oklab, var(--conn, var(--cell-divider)) 30%, transparent);
+  background: color-mix(in oklab, var(--conn, var(--cell-divider)) 55%, transparent);
+}
+
+.profile-pill .swatch {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--chrome-fg) 55%, transparent);
+}
+
+/* On the green the red text of the tag is not read: a solid badge. */
+.profile-pill .prod-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--cell-prod);
+}
+
+.profile-pill .ro-tag {
+  padding: 0 6px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 999px;
+  color: var(--chrome-fg);
 }
 
 /* ---- query bar, above the editor */
@@ -5302,7 +5370,6 @@ button.profile-pill:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--cell-fg);
   font-weight: 600;
 }
 .statusbar-running .elapsed {

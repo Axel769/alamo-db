@@ -63,6 +63,7 @@ import {
 } from "./tabs";
 import { IconChevronDown, IconChevronUp, IconDatabase, IconExport, IconPlay, IconPlug, IconPlus, IconSearch, IconSettings, IconStop, IconX } from "./icons";
 import { connColor } from "./connColor";
+import logoUrl from "../src-tauri/icons/icon.png";
 import DbPicker from "./DbPicker";
 import UnsavedDialog from "./UnsavedDialog";
 import UpdateDialog from "./UpdateDialog";
@@ -1165,7 +1166,7 @@ function StudioInner() {
         onMouseDown={(e) => {
           if (e.button !== 0) return;
           const el = e.target as HTMLElement;
-          if (el !== e.currentTarget && !el.classList.contains("spacer")) return;
+          if (el !== e.currentTarget && !el.classList.contains("spacer") && !el.closest(".app-brand")) return;
           if (e.detail === 2) void ipc.windowToggleMaximize();
           else void ipc.windowStartDrag();
         }}
@@ -1174,6 +1175,10 @@ function StudioInner() {
             on the right the transaction state and the connection being
             worked on. Run/Cancel and the database sit in the query bar,
             above the editor. */}
+        <span className="app-brand">
+          <img src={logoUrl} alt="" />
+          Alamo DB
+        </span>
         <div className="spacer" />
         <button className="cmd-box" onClick={() => setPaletteOpen(true)}>
           <IconSearch />

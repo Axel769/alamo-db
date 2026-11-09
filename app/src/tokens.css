@@ -49,6 +49,10 @@
   --chrome-hover: oklch(100% 0 0 / 0.09);
   --chrome-field: oklch(100% 0 0 / 0.1);
   --chrome-active: oklch(48% 0.09 162);
+  /* Warning and danger text on the chrome (transaction badge): lifted, a
+     50% red on the deep green is not read. Same in both themes. */
+  --chrome-warn: oklch(88% 0.12 90);
+  --chrome-danger: oklch(80% 0.09 28);
   /* SQL syntax in the editor (editor.ts). Same hues as the types, so
      keywords / numbers / strings echo the grid. */
   --syn-keyword: oklch(44% 0.17 265);
