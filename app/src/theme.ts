@@ -1,6 +1,6 @@
 // sRGB hex for the Glide theme (§9.6.1): the canvas is not reliable with
-// oklch() on every webview, so the hex values of the approved table live
-// here. Conversion done as a build step of the document, not at runtime.
+// oklch() on every webview, so the hex values of tokens.css live here,
+// printed by check_tokens.py (see §9.6.1), never converted at runtime.
 
 import { setting, useSettings } from "./settings";
 import { SettingValues } from "./settingsSchema";
@@ -34,45 +34,45 @@ export type Tokens = {
 export const LIGHT: Tokens = {
   typeNumeric: "#085491",
   typeTemporal: "#5D408A",
-  typeText: "#191D24",
+  typeText: "#15201B",
   typeBoolean: "#005D6D",
   typeStructured: "#7B4200",
-  stateNormal: "#FBFCFD",
-  stateAlt: "#F1F4F6",
-  stateSelection: "#DBE8FF",
+  stateNormal: "#FAFCFB",
+  stateAlt: "#F0F5F1",
+  stateSelection: "#D1EFD8",
   stateModified: "#F5DBA5",
-  stateNew: "#CBE9D0",
-  stateDeleted: "#F8D2CC",
-  cellFg: "#191D24",
-  cellMutedFg: "#565B63",
-  cellNullFg: "#565B63",
-  cellBorder: "#DCDEE2",
-  cellDivider: "#BABEC4",
-  cellPanelBg: "#FBFCFD",
-  cellHeaderBg: "#F3F5F8",
-  cellSelectionBorder: "#3760C9",
+  stateNew: "#C3EAC9",
+  stateDeleted: "#FFD1CD",
+  cellFg: "#15201B",
+  cellMutedFg: "#4D5C55",
+  cellNullFg: "#4D5C55",
+  cellBorder: "#DAE0DA",
+  cellDivider: "#B4BEB5",
+  cellPanelBg: "#FAFCFB",
+  cellHeaderBg: "#EDF5EE",
+  cellSelectionBorder: "#095B41",
 };
 
 export const DARK: Tokens = {
   typeNumeric: "#7FB6EE",
   typeTemporal: "#BE9DF7",
-  typeText: "#E5E8EC",
+  typeText: "#E4E9E5",
   typeBoolean: "#1EC5E4",
   typeStructured: "#ED9C55",
-  stateNormal: "#101317",
-  stateAlt: "#181C21",
-  stateSelection: "#202D49",
+  stateNormal: "#0C120F",
+  stateAlt: "#131C18",
+  stateSelection: "#153524",
   stateModified: "#483400",
-  stateNew: "#1C4328",
-  stateDeleted: "#5B1F1C",
-  cellFg: "#E5E8EC",
-  cellMutedFg: "#A0A5AC",
-  cellNullFg: "#A0A5AC",
-  cellBorder: "#25292F",
-  cellDivider: "#3B4047",
-  cellPanelBg: "#101317",
-  cellHeaderBg: "#15181D",
-  cellSelectionBorder: "#739BF5",
+  stateNew: "#1F4127",
+  stateDeleted: "#5C1717",
+  cellFg: "#E4E9E5",
+  cellMutedFg: "#9DA8A0",
+  cellNullFg: "#9DA8A0",
+  cellBorder: "#202925",
+  cellDivider: "#35403B",
+  cellPanelBg: "#0C120F",
+  cellHeaderBg: "#101814",
+  cellSelectionBorder: "#7FC492",
 };
 
 /// The user's theme preference (Settings, §16). "system" = follows the

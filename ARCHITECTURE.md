@@ -854,9 +854,39 @@ tokens and passed both to the design system and to the Glide theme, otherwise da
 grid diverge. Every class must be contrast-checked on: normal background, alternate
 row, selection, modified cell, error cell — in both themes.
 
-#### 9.6.1 Colour tokens — ✅ `[APPROVED — iter. 4]`
+#### 9.6.1 Colour tokens — ✅ `[APPROVED — iter. 4]` · "Forest" palette (2026-11-09)
 
-Verified with `check_tokens_v4.py`. **Re-run it on every future change.**
+Verified with `scripts/check_tokens.py` (it reads `app/src/tokens.css`, checks gamut and
+contrast, and prints the hex table for `theme.ts`). **Re-run it on every future change.**
+
+##### Forest palette (2026-11-09)
+
+The app icon (a poplar under an arch on green hills) sets the hue of the interface. The
+budget stays per layer, the type colours did not move:
+
+- **data** (`--type-*`, `--state-*`, `--cell-*`): neutral surfaces with a hint of green
+  (hue 150–165, chroma ≤ 0.02), so the grid and the editor stay quiet.
+- **accent** (`--cell-selection-border`, `--state-selection`, focus, primary button): pine
+  green in light (`oklch(42% 0.085 165)`), meadow green in dark (`oklch(76% 0.1 152)`).
+  The blue of the 2026-10-02 mock is gone.
+- **chrome** (`--chrome-*`): activity bar, toolbar and status bar in the deep green of the
+  icon in **both** themes, text in its cream. The connection colour no longer tints the
+  frame: it lives in the profile pill, the tab labels and the avatars, where it is read.
+- **signals**: `--cell-prod` moves from magenta (340°) to red (28°). Production is an
+  alarm and red is the colour every tool uses for it; errors (`--ui-danger`, 25°) are
+  never shown next to a prod marker on the same surface, so the two do not compete.
+
+| Check | Light | Dark |
+|---|---|---|
+| Text × backgrounds (AA 4.5:1), worst | 4.83 | 4.65 |
+| SQL syntax × editor backgrounds (4.5:1), worst | 4.95 | 4.83 |
+| UI (accent, chrome text, 3:1 / 4.5:1), worst | 5.73 | 8.06 |
+| Focus ring `max(inner, outer)` | 19.74 | 17.35 |
+| Selection vs alt | 1.112 | 1.307 |
+
+`--cell-divider` is decorative since the 2026-10-02 mock (1.7–1.9:1): the script reports
+it and does not fail. The ≥3:1 separator of the high-contrast grid option is the Glide
+`cellDivider`, raised there.
 
 ##### Outcome
 
