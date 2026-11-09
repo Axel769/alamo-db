@@ -154,17 +154,33 @@ body,
 .settings-nav-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 9px;
   font: inherit;
   font-size: 13px;
   text-align: left;
-  padding: 7px 8px;
+  padding: 7px 9px;
   border: none;
   border-radius: 8px;
   background: none;
   color: var(--cell-fg);
   cursor: pointer;
+  transition:
+    background-color var(--ui-ease),
+    color var(--ui-ease);
+}
+
+.settings-nav-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--cell-muted-fg);
+}
+
+.settings-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-nav-item:hover {
@@ -173,6 +189,11 @@ body,
 
 .settings-nav-item.active {
   background: var(--state-selection);
+  font-weight: 600;
+}
+
+.settings-nav-item.active .settings-nav-icon {
+  color: var(--cell-selection-border);
 }
 
 .settings-nav-item.dim {
@@ -2874,6 +2895,16 @@ ul.transfer-hint {
   font-size: 14px;
   font-weight: 600;
   border-bottom: 1px solid var(--cell-divider);
+}
+
+.dialog-title-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-title-text svg {
+  color: var(--cell-muted-fg);
 }
 
 .dialog-body {

@@ -13,7 +13,33 @@ import { patchSettings, resetSettings, settingOf, useSettings } from "./settings
 import { DEFAULTS, SETTING_CATEGORIES, SETTING_DEFS, SettingDef, SettingKey, SettingKind, SettingValues } from "./settingsSchema";
 import { SETTING_ACTIONS, SettingAction } from "./settingsActions";
 import ShortcutsSection, { matchingActions } from "./ShortcutsSection";
-import { IconSearch, IconX } from "./icons";
+import {
+  IconCode,
+  IconCopy,
+  IconDb,
+  IconExport,
+  IconKeyboard,
+  IconPalette,
+  IconPlay,
+  IconRefresh,
+  IconSearch,
+  IconSettings,
+  IconTable,
+  IconX,
+} from "./icons";
+
+/// The glyph of each category, by id (settingsSchema.ts stays free of UI).
+const CATEGORY_ICONS: Record<string, () => JSX.Element> = {
+  appearance: () => <IconPalette />,
+  editor: () => <IconCode />,
+  execution: () => <IconPlay size={14} />,
+  data: () => <IconTable />,
+  copy: () => <IconCopy />,
+  export: () => <IconExport />,
+  connections: () => <IconDb size={14} />,
+  updates: () => <IconRefresh />,
+  shortcuts: () => <IconKeyboard />,
+};
 
 type Value = SettingValues[SettingKey];
 
@@ -79,7 +105,10 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
     <div className="dialog-overlay">
       <div className="dialog settings-dialog" ref={root} onKeyDown={(e) => e.stopPropagation()}>
         <div className="dialog-title">
-          <span>{t("Settings")}</span>
+          <span className="dialog-title-text">
+            <IconSettings size={16} />
+            {t("Settings")}
+          </span>
           <button className="btn small dialog-close" onClick={onClose}>
             <IconX />
           </button>
@@ -97,7 +126,8 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
                     setCategory(c.id);
                   }}
                 >
-                  <span>{t(c.label)}</span>
+                  <span className="settings-nav-icon">{CATEGORY_ICONS[c.id]?.()}</span>
+                  <span className="settings-nav-label">{t(c.label)}</span>
                   {q !== "" && n > 0 && <span className="settings-nav-count">{n}</span>}
                 </button>
               );
