@@ -4490,8 +4490,10 @@ select:focus-visible {
   opacity: 0.5;
 }
 
+/* The label is full height: the bar sits higher and the two text lines
+   are pushed under it, otherwise it was painted over the ascenders. */
 .tab-group::before {
-  top: 6px;
+  top: 5px;
 }
 
 .tab.active {
@@ -4580,7 +4582,7 @@ select:focus-visible {
   z-index: 2;
   gap: 8px;
   max-width: 260px;
-  padding: 0 14px 0 12px;
+  padding: 8px 14px 0 12px;
   font-size: 13px;
   font-weight: 400;
   text-align: left;
