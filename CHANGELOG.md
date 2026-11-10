@@ -11,7 +11,7 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
-## Unreleased
+## [0.1.0-alpha.15] - 2026-11-10
 
 - New app icon: a poplar under an arch on green hills, in the Dock, the taskbar, the window and the connections dialog.
 - New look, from the icon: the title bar, the icon strip and the status bar are the deep green of the icon, with the app icon and name at the top left; buttons, selection and focus are pine green instead of blue; panels and grid keep a faint green instead of the cool grey. The dark theme is a green-black, not an inversion of the light one. The SQL editor and the result grid stay as readable as before: the colours of numbers, dates and text did not move.
