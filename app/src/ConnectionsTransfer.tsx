@@ -2,6 +2,7 @@
 // `transfer` module on the Rust side). Opened from the ⋯ menu of the
 // connections panel and from the command palette; file dialogs are native, in Rust.
 import { useQuery } from "@tanstack/react-query";
+import { ProdTag } from "./ProdTag";
 import { useEffect, useState } from "react";
 import { t, tMsg } from "./i18n";
 import { ImportOutcome, ImportPreview, ipc } from "./ipc";
@@ -144,7 +145,7 @@ export function ExportConnectionsDialog({ onClose }: { onClose: () => void }) {
                     />
                     <span className="swatch" style={{ background: connColor(p) }} />
                     <span className="transfer-name">{p.name}</span>
-                    {p.is_production && <span className="prod-tag">prod</span>}
+                    {p.is_production && <ProdTag />}
                     <span className="transfer-dest" title={`${p.username}@${p.host}:${p.port}`}>
                       {p.username}@{p.host}:{p.port}
                     </span>
@@ -358,7 +359,7 @@ export function ImportConnectionsDialog({ onClose, onImported }: { onClose: () =
                             >
                               {r.existing ? p.name : r.name}
                             </span>
-                            {p.is_production && <span className="prod-tag">prod</span>}
+                            {p.is_production && <ProdTag />}
                             {r.existing && (
                               <span className="transfer-tag" title={t("Same server, database, user and tunnel as a saved profile")}>
                                 {t("already here")}

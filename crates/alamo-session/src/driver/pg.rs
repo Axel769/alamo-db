@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use alamo_core::dialect::Dialect;
 use alamo_core::error::DbError;
+use alamo_core::meta::ColumnSource;
 use alamo_core::schema_info::{
-    ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats,
+    ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats, SourceColumn,
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
 use alamo_core::tls::{TlsInfo, TlsMode, TlsOptions};
@@ -383,6 +384,36 @@ impl Connection for PgConn {
             introspect::columns(&self.0.client, schema, table)
                 .await
                 .map_err(boxed)
+        }
+        .boxed()
+    }
+
+    fn resolve_sources<'a>(
+        &'a self,
+        sources: &'a [Option<ColumnSource>],
+    ) -> BoxFuture<'a, DbResult<Vec<Option<SourceColumn>>>> {
+        async move {
+            let refs: Vec<(u32, i16)> = sources
+                .iter()
+                .filter_map(|s| match s {
+                    Some(ColumnSource::Postgres {
+                        table_oid,
+                        column_attnum,
+                    }) => Some((*table_oid, *column_attnum)),
+                    _ => None,
+                })
+                .collect();
+            let mut names = introspect::resolve_columns(&self.0.client, &refs)
+                .await
+                .map_err(boxed)?
+                .into_iter();
+            Ok(sources
+                .iter()
+                .map(|s| match s {
+                    Some(ColumnSource::Postgres { .. }) => names.next().flatten(),
+                    _ => None,
+                })
+                .collect())
         }
         .boxed()
     }

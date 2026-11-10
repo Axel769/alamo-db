@@ -96,6 +96,16 @@ pub struct RelationInfo {
     pub comment: Option<String>,
 }
 
+/// A result column resolved to the catalog (§4.3.1): the relation and the
+/// attribute it was read from, by name, as the SQL the app generates needs
+/// them. Only columns read straight from a table have one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SourceColumn {
+    pub schema: String,
+    pub table: String,
+    pub column: String,
+}
+
 /// A column as it appears in the tree and in autocomplete. It is not
 /// `ColumnMeta` (§4.3): that one is captured at execution from the result set,
 /// this one comes from the catalog and includes what the protocol does not

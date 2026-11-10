@@ -64,6 +64,9 @@ type Props = {
   /// Truncated cells (>4KB, LOB) never open the overlay: it would show a
   /// partial value and saving would write it maimed.
   editable?: boolean;
+  /// Per column (position): `false` keeps the cell read-only in an
+  /// editable grid (computed columns of a SQL result, §9.5.1).
+  cellEditable?: (col: number) => boolean;
   /// Edit the cell in the cell panel (whole value, room to write): double
   /// click / Enter on a long value (see `isLong`) and Shift+Enter on any
   /// cell, new rows included. With it, long values never open the overlay.
@@ -78,14 +81,14 @@ type Props = {
   pendingAt?: (row: number, col: number) => PendingValue | undefined;
   /// The column accepts NULL (from introspection): decides whether "Set NULL"
   /// can be offered. Absent = offered anyway, the server decides.
-  canSetNull?: (column: string) => boolean;
+  canSetNull?: (col: number) => boolean;
   /// Multi-cell (decision 12, single rectangle): same value on the whole
   /// selected rectangle (`value === null` = SET NULL from Delete/menu).
   /// The cells end up pending as with `onEditCell`.
   onEditCells?: (rect: Rectangle, value: PendingValue) => void;
   /// Default of the column from introspection (`null` = none): the "Set
   /// DEFAULT" menu shows it in the hint.
-  columnDefault?: (column: string) => string | null;
+  columnDefault?: (col: number) => string | null;
   /// "Filter by this value" from the cell menu (table tab only):
   /// `value === null` = the cell is NULL, `exclude` = negated filter.
   onFilterCell?: (column: string, value: string | null, exclude: boolean) => void;
@@ -126,8 +129,9 @@ type Props = {
 };
 
 export type RowActions = {
-  onAdd: () => void;
-  onDuplicate: (rows: number[]) => void;
+  /// Missing = the grid does not add rows (SQL tab, §9.5.1).
+  onAdd?: () => void;
+  onDuplicate?: (rows: number[]) => void;
   onDelete: (rows: number[]) => void;
   /// Real row marked for deletion (not yet saved): red and struck through.
   /// New identity = marks changed: everything is redrawn.
@@ -199,6 +203,7 @@ export default function GridView({
   exportName,
   widthKey,
   editable = false,
+  cellEditable,
   onEditInPanel,
   onEditCell,
   pendingAt,
@@ -659,7 +664,7 @@ export default function GridView({
           kind: GridCellKind.Text,
           data: isText ? p : "",
           displayData: isText ? clampText(p, data.max_cell_chars) : p === null ? nul : "DEFAULT",
-          allowOverlay: editable && !(onEditInPanel && isText && isLong(p, data.max_cell_chars)),
+          allowOverlay: editable && (cellEditable?.(col) ?? true) && !(onEditInPanel && isText && isLong(p, data.max_cell_chars)),
           contentAlign: alignRight ? "right" : "left",
           themeOverride: isText ? newTheme : newNullTheme,
         };
@@ -695,7 +700,7 @@ export default function GridView({
           kind: GridCellKind.Text,
           data: isText ? p : "",
           displayData: isText ? clampText(p, data.max_cell_chars) : p === null ? nul : "DEFAULT",
-          allowOverlay: editable && !(onEditInPanel && isText && isLong(p, data.max_cell_chars)),
+          allowOverlay: editable && (cellEditable?.(col) ?? true) && !(onEditInPanel && isText && isLong(p, data.max_cell_chars)),
           contentAlign: alignRight ? "right" : "left",
           themeOverride: isText ? pendingTheme : pendingNullTheme,
         };
@@ -710,7 +715,11 @@ export default function GridView({
         kind: GridCellKind.Text,
         data: v.isNull ? "" : v.v,
         displayData: v.isNull ? nul : displayText(meta, v.v, data, loc),
-        allowOverlay: editable && !v.truncated && !(onEditInPanel && !v.isNull && isLong(v.v, data.max_cell_chars)),
+        allowOverlay:
+          editable &&
+          (cellEditable?.(col) ?? true) &&
+          !v.truncated &&
+          !(onEditInPanel && !v.isNull && isLong(v.v, data.max_cell_chars)),
         contentAlign: alignRight ? "right" : "left",
         themeOverride: v.isNull ? nullTheme : colThemes[col],
       };
@@ -718,7 +727,7 @@ export default function GridView({
       return out;
     },
     // New memo → new identity → Glide invalidates all the rendered cells.
-    [cache, cellMemo, columns, colThemes, nullTheme, pendingAt, pendingTheme, pendingNullTheme, editable, layout, isExtra, extraAt, newTheme, newNullTheme, deletedAt, deletedTheme, onEditInPanel, data, loc, nul]
+    [cache, cellMemo, columns, colThemes, nullTheme, pendingAt, pendingTheme, pendingNullTheme, editable, cellEditable, layout, isExtra, extraAt, newTheme, newNullTheme, deletedAt, deletedTheme, onEditInPanel, data, loc, nul]
   );
 
   /// Row that can be edited in the panel (not deleted; new ones too).
@@ -825,9 +834,9 @@ export default function GridView({
     if (v === undefined) return;
     const p = pendingValue(row, col);
     if (p !== undefined ? p === null : v.isNull) return;
-    if (canSetNull && !canSetNull(columns[col]?.name ?? "")) return;
+    if (canSetNull && !canSetNull(col)) return;
     onEditCell(toModelRow(row), col, null);
-  }, [nullTarget, onEditCell, pendingValue, cellAt, toModelRow, canSetNull, columns]);
+  }, [nullTarget, onEditCell, pendingValue, cellAt, toModelRow, canSetNull]);
 
   // Delete/Backspace: Glide by itself would empty the selected cells
   // (onCellEdited with an empty string, without going through the overlay).
@@ -900,8 +909,8 @@ export default function GridView({
     f(selectedRows(selection));
     return true;
   };
-  useAction("grid.row_duplicate", rowKey((rows) => rows.length > 0 && rowActions!.onDuplicate(rows)));
-  useAction("grid.row_add", rowKey(() => rowActions!.onAdd()));
+  useAction("grid.row_duplicate", rowKey((rows) => rows.length > 0 && rowActions!.onDuplicate?.(rows)));
+  useAction("grid.row_add", rowKey(() => rowActions!.onAdd?.()));
   useAction("grid.set_null", rowKey(() => onDelete(selection)));
   useAction("grid.row_delete", rowKey((rows) => rows.length > 0 && rowActions!.onDelete(rows)));
 
@@ -1136,6 +1145,13 @@ export default function GridView({
       for (let r = sel.y; r < sel.y + sel.height; r++) {
         const line: string[] = [];
         for (let c = sel.x; c < sel.x + sel.width; c++) {
+          // What is on screen: the pending value of an edited cell or a
+          // new row before the database's one (NULL and DEFAULT copy empty).
+          const p = pendingValue(r, c);
+          if (p !== undefined) {
+            line.push(typeof p === "string" ? p : "");
+            continue;
+          }
           const v = cellAt(r, c);
           if (v === undefined) requestRow(r);
           line.push(v === undefined || v.isNull ? "" : v.v);
@@ -1144,7 +1160,7 @@ export default function GridView({
       }
       return out;
     },
-    [cellAt, requestRow]
+    [cellAt, requestRow, pendingValue]
   );
   const getCellsForSelection = useCallback(
     (sel: Rectangle): CellArray =>
@@ -1385,7 +1401,7 @@ export default function GridView({
               const p = pendingValue(row, col);
               const colName = columns[col]?.name ?? "";
               const isNull = p !== undefined ? p === null : v?.isNull;
-              const notNullable = canSetNull !== undefined && !canSetNull(colName);
+              const notNullable = canSetNull !== undefined && !canSetNull(col);
               nullDisabled = v === undefined || !!isNull || notNullable;
               nullTitle =
                 v === undefined
@@ -1415,7 +1431,7 @@ export default function GridView({
                   // Default known only on a single column: on a rectangle
                   // each column has its own, the server decides for each.
                   const def =
-                    r.width === 1 ? columnDefault?.(columns[r.x]?.name ?? "") : undefined;
+                    r.width === 1 ? columnDefault?.(r.x) : undefined;
                   return (
                     <button
                       className="tab-menu-item"
@@ -1469,17 +1485,21 @@ export default function GridView({
             return (
               <>
                 <div className="tab-menu-label">{rows.length > 1 ? t("Rows") : t("Row")}</div>
-                <button className="tab-menu-item" onClick={close(rowActions.onAdd)}>
-                  {t("Add row")} <span className="tab-menu-key">{keyHint("grid.row_add")}</span>
-                </button>
-                <button
-                  className="tab-menu-item"
-                  disabled={rows.length === 0}
-                  onClick={close(() => rowActions.onDuplicate(rows))}
-                >
-                  {rows.length > 1 ? t("Duplicate rows") : t("Duplicate row")}{" "}
-                  <span className="tab-menu-key">{keyHint("grid.row_duplicate")}</span>
-                </button>
+                {rowActions.onAdd && (
+                  <button className="tab-menu-item" onClick={close(rowActions.onAdd)}>
+                    {t("Add row")} <span className="tab-menu-key">{keyHint("grid.row_add")}</span>
+                  </button>
+                )}
+                {rowActions.onDuplicate && (
+                  <button
+                    className="tab-menu-item"
+                    disabled={rows.length === 0}
+                    onClick={close(() => rowActions.onDuplicate!(rows))}
+                  >
+                    {rows.length > 1 ? t("Duplicate rows") : t("Duplicate row")}{" "}
+                    <span className="tab-menu-key">{keyHint("grid.row_duplicate")}</span>
+                  </button>
+                )}
                 <button
                   className="tab-menu-item"
                   disabled={rows.length === 0}

@@ -2,6 +2,7 @@
 // M3.5: several connections open together (DBeaver model) — the toolbar
 // follows the active tab's connection; every connection has its sticky (§3).
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { ProdTag } from "./ProdTag";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ipc, AutocompleteOut, ErrorOut, Profile, ScriptItem, StatementClassOut } from "./ipc";
@@ -41,7 +42,8 @@ import { recordHistory } from "./history";
 import TabBar from "./TabBar";
 import TableTab from "./TableTab";
 import { freeSticky } from "./sticky";
-import { ErrorPanel, resultIncomplete, singleSourceTable, StatementPane } from "./ResultPane";
+import { ErrorPanel, resultIncomplete, singleSourceTable } from "./ResultPane";
+import SqlResultPane from "./SqlResultPane";
 import { ExportDialog } from "./ExportDialog";
 import { dropCache } from "./rowCache";
 import { connForDatabase } from "./databases";
@@ -63,6 +65,7 @@ import {
 } from "./tabs";
 import { IconChevronDown, IconChevronUp, IconDatabase, IconExport, IconPlay, IconPlug, IconPlus, IconSearch, IconSettings, IconStop, IconX } from "./icons";
 import { connColor } from "./connColor";
+import logoUrl from "../src-tauri/icons/icon.png";
 import DbPicker from "./DbPicker";
 import UnsavedDialog from "./UnsavedDialog";
 import UpdateDialog from "./UpdateDialog";
@@ -644,6 +647,7 @@ function StudioInner() {
     const s = useStore.getState();
     const tab = s.tabs.find((t) => t.id === tabId);
     if (!tab || tab.connId !== connId || stickyRunningTab(s, connId)) return;
+    if (unsavedCount(tab) > 0) return;
     for (const st of tab.statements) {
       if (st.resultId !== null) {
         void ipc.releaseResult(connId, st.resultId);
@@ -675,6 +679,8 @@ function StudioInner() {
     // execute from the editor; neither does a disconnected tab.
     if (!tab || tab.kind !== "sql" || tab.connId === null) return;
     const connId = tab.connId;
+    // §9.5.1: a run releases the results the pending edits belong to.
+    if (!(await guardUnsaved([tab.id]))) return;
     if (!(await stickyReady(connId))) return;
     if (!(await ensureLive(connId))) return;
     if (!(await syncDb(connId, tab.id))) return;
@@ -1165,7 +1171,7 @@ function StudioInner() {
         onMouseDown={(e) => {
           if (e.button !== 0) return;
           const el = e.target as HTMLElement;
-          if (el !== e.currentTarget && !el.classList.contains("spacer")) return;
+          if (el !== e.currentTarget && !el.classList.contains("spacer") && !el.closest(".app-brand")) return;
           if (e.detail === 2) void ipc.windowToggleMaximize();
           else void ipc.windowStartDrag();
         }}
@@ -1174,6 +1180,10 @@ function StudioInner() {
             on the right the transaction state and the connection being
             worked on. Run/Cancel and the database sit in the query bar,
             above the editor. */}
+        <span className="app-brand">
+          <img src={logoUrl} alt="" />
+          Alamo DB
+        </span>
         <div className="spacer" />
         <button className="cmd-box" onClick={() => setPaletteOpen(true)}>
           <IconSearch />
@@ -1238,7 +1248,7 @@ function StudioInner() {
           >
             <span className="swatch" style={{ background: connColor(profile) }} />
             {profile.name}
-            {profile.is_production && <span className="prod-tag">prod</span>}
+            {profile.is_production && <ProdTag />}
             {profile.read_only && <span className="ro-tag">{t("read-only")}</span>}
           </button>
         ) : (
@@ -1660,7 +1670,12 @@ function StudioInner() {
                       ownsTab(st) ? (
                         <button
                           key={i}
-                          className={"stmt-tab" + (i === tab.selected ? " active" : "") + badgeClass(st)}
+                          className={
+                            "stmt-tab" +
+                            (i === tab.selected ? " active" : "") +
+                            badgeClass(st) +
+                            (tab.edit !== null && tab.edit.resultId === st.resultId ? " pending" : "")
+                          }
                           onClick={() => store.select(tab.id, i)}
                           title={stmtSnippet(tab.execSql, tab.statements, i, 200)}
                         >
@@ -1680,7 +1695,7 @@ function StudioInner() {
                 {tab &&
                   sel &&
                   (ownsTab(sel) || tab.statements.length === 1 ? (
-                    <StatementPane tab={tab} st={sel} gridHost={gridHost} gridSize={gridSize} />
+                    <SqlResultPane tab={tab} st={sel} gridHost={gridHost} gridSize={gridSize} />
                   ) : (
                     <ScriptPane tab={tab} onSelect={(i) => store.select(tab.id, i)} />
                   ))}
@@ -1979,7 +1994,7 @@ function QuitDialog({
               <li key={c.connId}>
                 <span className="swatch" style={{ background: connColor(c.profile) }} />
                 <span>{c.profile.name}</span>
-                {c.profile.is_production && <span className="prod-tag">prod</span>}
+                {c.profile.is_production && <ProdTag />}
               </li>
             ))}
           </ul>
@@ -2336,7 +2351,7 @@ function WriteGateDialog({
         <div className="dialog-title">
           <span>
             {gate.unknown.length > 0 ? t("Confirm execution") : t("Confirm write")}
-            {profile?.is_production && <span className="prod-tag"> {t("production")}</span>}
+            {profile?.is_production && <> <ProdTag long /></>}
           </span>
           <button className="btn small dialog-close" onClick={onClose}>
             <IconX />

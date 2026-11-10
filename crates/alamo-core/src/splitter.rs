@@ -92,7 +92,7 @@ pub fn split_statements(sql: &str, backslash_escapes: bool) -> Vec<SplitStatemen
                     && (!mysql
                         || bytes
                             .get(i + 2)
-                            .map_or(true, |c| c.is_ascii_whitespace() || c.is_ascii_control())) =>
+                            .is_none_or(|c| c.is_ascii_whitespace() || c.is_ascii_control())) =>
                 {
                     state = State::LineComment
                 }

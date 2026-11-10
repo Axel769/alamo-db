@@ -86,8 +86,9 @@ cargo xtask bundle
 as `cargo xtask run` (or with `APPLE_SIGNING_IDENTITY`). The bundle works on
 this Mac and on those that accept the Gatekeeper warning; distributing it over
 the internet requires a Developer ID certificate and notarization, not yet
-configured. The icons in `app/src-tauri/icons/` are generated from `icon.svg`
-with `pnpm tauri icon` (rerun it when the SVG is replaced).
+configured. The icons in `app/src-tauri/icons/` are generated with `pnpm tauri icon`
+from `icon-1024.png`, the master (rerun it when the master is replaced; `icon.png`,
+512 px, is the copy the UI shows in the connections dialog).
 
 At startup the connections dialog opens: profiles are persisted in SQLite
 (`~/Library/Application Support/io.github.axel769.alamo/alamo.db`), the

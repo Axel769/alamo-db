@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use alamo_core::dialect::Dialect;
 use alamo_core::error::DbError;
+use alamo_core::meta::ColumnSource;
 use alamo_core::schema_info::{
-    ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats,
+    ColumnInfo, ConnectionBudget, ForeignKey, RelationInfo, SchemaInfo, SchemaStats, SourceColumn,
 };
 use alamo_core::stream::{FetchOptions, StreamControl, StreamEvent, StreamOutcome};
 use alamo_core::tls::{CertSummary, TlsInfo, TlsMode, TlsOptions};
@@ -497,6 +498,32 @@ impl Connection for MyConn {
                 .map_err(boxed)
         }
         .boxed()
+    }
+
+    /// The column definitions already carry the names (`org_table`,
+    /// `org_name`); an empty `db` is a derived table, not a base table.
+    fn resolve_sources<'a>(
+        &'a self,
+        sources: &'a [Option<ColumnSource>],
+    ) -> BoxFuture<'a, DbResult<Vec<Option<SourceColumn>>>> {
+        let out = sources
+            .iter()
+            .map(|s| match s {
+                Some(ColumnSource::MySql {
+                    db,
+                    org_table,
+                    org_name,
+                }) if !db.is_empty() && !org_table.is_empty() && !org_name.is_empty() => {
+                    Some(SourceColumn {
+                        schema: db.clone(),
+                        table: org_table.clone(),
+                        column: org_name.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        async move { Ok(out) }.boxed()
     }
 
     fn foreign_keys<'a>(

@@ -225,7 +225,7 @@ would become 30 connections to the server, unacceptable on production.
 |---|---|
 | SQL tab | **sticky from the start** — the user can write `SET` at any moment |
 | Read-only table tab | **shared connection** from the pool |
-| Table tab in editing or with an open transaction | **acquires a dedicated sticky**, releases it on commit/rollback |
+| Table or SQL tab in editing (§9.5.1) or with an open transaction | **acquires a dedicated sticky**, releases it on commit/rollback |
 
 The switch from shared to dedicated is a state transition of the tab, to be modelled
 explicitly (and to be shown in the UI: the user must know when a tab "holds"
@@ -377,6 +377,33 @@ time**. Afterwards it cannot be reconstructed.
 > ⚠️ **A column's identity is its POSITION, never its name.**
 > `SELECT a.id, b.id FROM …` produces two columns named `id`. Any
 > `name → column` map in the UI or in the IPC is already a bug.
+
+#### 4.3.1 Source resolution — `result_source` (2026-11-09)
+
+PG captures `table_oid` + `column_attnum` (and the type modifier) from the prepared
+statement's columns: `tokio-postgres` exposes them, the old note that said
+`postgres-protocol` was needed was wrong. MySQL captures `db`, `org_table`, `org_name` from
+the column definitions. Both stay opaque in `ColumnMeta.source`; the names are the
+session's job, through `Connection::resolve_sources` on the catalog lane: MySQL maps the
+definition (an empty `db` is a derived table, never the current database's homonym), PG
+runs **one** `pg_attribute` query for every `(oid, attnum)` pair, cached per session by
+`ColumnSource` and emptied when the sticky is reopened or the app runs DDL (a dropped and
+recreated table gets a new oid, a renamed one keeps it).
+
+`result_source(result_id)` resolves the open result's columns, reads the table's PK,
+nullability and defaults with `columns()` (never cached) and classifies
+(`source::classify`). The result is editable when: one base table; it has a primary key
+(`Capabilities::editable_without_pk`, false on both engines); every PK column is in the
+result **under its own name** and no other column carries that name. Otherwise the answer
+names the reason (`NoSource`, `SeveralTables`, `NoPrimaryKey`, `KeyMissing`, `KeyRenamed`,
+`KeyShadowed`) with what the user has to change in the SELECT. Non-key columns may be
+aliased; computed columns and later copies of a column already in the result stay
+read-only per cell (`columns[i] = null`).
+
+Why the key must keep its name: the session locates the key columns **by name** in the
+result schema (`write_table_batch`, `find_rows`, `AppendTo.key_columns`). Positions are
+what the UI uses; names are the contract with the SQL the app generates. `SELECT id, id`
+is fine (same column, the first copy is the key); `SELECT nome AS id, id` is not.
 
 ### 4.4 `ColumnData` variants
 
@@ -686,7 +713,7 @@ asks only for the visible window.**
 | Connections | `test`, `connect`, `disconnect`, `list_sessions` |
 | Introspection | `list_databases`, `list_objects` (lazy per level), `describe_object`, `refresh` |
 | Execution | `execute` → immediately returns `exec_id`; streaming events on a channel (progress, first rows ready, server notices/warnings, done, error) |
-| Results | `fetch_window(result_id, row_range, col_range)`, `get_cell_full` |
+| Results | `fetch_window(result_id, row_range, col_range)`, `get_cell_full`, `result_source` (§4.3.1), `result_patch_cells` (§9.5.1) |
 | Lifecycle | `release_result`, `cancel(exec_id)` |
 | Export | executed **entirely in Rust to file**, without going through the UI |
 
@@ -821,6 +848,35 @@ through `execute`: before running it the session verifies that it remains **a si
 profiles, applies `check_read_only` and on PG a READ ONLY transaction also for the following
 pages (a function in the WHERE could write).
 
+#### 9.5.1 Editing in SQL tabs (2026-11-09)
+
+The result of a SELECT is editable, like a table tab, when `result_source` (§4.3.1) says
+it comes from one table with its primary key in the result. The machinery is the same
+(`gridEditing.tsx`: `useGridEditing`, `PendingBar`, `BatchDialog`), parametrised by an
+`EditSource` — per result column, the table column it was read from; the key columns by
+position; nullability and defaults. The pending changes belong to one result set per tab
+(`TabUi.edit`: result id, table, numeric columns), set with the first change and cleared
+with the last; saving from the unsaved-changes dialog reads the target from there, so it
+works for a disconnected tab too (the writes are by key).
+
+- A strip above the grid says, in words, why the result is read-only (the reasons of
+  §4.3.1, a read-only profile, rows still arriving, pending changes on another statement
+  of the script) or which table the pending changes write to.
+- v1 = cells and deleted rows (UPDATE / DELETE by PK). Inserts are deferred: the append
+  re-reads the inserted row and compares it with the result's schema, which needs a
+  projection. Deletes only on a complete result: a hidden row under a result that still
+  grows would desynchronise the count.
+- **After a clean save the grid keeps what was typed** (the user's choice, 2026-11-09,
+  unlike the table tab, which re-reads the saved rows): `result_patch_cells` writes the
+  cells into the open result by key, no query, and the strip says that the server's
+  values appear only when the query runs again. `Set DEFAULT` is not offered there: the
+  value would be unknown. Computed columns stay as they were.
+- Guards: a run releases the results, so with pending changes it asks first
+  (`guardUnsaved`); switching statement keeps them (the owning statement is marked);
+  close, disconnect and quit already go through the same question.
+- §5.2 untouched: the user's SQL is never rewritten; the app's SQL is only the UPDATE /
+  DELETE by key, and re-running is the user's SELECT verbatim.
+
 ### 9.6 Colouring by data type
 
 **Decision: text tint**, not background.
@@ -854,9 +910,39 @@ tokens and passed both to the design system and to the Glide theme, otherwise da
 grid diverge. Every class must be contrast-checked on: normal background, alternate
 row, selection, modified cell, error cell — in both themes.
 
-#### 9.6.1 Colour tokens — ✅ `[APPROVED — iter. 4]`
+#### 9.6.1 Colour tokens — ✅ `[APPROVED — iter. 4]` · "Forest" palette (2026-11-09)
 
-Verified with `check_tokens_v4.py`. **Re-run it on every future change.**
+Verified with `scripts/check_tokens.py` (it reads `app/src/tokens.css`, checks gamut and
+contrast, and prints the hex table for `theme.ts`). **Re-run it on every future change.**
+
+##### Forest palette (2026-11-09)
+
+The app icon (a poplar under an arch on green hills) sets the hue of the interface. The
+budget stays per layer, the type colours did not move:
+
+- **data** (`--type-*`, `--state-*`, `--cell-*`): neutral surfaces with a hint of green
+  (hue 150–165, chroma ≤ 0.02), so the grid and the editor stay quiet.
+- **accent** (`--cell-selection-border`, `--state-selection`, focus, primary button): pine
+  green in light (`oklch(42% 0.085 165)`), meadow green in dark (`oklch(76% 0.1 152)`).
+  The blue of the 2026-10-02 mock is gone.
+- **chrome** (`--chrome-*`): activity bar, toolbar and status bar in the deep green of the
+  icon in **both** themes, text in its cream. The connection colour no longer tints the
+  frame: it lives in the profile pill, the tab labels and the avatars, where it is read.
+- **signals**: `--cell-prod` moves from magenta (340°) to red (28°). Production is an
+  alarm and red is the colour every tool uses for it; errors (`--ui-danger`, 25°) are
+  never shown next to a prod marker on the same surface, so the two do not compete.
+
+| Check | Light | Dark |
+|---|---|---|
+| Text × backgrounds (AA 4.5:1), worst | 4.83 | 4.65 |
+| SQL syntax × editor backgrounds (4.5:1), worst | 4.95 | 4.83 |
+| UI (accent, chrome text, 3:1 / 4.5:1), worst | 5.73 | 8.06 |
+| Focus ring `max(inner, outer)` | 19.74 | 17.35 |
+| Selection vs alt | 1.112 | 1.307 |
+
+`--cell-divider` is decorative since the 2026-10-02 mock (1.7–1.9:1): the script reports
+it and does not fail. The ≥3:1 separator of the high-contrast grid option is the Glide
+`cellDivider`, raised there.
 
 ##### Outcome
 
@@ -1604,7 +1690,7 @@ become unreachable**.
 | 4 | Workspace **global or per profile** | Persistence model | Medium |
 | ~~5~~ | ~~Project name~~ | **RESOLVED**: **Alamo** (§13.1) | ✅ |
 | 5b | **Final bundle identifier** — ✅ resolved: `io.github.axel769.alamo` | §13.1. Fixed on 2026-10-01 (replaces the provisional id of 2026-08-07), before any signed build | **Closed** |
-| 6 | **Editing without PK** — block, or generate `UPDATE` matching on all columns (risky)? | Phase M4 | Low |
+| ~~6~~ | ~~Editing without PK~~ | **RESOLVED** (2026-08-06, confirmed 2026-11-09): blocked, in table and SQL tabs alike; `result_source` tells the user why and what to change (§4.3.1) | ✅ |
 | 7 | Final constants (64k rows/chunk, 256–512 MB, 64 KB LOB) | To be confirmed with the M0 measurements, now that the thresholds are fixed (§15, M0). The thresholds a DBA tunes (pause rows 200, table page 500, memory budget 384 MB, idle rollback 15 min, query timeout off) are no longer constants but settings (§16), each with its former value as the default; the chunk and LOB limits stay constants | `[VERIFY M0]` |
 | 8 | **Scope of the "first write" confirmation** — transaction (recommended) or session? | §9.7 | **High** |
 | 9a | ~~Colour tokens~~ | **CLOSED**: §9.6.1 approved (iter. 4, all thresholds pass) | ✅ |

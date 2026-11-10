@@ -441,7 +441,7 @@ struct TunnelSlot {
 
 impl TunnelSlot {
     fn is_closed(&self) -> bool {
-        self.tunnel.as_ref().map_or(true, |t| t.is_closed())
+        self.tunnel.as_ref().is_none_or(|t| t.is_closed())
     }
 }
 
@@ -1066,7 +1066,7 @@ fn effective_executions(
                 let root = siblings.get(id).map(|(root, _)| *root).unwrap_or(*id);
                 (*id, s.clone(), profiles.get(&root).copied())
             })
-            .filter(|(_, _, pid)| only.map_or(true, |only| *pid == Some(only)))
+            .filter(|(_, _, pid)| only.is_none_or(|only| *pid == Some(only)))
             .collect()
     };
     let db = app.state::<Db>();
@@ -2307,6 +2307,37 @@ async fn table_refresh_rows(
         .map_err(|e| ErrorOut::from(&*e))
 }
 
+/// §4.3.1: the table a result set can be written to, with its key, or the
+/// reason it is read-only (SQL tab editing).
+#[tauri::command]
+async fn result_source(
+    state: State<'_, AppState>,
+    conn_id: u64,
+    result_id: u64,
+) -> Result<alamo_session::ResultSourceOut, ErrorOut> {
+    let session = state.session(conn_id).map_err(internal)?;
+    session
+        .result_source(result_id)
+        .await
+        .map_err(|e| ErrorOut::from(&*e))
+}
+
+/// §9.5.1: after a save from a SQL tab, the typed values go into the open
+/// result set by key, no query. Returns the rows not found.
+#[tauri::command]
+fn result_patch_cells(
+    state: State<'_, AppState>,
+    conn_id: u64,
+    result_id: u64,
+    key_cols: Vec<usize>,
+    rows: Vec<alamo_session::PatchRow>,
+) -> Result<u32, ErrorOut> {
+    let session = state.session(conn_id).map_err(internal)?;
+    session
+        .patch_result_cells(result_id, &key_cols, &rows)
+        .map_err(|e| ErrorOut::from(&*e))
+}
+
 /// DDL rebuilt from the catalog (DDL sub-tab, §9.5).
 #[tauri::command]
 async fn table_ddl(
@@ -3412,6 +3443,8 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             table_write_sql_batch,
             table_write_batch,
             table_refresh_rows,
+            result_source,
+            result_patch_cells,
             table_ddl,
             current_database,
             use_database,

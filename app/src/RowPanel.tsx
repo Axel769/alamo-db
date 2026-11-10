@@ -45,7 +45,9 @@ export type RowEdit = {
   /// What a single line cannot hold (see `isLong`, truncated values) is
   /// edited in the cell panel at the bottom.
   onEditInPanel: (col: number) => void;
-  canSetNull: (column: string) => boolean;
+  canSetNull: (col: number) => boolean;
+  /// `false` = the column is read-only (computed, §9.5.1).
+  cellEditable?: (col: number) => boolean;
 };
 
 /// Readable JSON if the value is one; otherwise the text as it is.
@@ -122,7 +124,7 @@ export default function RowPanel({
   };
 
   const startEdit = (i: number) => {
-    if (!edit) return;
+    if (!edit || edit.cellEditable?.(i) === false) return;
     const p = pendingAt?.(i);
     const v = fresh ? undefined : cache.cell(row, i);
     if (p === undefined && v === undefined) return;
@@ -213,7 +215,7 @@ export default function RowPanel({
                 } else if (
                   e.shiftKey &&
                   (e.key === "Delete" || e.key === "Backspace") &&
-                  edit.canSetNull(c.name)
+                  edit.canSetNull(i)
                 ) {
                   e.preventDefault();
                   edit.onEdit(i, null);

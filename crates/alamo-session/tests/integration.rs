@@ -5352,3 +5352,245 @@ async fn connect_gives_up_on_a_silent_server() {
         );
     }
 }
+
+// ---------------------------------------------------------------- result_source (§4.3.1)
+
+/// Runs `sql` on the sticky and gives the id of its result set; a failed
+/// statement names itself.
+async fn select_result(session: &Session, sql: &str) -> u64 {
+    let (c, emit) = collector();
+    session
+        .execute(sql.into(), FetchOptions::default(), emit)
+        .expect("execute");
+    wait_done(&c).await;
+    let failed = c.events.lock().unwrap().iter().find_map(|e| match e {
+        ExecEvent::StatementFinished {
+            outcome: OutcomeOut::Failed { error },
+            ..
+        } => Some(error.message.clone()),
+        _ => None,
+    });
+    if let Some(msg) = failed {
+        panic!("{sql}: {msg}");
+    }
+    table_result(&c).0
+}
+
+/// Every reason a result set stays read-only, and the one shape that is
+/// editable, on the same three throwaway tables for both engines.
+async fn result_source_cases(session: &Session, schema: &str, now: &str) {
+    use alamo_session::NotEditable;
+    let (c, emit) = collector();
+    session
+        .execute(
+            "DROP TABLE IF EXISTS m4_src; DROP TABLE IF EXISTS m4_src2; DROP TABLE IF EXISTS m4_nopk;
+             CREATE TABLE m4_src (id INT PRIMARY KEY, nome VARCHAR(50), n INT DEFAULT 7);
+             CREATE TABLE m4_src2 (k1 INT, k2 INT, v INT, PRIMARY KEY (k1, k2));
+             CREATE TABLE m4_nopk (a INT);
+             INSERT INTO m4_src VALUES (1, 'uno', 1), (2, 'due', 2)"
+                .into(),
+            FetchOptions::default(),
+            emit,
+        )
+        .expect("execute");
+    wait_done(&c).await;
+    let table = format!("{schema}.m4_src");
+    let source = |sql: &str| {
+        let sql = sql.to_string();
+        async move {
+            let rid = select_result(session, &sql).await;
+            session.result_source(rid).await.expect("result_source")
+        }
+    };
+
+    let out = source("SELECT * FROM m4_src").await;
+    assert!(out.editable, "{:?}", out.reason);
+    assert_eq!(out.schema.as_deref(), Some(schema));
+    assert_eq!(out.table.as_deref(), Some("m4_src"));
+    assert_eq!(out.key.len(), 1);
+    assert_eq!((out.key[0].col, out.key[0].name.as_str()), (0, "id"));
+    assert_eq!(
+        out.columns,
+        vec![Some("id".into()), Some("nome".into()), Some("n".into())]
+    );
+    assert_eq!(out.nullable, vec![Some(false), Some(true), Some(true)]);
+    assert!(out.defaults[2].as_deref().is_some_and(|d| d.contains('7')));
+
+    let out = source("SELECT id, id, nome AS alias, n * 2 AS twice FROM m4_src").await;
+    assert!(out.editable, "{:?}", out.reason);
+    assert_eq!(
+        out.columns,
+        vec![Some("id".into()), None, Some("nome".into()), None]
+    );
+
+    let out = source("SELECT id AS k, nome FROM m4_src").await;
+    assert_eq!(
+        out.reason,
+        Some(NotEditable::KeyRenamed {
+            table: table.clone(),
+            columns: vec!["id".into()]
+        })
+    );
+    let out = source("SELECT nome, n FROM m4_src").await;
+    assert_eq!(
+        out.reason,
+        Some(NotEditable::KeyMissing {
+            table: table.clone(),
+            columns: vec!["id".into()]
+        })
+    );
+    let out = source("SELECT nome AS id, id FROM m4_src").await;
+    assert_eq!(
+        out.reason,
+        Some(NotEditable::KeyShadowed {
+            table: table.clone(),
+            columns: vec!["id".into()]
+        })
+    );
+    let out = source("SELECT k1, v FROM m4_src2").await;
+    assert_eq!(
+        out.reason,
+        Some(NotEditable::KeyMissing {
+            table: format!("{schema}.m4_src2"),
+            columns: vec!["k2".into()]
+        })
+    );
+    let out = source("SELECT * FROM m4_nopk").await;
+    assert_eq!(
+        out.reason,
+        Some(NotEditable::NoPrimaryKey {
+            table: format!("{schema}.m4_nopk")
+        })
+    );
+    let out = source("SELECT a.id, b.v FROM m4_src a JOIN m4_src2 b ON b.k1 = a.id").await;
+    assert_eq!(
+        out.reason,
+        Some(NotEditable::SeveralTables {
+            tables: vec![table.clone(), format!("{schema}.m4_src2")]
+        })
+    );
+    let out = source(&format!("SELECT 1 + 1 AS two, {now}")).await;
+    assert_eq!(out.reason, Some(NotEditable::NoSource));
+    assert_eq!(out.columns, vec![None, None]);
+
+    // Gone from the catalog after the result was read: no source, not a crash.
+    let rid = select_result(session, "SELECT a FROM m4_nopk").await;
+    let (c, emit) = collector();
+    session
+        .execute("DROP TABLE m4_nopk".into(), FetchOptions::default(), emit)
+        .expect("execute");
+    wait_done(&c).await;
+    let out = session.result_source(rid).await.expect("result_source");
+    assert!(!out.editable);
+
+    let (c, emit) = collector();
+    session
+        .execute(
+            "DROP TABLE m4_src; DROP TABLE m4_src2".into(),
+            FetchOptions::default(),
+            emit,
+        )
+        .expect("execute");
+    wait_done(&c).await;
+}
+
+#[tokio::test]
+async fn result_source_pg() {
+    let url = require_url!();
+    let session = Session::connect(&url).await.expect("connection");
+    result_source_cases(&session, "public", "now()").await;
+}
+
+#[tokio::test]
+async fn result_source_mysql() {
+    let url = require_mysql!();
+    let session = Session::connect(&url).await.expect("connection");
+    result_source_cases(&session, "alamo_bench", "NOW()").await;
+    // A derived table has no base table behind it: read-only, not the
+    // current database's homonym.
+    let rid = select_result(&session, "SELECT d.id FROM (SELECT 1 AS id) d").await;
+    let out = session.result_source(rid).await.expect("result_source");
+    assert_eq!(out.reason, Some(alamo_session::NotEditable::NoSource));
+}
+
+/// §9.5.1: the typed values land in the open result by key, aliases and
+/// local sort notwithstanding; a key nobody has is counted, not an error.
+async fn patch_cells_keeps_typed_values(session: &Session) {
+    use alamo_session::PatchRow;
+    let (c, emit) = collector();
+    session
+        .execute(
+            "DROP TABLE IF EXISTS m4_patch;
+             CREATE TABLE m4_patch (id INT PRIMARY KEY, nome VARCHAR(50), n INT);
+             INSERT INTO m4_patch VALUES (1, 'uno', 1), (2, 'due', 2), (3, 'tre', 3)"
+                .into(),
+            FetchOptions::default(),
+            emit,
+        )
+        .expect("execute");
+    wait_done(&c).await;
+    let rid = select_result(
+        session,
+        "SELECT id, nome AS label, n FROM m4_patch ORDER BY id",
+    )
+    .await;
+    let missing = session
+        .patch_result_cells(
+            rid,
+            &[0],
+            &[
+                PatchRow {
+                    key: vec![Some("2".into())],
+                    set: vec![(1, Some("DUE".into())), (2, None)],
+                },
+                PatchRow {
+                    key: vec![Some("9".into())],
+                    set: vec![(1, Some("nessuno".into()))],
+                },
+            ],
+        )
+        .expect("patch");
+    assert_eq!(missing, 1);
+    let live = session.registry.result(rid).expect("result");
+    let w = live.window(0..3, 0..3);
+    assert_eq!(w.columns[1].values[1], "DUE");
+    assert!(w.columns[2].nulls[1], "n of row 2 is NULL now");
+    assert_eq!(w.columns[1].values[0], "uno", "the other rows did not move");
+    assert_eq!(w.columns[1].values[2], "tre");
+    assert!(
+        session.patch_result_cells(rid, &[], &[]).is_err(),
+        "no key columns is refused"
+    );
+    assert!(
+        session
+            .patch_result_cells(
+                rid,
+                &[7],
+                &[PatchRow {
+                    key: vec![None],
+                    set: vec![]
+                }]
+            )
+            .is_err(),
+        "a column outside the result is refused"
+    );
+    let (c, emit) = collector();
+    session
+        .execute("DROP TABLE m4_patch".into(), FetchOptions::default(), emit)
+        .expect("execute");
+    wait_done(&c).await;
+}
+
+#[tokio::test]
+async fn patch_cells_keeps_typed_values_pg() {
+    let url = require_url!();
+    let session = Session::connect(&url).await.expect("connection");
+    patch_cells_keeps_typed_values(&session).await;
+}
+
+#[tokio::test]
+async fn patch_cells_keeps_typed_values_mysql() {
+    let url = require_mysql!();
+    let session = Session::connect(&url).await.expect("connection");
+    patch_cells_keeps_typed_values(&session).await;
+}

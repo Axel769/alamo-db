@@ -2,6 +2,7 @@
 // before Commit — on prod the Commit button opens it, everywhere the
 // transaction badge does. Enter commits, Esc closes.
 import { useEffect, useState } from "react";
+import { ProdTag } from "./ProdTag";
 import { ipc, Profile, TxnLog } from "./ipc";
 import { asErrorOut } from "./errors";
 import { connColor } from "./connColor";
@@ -63,7 +64,7 @@ export default function TxnLogDialog({
               : log.total === 1
                 ? t("Open transaction: 1 uncommitted write")
                 : t("Open transaction: {n} uncommitted writes", { n: log.total.toLocaleString(locale()) })}
-            {profile?.is_production && <span className="prod-tag"> {t("production")}</span>}
+            {profile?.is_production && <> <ProdTag long /></>}
           </span>
           <button className="btn small dialog-close" onClick={onClose}>
             <IconX />

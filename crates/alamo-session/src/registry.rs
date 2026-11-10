@@ -252,6 +252,12 @@ impl LiveResult {
         out
     }
 
+    /// Current values of a physical row, patches included.
+    pub fn row_values(&self, phys: u64) -> Vec<Option<String>> {
+        let n = self.schema().len();
+        self.with_result(|r| (0..n).map(|c| self.cell_phys(r, phys, c)).collect())
+    }
+
     /// Replaces the values of a physical row with the re-read ones.
     pub fn patch_row(&self, phys: u64, values: Vec<Option<String>>) {
         self.patches

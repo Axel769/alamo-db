@@ -132,6 +132,25 @@ const IT: Record<string, string> = {
   "The paused query in “{tab}” is still stopping on the server: try again in a moment.": "La query in pausa in “{tab}” si sta ancora fermando sul server: riprova tra un momento.",
   "Connection lost and reconnection failed: {msg}. Try again when the network is back.": "Connessione persa e riconnessione non riuscita: {msg}. Riprova quando la rete torna.",
   "Unsaved changes": "Modifiche non salvate",
+  // Editing in SQL tabs (§9.5.1)
+  "Read-only: the result joins several tables ({tables})": "Sola lettura: il risultato unisce più tabelle ({tables})",
+  "Read-only: no column comes from a table": "Sola lettura: nessuna colonna proviene da una tabella",
+  "Read-only: {table} has no primary key": "Sola lettura: {table} non ha una chiave primaria",
+  "Read-only: the primary key of {table} is not in the result ({cols}) — add it to the SELECT":
+    "Sola lettura: la chiave primaria di {table} non è nel risultato ({cols}): aggiungila alla SELECT",
+  "Read-only: the key column {cols} is renamed in the result — select it with its own name":
+    "Sola lettura: la colonna chiave {cols} è rinominata nel risultato: selezionala con il suo nome",
+  "Read-only: another column of the result is named like the key column {cols} — rename it":
+    "Sola lettura: un'altra colonna del risultato si chiama come la colonna chiave {cols}: rinominala",
+  "Read-only: the profile is read-only": "Sola lettura: il profilo è in sola lettura",
+  "Read-only while the rows are arriving": "Sola lettura finché arrivano le righe",
+  "Unsaved changes in statement {n}: save or discard them before editing this result":
+    "Modifiche non salvate nello statement {n}: salvale o annullale prima di modificare questo risultato",
+  "Cannot tell whether the result can be edited: {msg}": "Impossibile sapere se il risultato è modificabile: {msg}",
+  "Saved. The grid shows what you typed: run the query again to see the server's values.":
+    "Salvato. La griglia mostra ciò che hai scritto: riesegui la query per vedere i valori del server.",
+  "Writes to {table}": "Scrive su {table}",
+  "Computed columns cannot be edited": "Le colonne calcolate non si possono modificare",
   "There is 1 unsaved change in:": "C'è 1 modifica non salvata in:",
   "There are {n} unsaved changes in:": "Ci sono {n} modifiche non salvate in:",
   "tab disconnected: reconnect the profile to save": "tab scollegata: riconnetti il profilo per salvare",

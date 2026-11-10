@@ -1,0 +1,1136 @@
+// Editing of a result grid (M4, §9.5.1): the cells and rows kept pending
+// on the tab, their saving as a batch of UPDATE / INSERT / DELETE by
+// primary key, the bar with the counts and Save / View SQL / Discard, and
+// the dialog with the SQL and the outcome. Shared by the table tab and the
+// SQL tab: what differs is the `EditSource` — where the result's columns
+// come from and which of them are the key — and what happens to the grid
+// after a save. Columns are identified by position (§4.3): the source
+// names are read from the arrays of `EditSource`, never looked up.
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AppendTo,
+  BatchUpdateOut,
+  CellAssign,
+  ColumnInfoOut,
+  ColumnOut,
+  DEFAULT_CELL,
+  ErrorOut,
+  ErrorOut as ErrorOutType,
+  ipc,
+  isDefaultCell,
+  NotEditable,
+  PendingValue,
+  Profile,
+  ResultSourceOut,
+  RowUpdate,
+  TableWrite,
+} from "./ipc";
+import {
+  EditTarget,
+  NewRow,
+  PendingEdits,
+  pendingRowId,
+  StatementUi,
+  TableRef,
+  TabUi,
+  unsavedCount,
+  useStore,
+} from "./store";
+import { locale, t } from "./i18n";
+import { useAction, withKey } from "./keymap";
+import { ErrorPanel } from "./ResultPane";
+import { cacheFor } from "./rowCache";
+import { makePermanent } from "./tabs";
+import { asErrorOut } from "./errors";
+import { numericColumns, pendingToWrites, settleWrites } from "./pending";
+import { freeStickyForGridSave } from "./sticky";
+import { ProdTag } from "./ProdTag";
+import { tMsg } from "./i18n";
+import { IconDuplicate, IconLock, IconPlus, IconTrash, IconX } from "./icons";
+import { commitCellEditor } from "./GridView";
+import type { RowActions, RowsHandle, SortSpec } from "./GridView";
+
+/// Where the cells of a result set are written to, by position.
+export type EditSource = {
+  connId: number;
+  resultId: number;
+  schema: string;
+  table: string;
+  /// Result column → name of the table column it was read from; `null` =
+  /// computed, or a later copy of a column already in the result: read-only.
+  colSource: (string | null)[];
+  /// The primary key, in constraint order: result column and table name.
+  key: { col: number; name: string }[];
+  isKey: boolean[];
+  /// Per result column: whether NULL is accepted (`true` when unknown) and
+  /// the declared default.
+  nullable: boolean[];
+  defaults: (string | null)[];
+  /// Table columns whose values are written bare (MySQL BIT).
+  numeric: Set<string>;
+};
+
+/// The table tab: the result is a `SELECT *` of the table, so the result
+/// names are the table's. The names are matched once, here; everything
+/// after goes by position. `null` without a primary key (decision 6).
+export function editSourceFromTable(
+  connId: number,
+  resultId: number,
+  table: TableRef,
+  columns: ColumnOut[],
+  info: ColumnInfoOut[]
+): EditSource | null {
+  const byName = new Map(info.map((c) => [c.name, c]));
+  const pk = info.filter((c) => c.is_primary_key).sort((a, b) => a.ordinal - b.ordinal);
+  const key: EditSource["key"] = [];
+  for (const k of pk) {
+    const col = columns.findIndex((c) => c.name === k.name);
+    if (col < 0) return null;
+    key.push({ col, name: k.name });
+  }
+  if (key.length === 0) return null;
+  const keyCols = new Set(key.map((k) => k.col));
+  return {
+    connId,
+    resultId,
+    schema: table.schema,
+    table: table.name,
+    colSource: columns.map((c) => (byName.has(c.name) ? c.name : null)),
+    key,
+    isKey: columns.map((_, i) => keyCols.has(i)),
+    nullable: columns.map((c) => byName.get(c.name)?.nullable ?? true),
+    defaults: columns.map((c) => byName.get(c.name)?.default ?? null),
+    numeric: numericColumns(columns),
+  };
+}
+
+/// The SQL tab (§9.5.1): the backend resolved every column to its table;
+/// `null` when the result cannot be edited (the reason is in `out`).
+export function editSourceFromResult(
+  connId: number,
+  resultId: number,
+  columns: ColumnOut[],
+  out: ResultSourceOut
+): EditSource | null {
+  if (!out.editable || out.schema === null || out.table === null || out.key.length === 0) return null;
+  const keyCols = new Set(out.key.map((k) => k.col));
+  return {
+    connId,
+    resultId,
+    schema: out.schema,
+    table: out.table,
+    colSource: out.columns,
+    key: out.key,
+    isKey: columns.map((_, i) => keyCols.has(i)),
+    nullable: out.nullable.map((n) => n ?? true),
+    defaults: out.defaults,
+    numeric: new Set(
+      columns.flatMap((c, i) => (c.type_display === "bit" && out.columns[i] ? [out.columns[i] as string] : []))
+    ),
+  };
+}
+
+/// Asks the backend once per result set whether it can be edited, and
+/// keeps the answer on the statement.
+export function useResultSource(
+  tab: TabUi,
+  st: StatementUi | undefined
+): { source: EditSource | null; reason: NotEditable | null; error: ErrorOutType | null } {
+  const connId = tab.connId;
+  const resultId = st?.resultId ?? null;
+  const columns = st?.columns ?? null;
+  const asked = st?.source;
+  const [error, setError] = useState<{ resultId: number; error: ErrorOutType } | null>(null);
+  useEffect(() => {
+    if (connId === null || resultId === null || !columns || asked !== undefined) return;
+    let alive = true;
+    ipc
+      .resultSource(connId, resultId)
+      .then((out) => {
+        if (alive) useStore.getState().setStatementSource(tab.id, resultId, out);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setError({ resultId, error: asErrorOut(e) });
+        useStore.getState().setStatementSource(tab.id, resultId, null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [connId, resultId, columns, asked, tab.id]);
+  const source = useMemo(
+    () => (connId !== null && resultId !== null && columns && asked ? editSourceFromResult(connId, resultId, columns, asked) : null),
+    [connId, resultId, columns, asked]
+  );
+  return {
+    source,
+    reason: asked?.reason ?? null,
+    error: error && error.resultId === resultId ? error.error : null,
+  };
+}
+
+/// Why a result stays read-only, in the user's words.
+export function reasonText(r: NotEditable): string {
+  const cols = "columns" in r ? r.columns.join(", ") : "";
+  switch (r.kind) {
+    case "no_source":
+      return t("Read-only: no column comes from a table");
+    case "several_tables":
+      return t("Read-only: the result joins several tables ({tables})", { tables: r.tables.join(", ") });
+    case "no_primary_key":
+      return t("Read-only: {table} has no primary key", { table: r.table });
+    case "key_missing":
+      return t("Read-only: the primary key of {table} is not in the result ({cols}) — add it to the SELECT", {
+        table: r.table,
+        cols,
+      });
+    case "key_renamed":
+      return t("Read-only: the key column {cols} is renamed in the result — select it with its own name", { cols });
+    case "key_shadowed":
+      return t("Read-only: another column of the result is named like the key column {cols} — rename it", { cols });
+  }
+}
+
+export function ReadOnlyNote({ text, title }: { text: string; title?: string }) {
+  return (
+    <span className="read-only-note" title={title}>
+      <IconLock size={12} />
+      {text}
+    </span>
+  );
+}
+
+/// The backend could not say: the message, with the detail one hover away.
+export function readOnlyErrorText(e: ErrorOutType): string {
+  return t("Cannot tell whether the result can be edited: {msg}", { msg: tMsg(e.message) });
+}
+
+/// Save of the pending changes in the dialog: preview ("View SQL", in
+/// confirm) or outcome to show (error, rows ≠ 1). `sql` is the preview
+/// generated by the backend from the SAME parameters it then executes.
+export type BatchState = {
+  /// DELETEs, UPDATEs of the cells and INSERTs of the new rows, in execution order.
+  writes: TableWrite[];
+  sql: string;
+  /// Changed cells + new rows (the unchanged ones are skipped).
+  cells: number;
+  phase: "confirm" | "running" | "done";
+  result: BatchUpdateOut | null;
+  /// Command refused (lane busy, validation): no outcome.
+  error: ErrorOut | null;
+  /// Saved rows already brought into the grid: no reload on close.
+  refreshed?: boolean;
+};
+
+type Cell = { row: number; col: number; value: PendingValue };
+type Rect = { x: number; y: number; width: number; height: number };
+
+export type GridEditing = {
+  /// Cells can be edited now.
+  editable: boolean;
+  nUnsaved: number;
+  nPending: number;
+  nNew: number;
+  nDeleted: number;
+  saving: boolean;
+  batch: BatchState | null;
+  stage: (cells: Cell[]) => Promise<void>;
+  save: () => Promise<void>;
+  preview: () => Promise<void>;
+  discard: () => void;
+  runBatch: () => Promise<void>;
+  closeBatch: () => void;
+  addRow: () => void;
+  duplicateRows: (rows: number[]) => Promise<void>;
+  deleteRows: (rows: number[]) => Promise<void>;
+  deletedAt: ((row: number) => boolean) | undefined;
+  /// Rows touched by the grid selection and whether they are all marked
+  /// for deletion (the Delete button becomes Restore).
+  selRows: number[];
+  selAllDeleted: boolean;
+  /// The props of `StatementPane` that make the grid editable.
+  paneProps: {
+    editable: boolean;
+    cellEditable: (col: number) => boolean;
+    onEditCell: (row: number, col: number, value: PendingValue) => void;
+    pendingAt: ((row: number, col: number) => PendingValue | undefined) | undefined;
+    canSetNull: (col: number) => boolean;
+    columnDefault: (col: number) => string | null;
+    onEditCells: (rect: Rect, value: PendingValue) => void;
+    onPasteCells: (row: number, col: number, values: string[][]) => void;
+    extraRows: { after: readonly number[]; cell: (i: number, col: number) => PendingValue } | undefined;
+    focusCell: { col: number; row: number; nonce: number } | undefined;
+    rowActions: RowActions | undefined;
+  };
+};
+
+export function useGridEditing({
+  tab,
+  st,
+  source,
+  blocked,
+  stale,
+  rows,
+  active,
+  afterSave,
+  reload,
+  localSort,
+  onSaved,
+}: {
+  tab: TabUi;
+  st: StatementUi | undefined;
+  source: EditSource | null;
+  /// Nothing can be edited (read-only profile, result still arriving…).
+  blocked: boolean;
+  /// Old data kept on screen during a re-query: not editable, but the
+  /// row actions stay.
+  stale: boolean;
+  /// `full` = add, duplicate and delete rows; `cells` = cells and delete only.
+  rows: "full" | "cells";
+  /// The keyboard shortcuts (Save, Discard) apply.
+  active: boolean;
+  /// How a clean save reaches the grid: the table tab re-reads the saved
+  /// rows from the server, the SQL tab keeps what was typed (§9.5.1).
+  afterSave: "refresh" | "patch";
+  /// When the grid cannot be updated in place.
+  reload: () => void;
+  localSort: SortSpec | null;
+  /// After a clean save that reached the grid.
+  onSaved?: () => void;
+}): GridEditing {
+  const connId = source?.connId ?? null;
+  const [batch, setBatch] = useState<BatchState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [selRows, setSelRows] = useState<number[]>([]);
+  const [focusCell, setFocusCell] = useState<{ col: number; row: number; nonce: number } | undefined>();
+  /// The grid's rows: where new rows go (below the selection, like
+  /// DBeaver) and where the cursor lands after a save.
+  const gridRows = useRef<RowsHandle | null>(null);
+
+  // Another table (navigation inside the tab): the dialog of the previous
+  // one goes.
+  useEffect(() => setBatch(null), [source?.schema, source?.table]);
+
+  const pending = tab.pending;
+  // New rows ("+ Row"): row `st.rows + i` for the grid's callbacks, on
+  // screen below the row they were added under (`NewRow.after`).
+  const newRows = tab.newRows;
+  const nNew = newRows.length;
+  // Rows to delete (Delete key / "Delete"): by PK id.
+  const deleted = tab.deleted;
+  const nDeleted = Object.keys(deleted).length;
+  const nUnsaved = unsavedCount(tab);
+  // Edited cells that Save writes (not those of the rows to delete).
+  const nPending = nUnsaved - nNew - nDeleted;
+  const stc = st?.columns ?? null;
+  const resultId = st?.resultId ?? null;
+  const ready = source !== null && stc !== null && resultId !== null && resultId === source.resultId;
+  const editable = ready && !blocked && !stale;
+
+  const cellEditable = (col: number) => source?.colSource[col] != null;
+  const canSetNull = (col: number) => source?.nullable[col] ?? true;
+  const columnDefault = (col: number) => source?.defaults[col] ?? null;
+
+  /// Marks the tab as editing this result set: `savePendingEdits` and the
+  /// unsaved-changes question read the target from here, even once the
+  /// result is gone.
+  const markEdit = () => {
+    if (!source) return;
+    const s = useStore.getState();
+    const cur = s.tabs.find((x) => x.id === tab.id);
+    if (!cur) return;
+    const target: EditTarget = {
+      resultId: source.resultId,
+      schema: source.schema,
+      table: source.table,
+      numeric: [...source.numeric],
+    };
+    if (cur.edit?.resultId !== target.resultId || cur.edit.table !== target.table) s.setEdit(tab.id, target);
+    // Preview tab: with changes it becomes permanent, otherwise the next
+    // click in the tree would replace it, taking the changes away.
+    if (cur.preview) makePermanent(tab.id);
+  };
+
+  /// PK key of the row, with the current values from the cache. PK truncated
+  /// in the window (>4KB): the full value via getCellFull. `null` = cell not
+  /// in cache (rare race: the block is requested, the user retries).
+  const rowKey = async (row: number): Promise<CellAssign[] | null> => {
+    if (!ready || !stc || resultId === null || connId === null) return null;
+    const cache = cacheFor(connId, resultId, stc.length);
+    const key: CellAssign[] = [];
+    for (const k of source.key) {
+      const cell = cache.cell(row, k.col);
+      if (cell === undefined) {
+        cache.request(row);
+        return null;
+      }
+      const v = cell.truncated
+        ? await ipc.getCellFull(connId, resultId, row, k.col)
+        : cell.isNull
+          ? null
+          : cell.v;
+      key.push({ column: k.name, value: v });
+    }
+    return key;
+  };
+
+  /// Puts the cells in pending. A cell brought back to the read value leaves
+  /// pending; NULL on a NOT NULL column is skipped (introspection), as is a
+  /// computed column. All or nothing: a block not in cache is requested and
+  /// the edit dropped — the changes would end up on rows other than the
+  /// ones shown.
+  // One stage at a time, in order: the cell panel stages at every
+  // keystroke and a stage awaits (row key, full value) — an older one
+  // finishing later would put back an older text.
+  const stageChain = useRef<Promise<void>>(Promise.resolve());
+  const stage = (cells: Cell[]): Promise<void> => {
+    const run = stageChain.current.then(() => stageNow(cells));
+    stageChain.current = run.catch(() => {});
+    return run;
+  };
+  const stageNow = async (cells: Cell[]) => {
+    if (batch || saving || tab.running || !editable || !stc || resultId === null || connId === null || !st) return;
+    cells = cells.filter((c) => cellEditable(c.col));
+    // Cells of the new rows: they change the pending row, no UPDATE.
+    const onNew = cells.filter((c) => c.row >= st.rows);
+    if (onNew.length > 0) {
+      const s = useStore.getState();
+      const rows = [...(s.tabs.find((x) => x.id === tab.id)?.newRows ?? [])];
+      for (const { row, col, value } of onNew) {
+        const column = source.colSource[col];
+        const i = row - st.rows;
+        if (!column || !rows[i]) continue;
+        if (value === null && !canSetNull(col)) continue;
+        rows[i] = { ...rows[i], values: { ...rows[i].values, [column]: value } };
+      }
+      s.setNewRows(tab.id, rows);
+      markEdit();
+      cells = cells.filter((c) => c.row < st.rows);
+      if (cells.length === 0) return;
+    }
+    const cache = cacheFor(connId, resultId, stc.length);
+    // A whole column covers rows never scrolled to: their blocks first.
+    const first = cells.reduce((m, c) => Math.min(m, c.row), Infinity);
+    const last = cells.reduce((m, c) => Math.max(m, c.row), -1);
+    await cache.ensure(first, last + 1);
+    const keys = new Map<number, CellAssign[]>();
+    const changes: { key: CellAssign[]; column: string; value: PendingValue; same: boolean }[] = [];
+    for (const { row, col, value } of cells) {
+      const column = source.colSource[col];
+      if (!column) continue;
+      const cur = cache.cell(row, col);
+      if (cur === undefined) {
+        cache.request(row);
+        return;
+      }
+      if (value === null && !canSetNull(col)) continue;
+      // Truncated: compared with the full value (the cell panel edits it
+      // and its Esc writes it back), read only when the piece matches.
+      // DEFAULT is never "equal": the server decides the value.
+      const same = isDefaultCell(value)
+        ? false
+        : value === null
+          ? cur.isNull
+          : cur.isNull
+            ? false
+            : !cur.truncated
+              ? value === cur.v
+              : value.startsWith(cur.v) &&
+                value === (await ipc.getCellFull(connId, resultId, row, col).catch(() => null));
+      let key = keys.get(row);
+      if (!key) {
+        const k = await rowKey(row);
+        if (!k) return;
+        keys.set(row, k);
+        key = k;
+      }
+      changes.push({ key, column, value, same });
+    }
+    if (changes.length === 0) return;
+    // Fresh state: rowKey is async, it may have changed in the meantime.
+    const s = useStore.getState();
+    const next: PendingEdits = { ...(s.tabs.find((x) => x.id === tab.id)?.pending ?? {}) };
+    for (const ch of changes) {
+      const id = pendingRowId(ch.key.map((k) => k.value));
+      const row = next[id] ? { key: next[id].key, set: { ...next[id].set } } : { key: ch.key, set: {} };
+      if (ch.same) delete row.set[ch.column];
+      else row.set[ch.column] = ch.value;
+      if (Object.keys(row.set).length > 0) next[id] = row;
+      else delete next[id];
+    }
+    s.setPending(tab.id, next);
+    if (Object.keys(next).length > 0) markEdit();
+    else if (unsavedCount({ pending: next, newRows: s.tabs.find((x) => x.id === tab.id)?.newRows ?? [], deleted }) === 0)
+      s.setEdit(tab.id, null);
+  };
+
+  /// Row id (`pendingRowId`) of a grid row from the key values in cache;
+  /// `undefined` with a key not in cache or truncated (edge case: no
+  /// highlight).
+  const keyIdx = source?.key.map((k) => k.col) ?? [];
+  const keyKey = keyIdx.join(",");
+  const rowIdAt = useMemo(() => {
+    if (!ready || !stc || resultId === null || connId === null || keyIdx.length === 0) return undefined;
+    const cache = cacheFor(connId, resultId, stc.length);
+    return (row: number): string | undefined => {
+      const vals: (string | null)[] = [];
+      for (const i of keyIdx) {
+        const cell = cache.cell(row, i);
+        if (cell === undefined || cell.truncated) return undefined;
+        vals.push(cell.isNull ? null : cell.v);
+      }
+      return pendingRowId(vals);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, stc, resultId, connId, keyKey]);
+
+  /// Pending value of the cell, for the grid.
+  const pendingAt = useMemo(() => {
+    if (!rowIdAt || !source || Object.keys(pending).length === 0) return undefined;
+    return (row: number, col: number): PendingValue | undefined => {
+      const id = rowIdAt(row);
+      if (id === undefined) return undefined;
+      const pr = pending[id];
+      const name = source.colSource[col];
+      if (!pr || !name || !Object.prototype.hasOwnProperty.call(pr.set, name)) return undefined;
+      return pr.set[name];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, rowIdAt, source]);
+
+  /// Real row marked for deletion, for the grid.
+  const deletedAt = useMemo(() => {
+    if (!rowIdAt || nDeleted === 0) return undefined;
+    return (row: number): boolean => {
+      const id = rowIdAt(row);
+      return id !== undefined && id in deleted;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleted, nDeleted, rowIdAt]);
+
+  const pendingWrites = (): TableWrite[] =>
+    pendingToWrites({ pending, newRows, deleted }, source?.numeric ?? new Set());
+  const settle = (writes: TableWrite[], result: BatchUpdateOut) => {
+    if (connId !== null) settleWrites(tab.id, connId, writes, result);
+  };
+
+  /// Where the backend appends the inserted rows: the open result set, with
+  /// the PK to re-read them where there is no RETURNING, and `at`, the
+  /// screen row of each one (see `rowLayout`) so it stays there — not with
+  /// the local sort, which sorts them anyway.
+  const appendTo = (): AppendTo | null =>
+    ready && st && resultId !== null
+      ? {
+          result_id: resultId,
+          key_columns: source.key.map((k) => k.name),
+          at: localSort ? [] : newRows.map((r, i) => Math.min(Math.max(r.after, -1), st.rows - 1) + 1 + i),
+        }
+      : null;
+
+  /// After a clean save updates the grid in place, without reloading
+  /// (scroll, selection and pages stay): the edited rows are re-read from
+  /// the database or patched with the typed values, the inserted ones were
+  /// already appended by the backend (`appended`) and here the count is
+  /// extended. `false` = it did not work (row not found, inserted row not
+  /// re-read, error): reload.
+  const refreshSaved = async (writes: TableWrite[], result: BatchUpdateOut): Promise<boolean> => {
+    if (!ready || !st || !stc || resultId === null || connId === null) return false;
+    const inserts = writes.filter((w) => w.kind === "insert").length;
+    const deletes = writes.filter((w) => w.kind === "delete").length;
+    if (result.appended !== inserts || result.removed !== deletes) return false;
+    const cache = cacheFor(connId, resultId, stc.length);
+    if (deletes > 0 || inserts > 0) {
+      // Rows removed from the view or inserted in the middle: everything
+      // below shifts, the loaded blocks are re-read (the old stays on
+      // screen until the new arrives).
+      await cache.refreshLoaded();
+      useStore.getState().setStatementRows(tab.id, resultId, result.rows ?? st.rows + inserts - deletes);
+    }
+    const updates: RowUpdate[] = writes.flatMap((w) => (w.kind === "update" ? [w] : []));
+    if (updates.length === 0) return true;
+    try {
+      if (afterSave === "refresh") {
+        const out = await ipc.tableRefreshRows(connId, source.schema, source.table, resultId, updates);
+        if (out.missing > 0) return false;
+      } else {
+        // The typed values, by result column; DEFAULT is the server's
+        // choice and stays as it was until the query runs again.
+        const colOf = new Map<string, number>();
+        source.colSource.forEach((name, i) => {
+          if (name && !colOf.has(name)) colOf.set(name, i);
+        });
+        const rows = updates.map((u) => ({
+          key: u.key.map((k) => k.value),
+          set: u.set.flatMap((a): [number, string | null][] => {
+            const col = colOf.get(a.column);
+            return col === undefined || a.default ? [] : [[col, a.value]];
+          }),
+        }));
+        const missing = await ipc.resultPatchCells(connId, resultId, keyIdx, rows);
+        if (missing > 0) return false;
+      }
+      await cache.refreshLoaded();
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  };
+
+  const isClean = (r: BatchUpdateOut) => !r.error && r.applied.every((n) => n === 1);
+
+  /// After a save that moved rows (deleted ones gone, new ones real): the
+  /// cursor back on its row. `cursor` read before the save, while the rows
+  /// to delete were still on screen. With the local sort the grid re-sorts.
+  const keepCursor = (cursor: readonly [number, number] | null, writes: TableWrite[]) => {
+    if (!cursor || localSort || writes.every((w) => w.kind === "update")) return;
+    setFocusCell({ col: cursor[0], row: cursor[1], nonce: Date.now() });
+  };
+
+  /// Save (Cmd+S): one statement per row, atomic on the shared connection,
+  /// no dialog. The dialog appears only if there is something to say:
+  /// error or affected rows ≠ 1.
+  const save = async () => {
+    if (batch || saving || !source || connId === null || tab.running || blocked || nUnsaved === 0) return;
+    const writes = pendingWrites();
+    const cursor = gridRows.current?.cursorAfterSave() ?? null;
+    setSaving(true);
+    try {
+      await freeStickyForGridSave(connId);
+      const result = await ipc.tableWriteBatch(connId, source.schema, source.table, writes, appendTo());
+      if (isClean(result)) {
+        // First the new values in the grid, then the highlight goes: the
+        // other way round the old values would show for an instant.
+        const ok = await refreshSaved(writes, result);
+        settle(writes, result);
+        if (ok) {
+          keepCursor(cursor, writes);
+          onSaved?.();
+        } else reload();
+        return;
+      }
+      settle(writes, result);
+      const sql = await ipc.tableWriteSqlBatch(connId, source.schema, source.table, writes).catch(() => "");
+      setBatch({ writes, sql, cells: nUnsaved, phase: "done", result, error: null });
+    } catch (e) {
+      // Command refused (lane busy, validation): nothing started. Shown in
+      // the dialog, from where it can be retried.
+      const sql = await ipc.tableWriteSqlBatch(connId, source.schema, source.table, writes).catch(() => "");
+      setBatch({ writes, sql, cells: nUnsaved, phase: "confirm", result: null, error: asErrorOut(e) });
+    } finally {
+      setSaving(false);
+    }
+  };
+  // Cmd+S from the global listener: always the version of this render.
+  // With the cell editor still open its text is saved too: the editor
+  // closes, the value goes pending (stage), then the save of the render
+  // that sees it. The editor is closed a task later: Glide answers every
+  // key (⌘S too) with a timeout that would read the Enter's motion and
+  // close it discarding the text.
+  useAction("table.save", () => {
+    if (!active) return false;
+    const nextTask = () => new Promise((r) => window.setTimeout(r, 0));
+    void (async () => {
+      await nextTask();
+      if (commitCellEditor()) await nextTask();
+      await stageChain.current;
+      await nextTask();
+      await save();
+    })();
+    return true;
+  });
+  useAction("table.discard", () => {
+    if (!active || saving || nUnsaved === 0) return false;
+    discard();
+    return true;
+  });
+
+  /// "View SQL": the statements that Save would run, in the confirmation dialog.
+  const preview = async () => {
+    if (batch || saving || !source || connId === null || nUnsaved === 0) return;
+    const writes = pendingWrites();
+    try {
+      const sql = await ipc.tableWriteSqlBatch(connId, source.schema, source.table, writes);
+      setBatch({ writes, sql, cells: nUnsaved, phase: "confirm", result: null, error: null });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const discard = () => {
+    const s = useStore.getState();
+    s.setPending(tab.id, {});
+    s.setNewRows(tab.id, []);
+    s.setDeleted(tab.id, {});
+    s.setEdit(tab.id, null);
+  };
+
+  /// Rows can be added, duplicated and deleted: editable result with a
+  /// key, nothing running or being saved.
+  const canEditRows = () => !batch && !saving && ready && !tab.running && !blocked;
+
+  /// Inserts new rows at the grid's slot and moves the focus to the first
+  /// of them.
+  const pushNewRows = (added: Record<string, PendingValue>[]) => {
+    if (added.length === 0 || !st) return;
+    const s = useStore.getState();
+    const rows = [...(s.tabs.find((x) => x.id === tab.id)?.newRows ?? [])];
+    const slot = gridRows.current?.slot() ?? { after: st.rows - 1, index: rows.length };
+    rows.splice(slot.index, 0, ...added.map((values) => ({ id: crypto.randomUUID(), after: slot.after, values })));
+    s.setNewRows(tab.id, rows);
+    markEdit();
+    setFocusCell({ col: 0, row: st.rows + slot.index, nonce: Date.now() });
+  };
+
+  /// "+ Row" (⌥Insert, like DBeaver): a new row below the selected one, to
+  /// fill in; it becomes an INSERT with Save. Starts with DEFAULT where
+  /// the server knows what to put (declared default, PK/identity) and NULL
+  /// elsewhere.
+  const addRow = () => {
+    if (!canEditRows() || rows !== "full" || !source) return;
+    const values: Record<string, PendingValue> = {};
+    source.colSource.forEach((name, col) => {
+      if (name) values[name] = source.defaults[col] !== null || source.isKey[col] ? DEFAULT_CELL : null;
+    });
+    pushNewRows([values]);
+  };
+
+  /// "Duplicate" (⌃⌥Insert, like DBeaver): copies of the selected rows
+  /// below them, with the values as seen (pending changes included) and
+  /// the PK at DEFAULT, otherwise the INSERT would repeat the key.
+  const duplicateRows = async (rowsSel: number[]) => {
+    if (!canEditRows() || rows !== "full" || rowsSel.length === 0 || !source || !st || !stc) return;
+    if (resultId === null || connId === null) return;
+    const cache = cacheFor(connId, resultId, stc.length);
+    const added: Record<string, PendingValue>[] = [];
+    for (const row of rowsSel) {
+      const values: Record<string, PendingValue> = {};
+      if (row >= st.rows) {
+        const src = newRows[row - st.rows];
+        if (!src) continue;
+        source.colSource.forEach((name, col) => {
+          if (name) values[name] = source.isKey[col] ? DEFAULT_CELL : (src.values[name] ?? null);
+        });
+        added.push(values);
+        continue;
+      }
+      for (let col = 0; col < stc.length; col++) {
+        const name = source.colSource[col];
+        if (!name) continue;
+        if (source.isKey[col]) {
+          values[name] = DEFAULT_CELL;
+          continue;
+        }
+        const p = pendingAt?.(row, col);
+        if (p !== undefined) {
+          values[name] = p;
+          continue;
+        }
+        // Not in cache or truncated (LOB): the full value from the backend.
+        const cell = cache.cell(row, col);
+        values[name] =
+          cell === undefined || cell.truncated
+            ? await ipc.getCellFull(connId, resultId, row, col)
+            : cell.isNull
+              ? null
+              : cell.v;
+      }
+      added.push(values);
+    }
+    pushNewRows(added);
+  };
+
+  /// "Delete" (Delete key, like DBeaver): the real rows are marked for
+  /// deletion (red and struck through, DELETE with Save); the unsaved new
+  /// rows disappear right away. If they are all already marked, restores them.
+  const deleteRows = async (rowsSel: number[]) => {
+    if (!canEditRows() || rowsSel.length === 0 || !st) return;
+    const base = st.rows;
+    const s0 = useStore.getState().tabs.find((x) => x.id === tab.id);
+    if (!s0) return;
+    const fresh = rowsSel.filter((r) => r >= base).map((r) => r - base);
+    if (fresh.length > 0) {
+      const gone = new Set(fresh);
+      useStore.getState().setNewRows(tab.id, s0.newRows.filter((_, i) => !gone.has(i)));
+    }
+    const real = rowsSel.filter((r) => r < base);
+    if (real.length === 0) {
+      if (unsavedCount(useStore.getState().tabs.find((x) => x.id === tab.id)!) === 0) useStore.getState().setEdit(tab.id, null);
+      return;
+    }
+    const keys: CellAssign[][] = [];
+    for (const row of real) {
+      const k = await rowKey(row);
+      // Row not yet in cache: it was requested, the user retries.
+      if (!k) return;
+      keys.push(k);
+    }
+    const s = useStore.getState();
+    const cur = { ...(s.tabs.find((x) => x.id === tab.id)?.deleted ?? {}) };
+    const ids = keys.map((k) => pendingRowId(k.map((a) => a.value)));
+    const restore = ids.every((id) => id in cur);
+    keys.forEach((k, i) => {
+      if (restore) delete cur[ids[i]];
+      else cur[ids[i]] = k;
+    });
+    s.setDeleted(tab.id, cur);
+    const after = s.tabs.find((x) => x.id === tab.id);
+    if (after && unsavedCount({ ...after, deleted: cur }) === 0) s.setEdit(tab.id, null);
+    else markEdit();
+  };
+
+  const rowActions: RowActions | undefined = ready && !blocked
+    ? {
+        onAdd: rows === "full" ? addRow : undefined,
+        onDuplicate: rows === "full" ? (r) => void duplicateRows(r) : undefined,
+        onDelete: (r) => void deleteRows(r),
+        deletedAt,
+        onSelectedRows: setSelRows,
+        handleRef: gridRows,
+      }
+    : undefined;
+  // Delete button: becomes "Restore" if the selected real rows are all
+  // already marked for deletion.
+  const selAllDeleted =
+    st !== undefined && selRows.length > 0 && selRows.every((r) => r < st.rows && deletedAt?.(r) === true);
+
+  /// The new rows for the grid (see GridView.extraRows). New identity at
+  /// every change: the grid redraws.
+  const extraRows = useMemo(
+    () =>
+      nNew === 0 || !source
+        ? undefined
+        : {
+            after: newRows.map((r) => r.after),
+            cell: (i: number, col: number): PendingValue => {
+              const name = source.colSource[col];
+              const r: NewRow | undefined = newRows[i];
+              if (!r || !name) return null;
+              return Object.prototype.hasOwnProperty.call(r.values, name) ? r.values[name] : null;
+            },
+          },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [newRows, nNew, source]
+  );
+
+  /// Cells of the rectangle (decision 12) clipped to the grid, with one
+  /// value per cell (`undefined` = out of the batch); the columns that
+  /// cannot be edited are skipped.
+  const rectCells = (rect: Rect, valueAt: (row: number, col: number) => PendingValue | undefined) => {
+    const out: Cell[] = [];
+    if (!st || !stc) return out;
+    const last = Math.min(rect.y + rect.height, st.rows + nNew);
+    const ncols = Math.min(rect.x + rect.width, stc.length);
+    for (let r = rect.y; r < last; r++)
+      for (let c = rect.x; c < ncols; c++) {
+        if (!cellEditable(c)) continue;
+        const value = valueAt(r, c);
+        if (value !== undefined) out.push({ row: r, col: c, value });
+      }
+    return out;
+  };
+
+  /// Same value on the whole rectangle (overlay on a multiple selection or
+  /// Delete = NULL).
+  const startEditCells = (rect: Rect, value: PendingValue) => void stage(rectCells(rect, () => value));
+
+  /// Paste: rectangle of values anchored at [col, row], clipped to the grid.
+  /// '' stays an empty string, never NULL (the Delete key deal).
+  const startPaste = (row: number, col: number, values: string[][]) => {
+    const width = values.reduce((m, r) => Math.max(m, r.length), 0);
+    void stage(rectCells({ x: col, y: row, width, height: values.length }, (r, c) => values[r - row]?.[c - col]));
+  };
+
+  /// "Run" from the "View SQL" dialog.
+  const runBatch = async () => {
+    if (!batch || !source || connId === null || batch.phase !== "confirm") return;
+    setBatch({ ...batch, phase: "running", error: null });
+    const cursor = gridRows.current?.cursorAfterSave() ?? null;
+    try {
+      await freeStickyForGridSave(connId);
+      const result = await ipc.tableWriteBatch(connId, source.schema, source.table, batch.writes, appendTo());
+      const refreshed = isClean(result) && (await refreshSaved(batch.writes, result));
+      settle(batch.writes, result);
+      if (refreshed) {
+        keepCursor(cursor, batch.writes);
+        onSaved?.();
+      }
+      setBatch((b) => (b ? { ...b, phase: "done", result, refreshed } : b));
+    } catch (e) {
+      setBatch((b) => (b ? { ...b, phase: "confirm", error: asErrorOut(e) } : b));
+    }
+  };
+
+  const closeBatch = () => {
+    if (batch?.phase === "running") return;
+    const reloadNeeded = batch?.phase === "done" && !batch.refreshed;
+    setBatch(null);
+    if (reloadNeeded) reload();
+  };
+
+  return {
+    editable,
+    nUnsaved,
+    nPending,
+    nNew,
+    nDeleted,
+    saving,
+    batch,
+    stage,
+    save,
+    preview,
+    discard,
+    runBatch,
+    closeBatch,
+    addRow,
+    duplicateRows,
+    deleteRows,
+    deletedAt,
+    selRows,
+    selAllDeleted,
+    paneProps: {
+      editable,
+      cellEditable,
+      onEditCell: (row, col, value) => void stage([{ row, col, value }]),
+      pendingAt,
+      canSetNull,
+      columnDefault,
+      onEditCells: startEditCells,
+      onPasteCells: startPaste,
+      extraRows,
+      focusCell,
+      rowActions,
+    },
+  };
+}
+
+/// "+ Row", "Duplicate", "Delete / Restore" of the bar.
+export function RowActionButtons({ e, disabled }: { e: GridEditing; disabled: boolean }) {
+  return (
+    <span className="row-actions">
+      <button
+        className="btn small"
+        title={withKey(t("Adds a new row below the selected one; it is written with Save"), "grid.row_add")}
+        disabled={disabled || e.saving}
+        onClick={e.addRow}
+      >
+        <IconPlus /> {t("Row")}
+      </button>
+      <button
+        className="btn small"
+        title={withKey(t("Duplicates the selected rows below them, with the key set to DEFAULT"), "grid.row_duplicate")}
+        disabled={disabled || e.saving || e.selRows.length === 0}
+        onClick={() => void e.duplicateRows(e.selRows)}
+      >
+        <IconDuplicate /> {t("Duplicate")}
+      </button>
+      <button
+        className="btn small"
+        title={
+          e.selAllDeleted
+            ? t("Unmarks the selected rows for deletion")
+            : withKey(t("Marks the selected rows for deletion; they are deleted with Save"), "grid.row_delete")
+        }
+        disabled={disabled || e.saving || e.selRows.length === 0}
+        onClick={() => void e.deleteRows(e.selRows)}
+      >
+        <IconTrash /> {e.selAllDeleted ? t("Restore") : t("Delete")}
+      </button>
+    </span>
+  );
+}
+
+/// Counts of the pending changes and View SQL / Discard / Save. Nothing
+/// without changes.
+export function PendingBar({ e, running }: { e: GridEditing; running: boolean }) {
+  if (e.nUnsaved === 0) return null;
+  return (
+    <span className="pending-bar">
+      {e.nPending > 0 && (
+        <span className="pending-count">
+          {e.nPending === 1
+            ? t("1 unsaved change")
+            : t("{n} unsaved changes", { n: e.nPending.toLocaleString(locale()) })}
+        </span>
+      )}
+      {e.nNew > 0 && (
+        <span className="pending-count new-rows">
+          {e.nNew === 1 ? t("1 new row") : t("{n} new rows", { n: e.nNew.toLocaleString(locale()) })}
+        </span>
+      )}
+      {e.nDeleted > 0 && (
+        <span className="pending-count deleted-rows">
+          {e.nDeleted === 1
+            ? t("1 row to delete")
+            : t("{n} rows to delete", { n: e.nDeleted.toLocaleString(locale()) })}
+        </span>
+      )}
+      <button
+        className="btn small"
+        title={t("Shows the statements that will run")}
+        disabled={e.saving}
+        onClick={() => void e.preview()}
+      >
+        {t("View SQL")}
+      </button>
+      <button className="btn small" title={t("Discards all unsaved changes")} disabled={e.saving} onClick={e.discard}>
+        {t("Discard")}
+      </button>
+      <button
+        className="btn small primary"
+        title={withKey(t("Writes the changes to the database"), "table.save")}
+        disabled={e.saving || running}
+        onClick={() => void e.save()}
+      >
+        {e.saving ? t("Saving…") : t("Save")}
+      </button>
+    </span>
+  );
+}
+
+/// Confirmation of the multi-cell batch (decision 12): target, count, exact
+/// SQL. Outcome in the dialog itself: success, rows ≠ 1, error with an
+/// indication of what happened to the transaction (atomic ROLLBACK on the
+/// shared connection, open transaction on prod §9.7).
+export function BatchDialog({
+  batch,
+  target,
+  profile,
+  manualCommit,
+  onRun,
+  onClose,
+}: {
+  batch: BatchState;
+  target: string;
+  manualCommit: boolean;
+  profile: Profile | null;
+  onRun: () => void;
+  onClose: () => void;
+}) {
+  const running = batch.phase === "running";
+  const res = batch.result;
+  const mismatches = res ? res.applied.filter((n) => n !== 1).length : 0;
+  // Composition of the batch: UPDATEs only (historical texts) or mixed with
+  // DELETE/INSERT. `nI` = statements that are not UPDATEs.
+  const count = (k: TableWrite["kind"]) => batch.writes.filter((w) => w.kind === k).length;
+  const nU = count("update");
+  const nI = batch.writes.length - nU;
+  const stmts = (
+    [
+      ["delete", "{n} DELETE"],
+      ["update", "{n} UPDATE"],
+      ["insert", "{n} INSERT"],
+    ] as const
+  )
+    .filter(([k]) => count(k) > 0)
+    .map(([k, label]) => t(label, { n: count(k).toLocaleString(locale()) }))
+    .join(", ");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        if (batch.phase === "confirm") onRun();
+        else if (batch.phase === "done") onClose();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [batch.phase, onRun, onClose]);
+  return (
+    <div className="dialog-overlay">
+      <div className="dialog update-dialog">
+        <div className="dialog-title">
+          <span>
+            {t("Confirm batch UPDATE")}
+            {profile?.is_production && <> <ProdTag long /></>}
+          </span>
+          <button className="btn small dialog-close" disabled={running} onClick={onClose}>
+            <IconX />
+          </button>
+        </div>
+        <div className="dialog-body">
+          <div className="update-target">
+            <span className="mono">{target}</span>
+            {profile && <span className="muted"> — {profile.name}</span>}
+          </div>
+          <div className="update-change">
+            {nI === 0
+              ? t("{cells} cells across {rows} rows — one UPDATE per row", {
+                  cells: batch.cells.toLocaleString(locale()),
+                  rows: nU.toLocaleString(locale()),
+                })
+              : t("{cells} changes — {stmts}, one per row", {
+                  cells: batch.cells.toLocaleString(locale()),
+                  stmts,
+                })}
+            {manualCommit ? t(", in the open transaction (Commit to apply)") : t(", in an atomic transaction")}
+          </div>
+          <pre className="ddl-pane update-sql">{batch.sql}</pre>
+          {batch.error && <ErrorPanel error={batch.error} />}
+          {res?.error && (
+            <>
+              <ErrorPanel error={res.error} />
+              <div className="banner warn">
+                {t(nI === 0 ? "UPDATE {n} of {total} failed." : "Statement {n} of {total} failed.", {
+                  n: (res.error_index ?? 0) + 1,
+                  total: batch.writes.length,
+                })}{" "}
+                {res.rolled_back
+                  ? t("No changes applied: ROLLBACK, the database is unchanged.")
+                  : res.in_transaction
+                    ? t(
+                        nI === 0
+                          ? "The {n} successful UPDATEs remain in the open transaction: Commit or Rollback from the toolbar."
+                          : "The {n} successful statements stay in the open transaction: Commit or Rollback from the toolbar.",
+                        { n: res.applied.length }
+                      )
+                    : ""}
+              </div>
+            </>
+          )}
+          {res && !res.error && (
+            <div className="banner ok">
+              {t(nI === 0 ? "{n} UPDATEs executed" : "{n} statements executed", {
+                n: res.applied.length.toLocaleString(locale()),
+              })}
+              {res.in_transaction ? t(" in the open transaction — Commit to apply.") : "."}
+            </div>
+          )}
+          {mismatches > 0 && (
+            <div className="banner warn">
+              {t(
+                "{n} UPDATEs with affected rows ≠ 1 (expected 1 per row): the rows may have changed underneath. The data will be reloaded.",
+                { n: mismatches }
+              )}
+            </div>
+          )}
+          <div className="form-actions">
+            <div className="spacer" />
+            {batch.phase === "done" ? (
+              <button className="btn primary" onClick={onClose}>
+                {t("Close and reload")}
+              </button>
+            ) : (
+              <>
+                <button className="btn" disabled={running} onClick={onClose}>
+                  {t("Cancel")}
+                </button>
+                <button className="btn primary" disabled={running} onClick={onRun}>
+                  {running
+                    ? t("Running…")
+                    : nI === 0
+                      ? t("Run {n} UPDATEs", { n: nU.toLocaleString(locale()) })
+                      : t("Run: {stmts}", { stmts })}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

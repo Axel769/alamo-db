@@ -9,6 +9,7 @@
 // databases it costs tens of seconds, and on a connection of its own (backend), so
 // list and tree never wait for it.
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ProdTag } from "./ProdTag";
 import { useEffect, useMemo, useRef, useState } from "react";
 import CatalogError from "./CatalogError";
 import { locale, t } from "./i18n";
@@ -276,7 +277,7 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
         <div className="conn-page-title">
           <h2>
             {conn.profile.name}
-            {conn.profile.is_production && <span className="prod-tag">prod</span>}
+            {conn.profile.is_production && <ProdTag />}
             {conn.profile.read_only && <span className="conn-page-ro">{t("read-only")}</span>}
             <SecurityTag conn={conn} />
           </h2>
