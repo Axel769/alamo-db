@@ -601,7 +601,7 @@ impl SettingsStore {
         let defaults = to_tree(&Settings::default());
         for def in DEFS
             .iter()
-            .filter(|d| category.map_or(true, |c| d.category == c))
+            .filter(|d| category.is_none_or(|c| d.category == c))
         {
             let v = leaf(&defaults, def.key).cloned().unwrap_or(Value::Null);
             set_leaf(&mut tree, def.key, v);

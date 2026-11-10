@@ -441,7 +441,7 @@ struct TunnelSlot {
 
 impl TunnelSlot {
     fn is_closed(&self) -> bool {
-        self.tunnel.as_ref().map_or(true, |t| t.is_closed())
+        self.tunnel.as_ref().is_none_or(|t| t.is_closed())
     }
 }
 
@@ -1066,7 +1066,7 @@ fn effective_executions(
                 let root = siblings.get(id).map(|(root, _)| *root).unwrap_or(*id);
                 (*id, s.clone(), profiles.get(&root).copied())
             })
-            .filter(|(_, _, pid)| only.map_or(true, |only| *pid == Some(only)))
+            .filter(|(_, _, pid)| only.is_none_or(|only| *pid == Some(only)))
             .collect()
     };
     let db = app.state::<Db>();

@@ -141,7 +141,7 @@ fn is_number_literal(v: &str) -> bool {
         None => (v, None),
     };
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    digits(int) && frac.map_or(true, digits)
+    digits(int) && frac.is_none_or(digits)
 }
 
 /// A saved row to write back into an open result set without a query
