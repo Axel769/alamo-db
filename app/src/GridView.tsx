@@ -1145,6 +1145,13 @@ export default function GridView({
       for (let r = sel.y; r < sel.y + sel.height; r++) {
         const line: string[] = [];
         for (let c = sel.x; c < sel.x + sel.width; c++) {
+          // What is on screen: the pending value of an edited cell or a
+          // new row before the database's one (NULL and DEFAULT copy empty).
+          const p = pendingValue(r, c);
+          if (p !== undefined) {
+            line.push(typeof p === "string" ? p : "");
+            continue;
+          }
           const v = cellAt(r, c);
           if (v === undefined) requestRow(r);
           line.push(v === undefined || v.isNull ? "" : v.v);
@@ -1153,7 +1160,7 @@ export default function GridView({
       }
       return out;
     },
-    [cellAt, requestRow]
+    [cellAt, requestRow, pendingValue]
   );
   const getCellsForSelection = useCallback(
     (sel: Rectangle): CellArray =>
