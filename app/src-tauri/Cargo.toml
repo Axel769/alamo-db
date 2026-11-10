@@ -24,7 +24,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "ti
 alamo-core = { workspace = true }
 alamo-driver-postgres = { workspace = true }
 alamo-session = { workspace = true }
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+rusqlite = { version = "0.41.0", features = ["bundled"] }
 tauri-plugin-dialog = "2.0.0-rc.8"
 tauri-plugin-clipboard-manager = "2.1.0-beta.7"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native"] }

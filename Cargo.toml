@@ -17,7 +17,7 @@ version = "0.0.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Axel769/alamo-db"
-rust-version = "1.75"
+rust-version = "1.89"
 
 [workspace.dependencies]
 alamo-core = { path = "crates/alamo-core" }
