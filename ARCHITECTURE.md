@@ -1637,6 +1637,13 @@ arrow-rs, russh, Glide Data Grid, CodeMirror 6 (MIT and/or Apache-2.0).
   Loading a separate bundle at
   runtime was discarded: shared React versions, CSP, errors only at
   runtime — and the official build comes from the Pro repo anyway.
+- *Release* (decided 2026-11-11): the official app is the extension build,
+  with this app's identifier, version and update channel (one app: same
+  data, keychain entries and updates). `scripts/release-alpha.sh --app DIR
+  --config FILE` builds it instead of `app/` and publishes it here like the
+  Community build; the extension repo writes FILE from this repo's
+  configuration, so identity and channel cannot drift. Its own development
+  builds keep a separate identifier and no update endpoint.
 - First registry: sidebar panels (`app/src/panels.ts`). The panels that
   need nothing from the Studio go through it, the Community History
   included, so the mechanism is used and tested in this repository. A

@@ -81,4 +81,6 @@ affected engines when touching drivers, session or cancel.
 - Commits signed off: `git commit -s` (DCO, see `CONTRIBUTING.md`).
 - User-visible changes go under "Unreleased" in `CHANGELOG.md`.
 - Release: `scripts/release-alpha.sh` from the Mac (signing keys stay local) or the
-  `Release (alpha)` workflow. Both publish to a public repo: never run without explicit confirmation.
+  `Release (alpha)` workflow. The official build is an extension build that calls the
+  same script with `--app` (ARCHITECTURE §13). All of them publish to a public repo:
+  never run without explicit confirmation.

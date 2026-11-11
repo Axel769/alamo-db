@@ -16,12 +16,27 @@
 # x86_64-apple-darwin and x86_64-pc-windows-msvc; for Windows
 # `brew install nsis llvm lld` and `cargo install --locked cargo-xwin`.
 #
-# Usage: scripts/release-alpha.sh [--no-publish]
+# Usage: scripts/release-alpha.sh [--no-publish] [--app DIR --config FILE]
 #   --no-publish  builds and verifies, publishes nothing (no release, no tag).
+#   --app DIR     builds the extension app in DIR (ARCHITECTURE §13) instead
+#                 of app/, with the release configuration FILE (absolute):
+#                 same identifier, version and update channel as this one,
+#                 so it is published here exactly like the Community build.
+#                 DIR is its own Cargo workspace; its frontend is built.
 set -euo pipefail
 
 publish=1
-[ "${1:-}" = "--no-publish" ] && publish=0
+app_dir=""
+release_conf=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-publish) publish=0 ;;
+    --app) app_dir="${2:?--app needs a folder}"; shift ;;
+    --config) release_conf="${2:?--config needs a file}"; shift ;;
+    *) echo "release: unknown option $1" >&2; exit 1 ;;
+  esac
+  shift
+done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -29,7 +44,16 @@ repo=Axel769/alamo-db
 # Updater endpoint of the installations up to alpha.12 (see the header).
 bridge=Axel769/alamo-db-releases
 keys="$HOME/.tauri"
-target="${CARGO_TARGET_DIR:-$root/target}"
+if [ -n "$app_dir" ]; then
+  [ -n "$release_conf" ] || { echo "release: --app needs --config" >&2; exit 1; }
+  build_dir="$app_dir"
+  target="${CARGO_TARGET_DIR:-$app_dir/target}"
+else
+  build_dir="$root/app"
+  release_conf="$root/app/src-tauri/tauri.release.conf.json"
+  target="${CARGO_TARGET_DIR:-$root/target}"
+fi
+tauri="$root/app/node_modules/.bin/tauri"
 # Homebrew's llvm and lld are keg-only: llvm-rc, clang-cl and lld-link for
 # cargo-xwin live here. `cargo install` puts cargo-xwin in ~/.cargo/bin.
 export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$PATH:$HOME/.cargo/bin"
@@ -57,7 +81,11 @@ elif ! git diff --quiet origin/main HEAD --; then
 fi
 version="$(jq -r .version app/src-tauri/tauri.conf.json)"
 tag="v$version"
-git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "$tag already exists"
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+  # A dry run builds whatever is checked out: only a publish needs a new tag.
+  [ "$publish" = 0 ] || die "$tag already exists"
+  echo "== $tag already exists: fine for a dry run, a publish needs a new version"
+fi
 notes="What's new in this version:
 $(.github/scripts/release-notes.sh "$version")"
 
@@ -86,10 +114,10 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
 (cd app && pnpm install --frozen-lockfile)
 
-echo "== macOS build (universal)"
-(cd app && APPLE_SIGNING_IDENTITY="$identity" pnpm tauri build \
+echo "== macOS build (universal) of $build_dir"
+(cd "$build_dir" && APPLE_SIGNING_IDENTITY="$identity" "$tauri" build \
   --target universal-apple-darwin --bundles app,dmg \
-  --config src-tauri/tauri.release.conf.json)
+  --config "$release_conf")
 mac="$target/universal-apple-darwin/release/bundle"
 app="$mac/macos/Alamo DB.app"
 codesign -v --strict "$app"
@@ -97,9 +125,9 @@ codesign -dr - "$app" 2>&1 | grep -qF "identifier \"io.github.axel769.alamo\" an
   || die "the .app does not carry the signature \"$identity\""
 
 echo "== Windows build (NSIS, cargo-xwin)"
-(cd app && pnpm tauri build --runner cargo-xwin \
+(cd "$build_dir" && "$tauri" build --runner cargo-xwin \
   --target x86_64-pc-windows-msvc --bundles nsis \
-  --config src-tauri/tauri.release.conf.json)
+  --config "$release_conf")
 win="$target/x86_64-pc-windows-msvc/release/bundle/nsis"
 
 # --- Assets with the names of the previous releases (made by tauri-action).
