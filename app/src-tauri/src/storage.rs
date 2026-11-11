@@ -818,6 +818,7 @@ pub fn tls_options(p: &Profile, tunneled: bool) -> TlsOptions {
         // SSH tunnel: the TCP points to 127.0.0.1 but the certificate must
         // be verified against the real name.
         tls_server_name: tunneled.then(|| p.host.clone()),
+        client_cert: None,
     }
 }
 

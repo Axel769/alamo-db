@@ -4810,6 +4810,7 @@ async fn tls_prefer_degrades_on_server_without_tls() {
         mode: TlsMode::Prefer,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     let session = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
         .await
@@ -4842,6 +4843,7 @@ async fn tls_require_fails_on_server_without_tls() {
         mode: TlsMode::Require,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     assert!(
         Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
@@ -5153,6 +5155,7 @@ async fn tls_info_tells_the_truth() {
             mode: TlsMode::Require,
             root_cert: None,
             tls_server_name: None,
+            client_cert: None,
         };
         let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
             .await
@@ -5199,6 +5202,7 @@ async fn tls_verify_full_with_lab_ca_reports_certificate() {
         mode: TlsMode::VerifyFull,
         root_cert: Some(ca),
         tls_server_name: None,
+        client_cert: None,
     };
     let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
         .await
@@ -5236,6 +5240,7 @@ async fn tls_verify_ca_with_lab_ca() {
         mode: TlsMode::VerifyCa,
         root_cert: Some(ca),
         tls_server_name: None,
+        client_cert: None,
     };
     let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
         .await
@@ -5258,6 +5263,7 @@ async fn tls_verify_full_without_lab_ca_is_refused() {
         mode: TlsMode::VerifyFull,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     let err = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
         .await
@@ -5278,6 +5284,7 @@ async fn tls_verify_full_with_lab_ca_reports_cipher_and_validity() {
         mode: TlsMode::VerifyFull,
         root_cert: Some(ca),
         tls_server_name: None,
+        client_cert: None,
     };
     let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls)
         .await
@@ -5593,4 +5600,64 @@ async fn patch_cells_keeps_typed_values_mysql() {
     let url = require_mysql!();
     let session = Session::connect(&url).await.expect("connection");
     patch_cells_keeps_typed_values(&session).await;
+}
+
+/// The lab's client certificate (mTLS), next to its CA (`xtask/src/tls.rs`),
+/// read through the loader the app uses.
+fn lab_client_cert() -> Option<alamo_core::tls::ClientIdentity> {
+    let dir = lab_ca()?.parent()?.to_path_buf();
+    Some(
+        alamo_session::client_cert::load(
+            &dir.join("client.pem"),
+            &dir.join("client-key.pem"),
+            None,
+        )
+        .expect("lab client certificate"),
+    )
+}
+
+/// The same server as `url`, as the lab's mTLS user (`alamo_mtls`, same
+/// password: PG ignores it under `cert`, MySQL wants it besides X509).
+fn as_mtls_user(url: &str) -> String {
+    let start = url.find("://").expect("url scheme") + 3;
+    let end = start + url[start..].find(':').expect("url user");
+    format!("{}alamo_mtls{}", &url[..start], &url[end..])
+}
+
+/// mTLS: the user who must present a certificate gets in with the lab's,
+/// as itself, on a verified channel; without it the server refuses.
+async fn client_cert_is_presented(url: &str, current_user: &str) {
+    use alamo_core::tls::{TlsMode, TlsOptions};
+    let (Some(ca), Some(client)) = (lab_ca(), lab_client_cert()) else {
+        return;
+    };
+    let url = as_mtls_user(url);
+    let tls = |client_cert| TlsOptions {
+        mode: TlsMode::VerifyFull,
+        root_cert: Some(ca.clone()),
+        tls_server_name: None,
+        client_cert,
+    };
+    let s = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls(Some(client)))
+        .await
+        .expect("mTLS with the lab client certificate");
+    assert_eq!(scalar(&s, current_user).await, "alamo_mtls");
+    assert!(s.tls_info().await.unwrap().expect("encrypted").verified);
+    let refused = Session::connect_opts(builtin_for_url(&url), &url, false, false, tls(None))
+        .await
+        .err()
+        .expect("without the client certificate the server must refuse");
+    assert!(!refused.message.is_empty());
+}
+
+#[tokio::test]
+async fn tls_client_cert_on_postgres() {
+    let url = require_url!();
+    client_cert_is_presented(&url, "SELECT current_user").await;
+}
+
+#[tokio::test]
+async fn tls_client_cert_on_mysql() {
+    let url = require_mysql!();
+    client_cert_is_presented(&url, "SELECT SUBSTRING_INDEX(CURRENT_USER(), '@', 1)").await;
 }

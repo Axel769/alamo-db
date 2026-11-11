@@ -16,14 +16,14 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::client::WebPkiServerVerifier;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{
     CertificateError, ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
 };
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use alamo_core::error::DbError;
-use alamo_core::tls::{TlsMode, TlsOptions};
+use alamo_core::tls::{ClientIdentity, TlsMode, TlsOptions};
 
 use crate::PgError;
 
@@ -85,18 +85,43 @@ pub fn make_connector(opts: &TlsOptions) -> Result<Option<Connector>, PgError> {
         Arc::new(NoVerify(provider))
     };
     let peer_cert = PeerCertSlot::default();
-    let config = builder
+    let builder = builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(Capture {
             inner: verifier,
             slot: Arc::clone(&peer_cert),
-        }))
-        .with_no_client_auth();
+        }));
+    let config = match &opts.client_cert {
+        None => builder.with_no_client_auth(),
+        Some(id) => {
+            let (chain, key) = client_identity(id)?;
+            builder
+                .with_client_auth_cert(chain, key)
+                .map_err(|e| config_err(format!("client certificate: {e}")))?
+        }
+    };
     Ok(Some(Connector {
         make: MakeRustlsConnect::new(config),
         mode: opts.mode,
         peer_cert,
     }))
+}
+
+/// The client certificate as rustls wants it. The PEM was already checked
+/// when the profile's files were read: an error here means bytes corrupted
+/// in between, still said and never skipped.
+fn client_identity(
+    id: &ClientIdentity,
+) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), PgError> {
+    let chain = CertificateDer::pem_slice_iter(&id.cert_chain_pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| config_err(format!("client certificate: {e}")))?;
+    if chain.is_empty() {
+        return Err(config_err("client certificate: no certificate".into()));
+    }
+    let key = PrivateKeyDer::from_pem_slice(&id.key_pem)
+        .map_err(|e| config_err(format!("client certificate key: {e}")))?;
+    Ok((chain, key))
 }
 
 /// The profile CA (PEM) if present, ONLY that one: a server with an internal
@@ -300,6 +325,7 @@ mod tests {
             mode: TlsMode::Require,
             root_cert: None,
             tls_server_name: None,
+            client_cert: None,
         };
         assert!(make_connector(&opts).unwrap().is_some());
     }
@@ -310,6 +336,7 @@ mod tests {
             mode: TlsMode::VerifyCa,
             root_cert: None,
             tls_server_name: None,
+            client_cert: None,
         };
         assert!(make_connector(&opts).is_err());
     }
@@ -320,6 +347,7 @@ mod tests {
             mode: TlsMode::VerifyFull,
             root_cert: Some("/nonexistent/path.pem".into()),
             tls_server_name: None,
+            client_cert: None,
         };
         assert!(make_connector(&opts).is_err());
     }
