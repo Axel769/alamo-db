@@ -1479,18 +1479,32 @@ async fn pick_file(
     filter_name: &str,
     extensions: &[&str],
 ) -> Result<Option<std::path::PathBuf>, String> {
+    pick_file_in(app, Some((filter_name, extensions)), None).await
+}
+
+/// `pick_file` with an optional filter and starting folder: SSH keys have
+/// no extension and live in a hidden folder the dialog would not show.
+async fn pick_file_in(
+    app: &AppHandle,
+    filter: Option<(&str, &[&str])>,
+    start: Option<std::path::PathBuf>,
+) -> Result<Option<std::path::PathBuf>, String> {
     use tauri_plugin_dialog::DialogExt;
     #[cfg(feature = "e2e")]
     if let Some(p) = e2e::take_pick() {
         return Ok(Some(p));
     }
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .add_filter(filter_name, extensions)
-        .pick_file(move |p| {
-            let _ = tx.send(p);
-        });
+    let mut dialog = app.dialog().file();
+    if let Some((name, extensions)) = filter {
+        dialog = dialog.add_filter(name, extensions);
+    }
+    if let Some(dir) = start.filter(|d| d.is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_file(move |p| {
+        let _ = tx.send(p);
+    });
     let Ok(Some(picked)) = rx.await else {
         return Ok(None);
     };
@@ -1507,6 +1521,15 @@ async fn pick_pem_file(app: AppHandle, key: bool) -> Result<Option<String>, Stri
         pick_file(&app, "PEM certificate", &["pem", "crt", "cer"]).await?
     };
     Ok(picked.map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// "Browse…" of an SSH profile's private key: any file, from `~/.ssh`
+/// (keys like `id_ed25519` have no extension). `None` = cancelled.
+#[tauri::command]
+async fn pick_ssh_key(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(pick_file_in(&app, None, Some(expand_home("~/.ssh/")))
+        .await?
+        .map(|p| p.to_string_lossy().into_owned()))
 }
 
 /// Subject, issuer and validity of the profile's root CA, shown under the
@@ -3524,6 +3547,7 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             connections_export,
             connections_import_open,
             pick_pem_file,
+            pick_ssh_key,
             inspect_root_cert,
             inspect_client_cert,
             client_key_encrypted,

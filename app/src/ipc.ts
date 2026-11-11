@@ -538,6 +538,8 @@ export const ipc = {
   /// Native picker for the profile's TLS files: a certificate (root CA,
   /// client certificate) or, with `key`, a private key. `null` = cancelled.
   pickPemFile: (key: boolean) => invoke<string | null>("pick_pem_file", { key }),
+  /// Native picker for an SSH private key, from ~/.ssh, any file.
+  pickSshKey: () => invoke<string | null>("pick_ssh_key"),
   /// Subject, issuer and validity of the root CA file; rejects with the
   /// reason (missing, unreadable, not a PEM certificate).
   inspectRootCert: (path: string) => invoke<CertOut>("inspect_root_cert", { path }),
