@@ -157,7 +157,7 @@ export default function CommandPalette({ onClose, onOpenDialog, onPanel, onSetti
         })),
     ]);
     add(t("Actions"), [
-      { key: t("New query"), item: { group: "", icon: <IconPlus />, title: t("New query"), sub: conn?.profile.name, run: act(() => newSqlTab()) } },
+      { key: t("New query"), item: { group: "", icon: <IconPlus />, title: t("New query"), sub: [conn?.profile.name, keyHint("tab.new_query")].filter(Boolean).join(" · "), run: act(() => newSqlTab()) } },
       { key: t("Show schema"), item: { group: "", icon: <IconDatabase size={14} />, title: t("Show schema"), sub: keyHint("sidebar.toggle"), run: act(() => onPanel("schema")) } },
       { key: t("Query history"), item: { group: "", icon: <IconHistory size={14} />, title: t("Query history"), run: act(() => onPanel("history")) } },
       { key: t("New connection…"), item: { group: "", icon: <IconPlus />, title: t("New connection…"), run: act(() => onOpenDialog(null)) } },

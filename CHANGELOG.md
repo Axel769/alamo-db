@@ -11,6 +11,10 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- New SQL tab with ⌘T (Ctrl+T on Windows and Linux), changeable in Settings → Shortcuts; the DBeaver preset keeps Ctrl+]. The key is shown on the + of the tab bar, in the command palette and in the "No tabs open" message.
+
 ## [0.1.0-alpha.15] - 2026-11-10
 
 - New app icon: a poplar under an arch on green hills, in the Dock, the taskbar, the window and the connections dialog.

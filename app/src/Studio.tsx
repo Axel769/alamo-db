@@ -1700,7 +1700,11 @@ function StudioInner() {
                     <ScriptPane tab={tab} onSelect={(i) => store.select(tab.id, i)} />
                   ))}
                 {!tab && !store.connectError && (
-                  <div className="hint">{t("No tabs open. Create one with the + in the bar.")}</div>
+                  <div className="hint">
+                    {keyHint("tab.new_query")
+                      ? t("No tabs open. Create one with {key} or the + in the bar.", { key: keyHint("tab.new_query") })
+                      : t("No tabs open. Create one with the + in the bar.")}
+                  </div>
                 )}
                 {tab && !sel && !store.connectError && (
                   <div className="hint">

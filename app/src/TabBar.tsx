@@ -367,7 +367,7 @@ export default function TabBar() {
         })}
         <button
           className="tab-new"
-          title={t("New SQL tab (from a table tab it inherits the database)")}
+          title={withKey(t("New SQL tab (from a table tab it inherits the database)"), "tab.new_query")}
           onClick={() => newSqlTabFromContext()}
         >
           <IconPlus />

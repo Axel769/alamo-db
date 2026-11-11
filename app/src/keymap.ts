@@ -47,7 +47,7 @@ export interface ActionDef {
 export const ACTIONS = [
   { id: "palette.toggle", label: "Command palette", context: "global", keys: ["Mod-k"] },
   { id: "sidebar.toggle", label: "Show or hide the sidebar", context: "global", keys: ["Mod-b"] },
-  { id: "tab.new_query", label: "New query tab", context: "global", keys: [] },
+  { id: "tab.new_query", label: "New query tab", context: "global", keys: ["Mod-t"] },
   { id: "tab.close", label: "Close tab", context: "global", keys: ["Mod-w"] },
   { id: "tab.mru", label: "Last used tab", context: "global", keys: ["Ctrl-Tab"] },
   { id: "tab.prev", label: "Previous tab", context: "global", keys: ["Ctrl-PageUp"] },

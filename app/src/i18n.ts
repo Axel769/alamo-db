@@ -535,6 +535,7 @@ const IT: Record<string, string> = {
   "No changes applied: ROLLBACK, the database is unchanged.": "Nessuna modifica applicata: ROLLBACK, il database è come prima.",
   "No query matches.": "Nessuna query corrisponde.",
   "No tabs open. Create one with the + in the bar.": "Nessuna tab aperta. Creane una con il + nella barra.",
+  "No tabs open. Create one with {key} or the + in the bar.": "Nessuna tab aperta. Creane una con {key} o con il + nella barra.",
   "none": "nessuno",
   "Name": "Nome",
   "not connected": "non connesso",
