@@ -1627,7 +1627,10 @@ arrow-rs, russh, Glide Data Grid, CodeMirror 6 (MIT and/or Apache-2.0).
   section: `run` initialises the updater, and without it the app does not
   start), `serde_json` as a dependency (the macro's output needs it),
   and declares its plugin's commands in `build.rs` and in a capability:
-  plugin commands, unlike the app's, go through Tauri's ACL.
+  plugin commands, unlike the app's, go through Tauri's ACL. An extension
+  keeps its own files in `alamo_app_lib::config_dir`, next to
+  `settings.json` (§16): the test data folder in an e2e build, so a test
+  never writes into the real app's folder.
 - *Frontend:* registries of extension points composed at build time. The
   Pro repo imports the Community sources from a sibling checkout, registers
   its parts before `main.tsx` and builds one bundle (one React, typed).

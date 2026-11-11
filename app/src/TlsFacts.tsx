@@ -7,7 +7,8 @@ import { CertOut, ConnSecurity } from "./ipc";
 
 const DAY = 86_400;
 
-function day(secs: number): string {
+/// A date as people read it ("14 December 2027"), in the UI language.
+export function longDate(secs: number): string {
   return new Date(secs * 1000).toLocaleDateString(locale(), {
     day: "numeric",
     month: "long",
@@ -20,13 +21,13 @@ function day(secs: number): string {
 export function validity(cert: CertOut): { text: string; warn: boolean } {
   const now = Date.now() / 1000;
   if (cert.not_after === null) return { text: t("not available"), warn: false };
-  if (cert.not_after < now) return { text: t("expired on {date}", { date: day(cert.not_after) }), warn: true };
+  if (cert.not_after < now) return { text: t("expired on {date}", { date: longDate(cert.not_after) }), warn: true };
   if (cert.not_before !== null && cert.not_before > now)
-    return { text: t("not valid before {date}", { date: day(cert.not_before) }), warn: true };
+    return { text: t("not valid before {date}", { date: longDate(cert.not_before) }), warn: true };
   const days = Math.floor((cert.not_after - now) / DAY);
   if (days <= 30)
-    return { text: t("expires on {date} ({days} days left)", { date: day(cert.not_after), days }), warn: true };
-  return { text: t("valid until {date}", { date: day(cert.not_after) }), warn: false };
+    return { text: t("expires on {date} ({days} days left)", { date: longDate(cert.not_after), days }), warn: true };
+  return { text: t("valid until {date}", { date: longDate(cert.not_after) }), warn: false };
 }
 
 function certRows(cert: CertOut) {

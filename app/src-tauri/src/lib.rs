@@ -3415,6 +3415,19 @@ fn disable_text_substitutions() {
 
 /// Starts the app. `context` is `tauri::generate_context!()` of the calling
 /// binary: its configuration and its assets.
+/// The app's configuration folder (§16): `settings.json` lives there, and
+/// so do the files of an extension build (§13). Same folder as the data on
+/// macOS and Windows, `~/.config` on Linux; in e2e the test data folder.
+pub fn config_dir(app: &AppHandle) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    #[cfg(not(feature = "e2e"))]
+    return Ok(app.path().app_config_dir()?);
+    #[cfg(feature = "e2e")]
+    {
+        let _ = app;
+        Ok(e2e::data_dir()?)
+    }
+}
+
 pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
     #[cfg(target_os = "macos")]
     disable_text_substitutions();
@@ -3471,11 +3484,7 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             // §16: `settings.json` in the config directory (the same folder
             // as the data on macOS and Windows, `~/.config` on Linux); in
             // e2e next to the test database.
-            #[cfg(not(feature = "e2e"))]
-            let config_dir = app.path().app_config_dir()?;
-            #[cfg(feature = "e2e")]
-            let config_dir = dir;
-            let store = settings::SettingsStore::load(&config_dir);
+            let store = settings::SettingsStore::load(&config_dir(app.handle())?);
             // The menu in the UI language from the first frame: the file
             // is Rust's, no round trip through the webview.
             #[cfg(target_os = "macos")]
