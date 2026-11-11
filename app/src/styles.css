@@ -3049,6 +3049,15 @@ ul.transfer-hint {
   color: var(--cell-muted-fg);
 }
 
+.profile-form .form-subhead {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cell-divider);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cell-fg);
+}
+
 .profile-form label.check {
   flex-direction: row;
   align-items: center;

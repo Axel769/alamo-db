@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
+use alamo_core::tls::ClientIdentity;
+use alamo_session::client_cert::{self, ClientCertError};
 use alamo_session::driver::{Driver, Drivers};
 use alamo_session::events::{ErrorOut, ExecEvent};
 use alamo_session::Session;
@@ -91,6 +93,9 @@ pub struct AppState {
 struct Reopen {
     profile: storage::Profile,
     password: String,
+    /// The client certificate already read (§12.3): the other databases
+    /// present it without asking the passphrase again.
+    client_cert: Option<ClientIdentity>,
 }
 
 struct PendingHostKey {
@@ -213,6 +218,7 @@ impl AppState {
         &self,
         profile: &storage::Profile,
         password: &str,
+        client_cert: Option<ClientIdentity>,
         tunnel_port: Option<u16>,
         global: &settings::Settings,
     ) -> Result<(Session, settings::Execution, Vec<settings::Issue>), ErrorOut> {
@@ -226,7 +232,7 @@ impl AppState {
             &url,
             profile.is_production,
             profile.read_only,
-            storage::tls_options(profile, tunnel_port.is_some()),
+            storage::tls_options(profile, tunnel_port.is_some(), client_cert),
             global.connections.net(),
         )
         .await
@@ -467,6 +473,12 @@ struct OpenedProfile {
     /// Keychain entries (see `db_account`/`ssh_account`).
     db_account: String,
     ssh_account: Option<String>,
+    /// Client certificate (§12.3), read with its key passphrase; the entry
+    /// is `Some` only when the profile has one.
+    client_cert: Option<ClientIdentity>,
+    tls_passphrase: String,
+    tls_typed: bool,
+    tls_account: Option<String>,
 }
 
 /// Keychain account of the database profile's password: profile tag (or id
@@ -476,10 +488,43 @@ fn db_account(db: &rusqlite::Connection, id: i64) -> Result<String, String> {
     Ok(secrets::db_account(id, tag.as_deref()))
 }
 
+/// Like `db_account`, for the passphrase of the client certificate key.
+fn tls_key_account(db: &rusqlite::Connection, id: i64) -> Result<String, String> {
+    let tag = storage::profile_secret_tag(db, id).map_err(|e| e.to_string())?;
+    Ok(secrets::tls_key_account(id, tag.as_deref()))
+}
+
+/// The client certificate cannot be read. The passphrase cases carry a
+/// code: the dialog then points at the passphrase field.
+fn client_cert_error(e: ClientCertError) -> ErrorOut {
+    let code = matches!(
+        e,
+        ClientCertError::NeedsPassphrase | ClientCertError::WrongPassphrase
+    )
+    .then(|| "client_cert_passphrase".to_owned());
+    ErrorOut {
+        code,
+        ..internal(e.to_string())
+    }
+}
+
 /// Like `db_account`, for the SSH profile's credential.
 fn ssh_account(db: &rusqlite::Connection, sid: i64) -> Result<String, String> {
     let tag = storage::ssh_secret_tag(db, sid).map_err(|e| e.to_string())?;
     Ok(secrets::ssh_account(sid, tag.as_deref()))
+}
+
+/// The secrets typed in the connection dialog (§12): database password,
+/// SSH credential (bastion password or key passphrase), passphrase of the
+/// client certificate key. Missing or empty = the keychain's, if any.
+#[derive(Deserialize, Default)]
+struct Typed {
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    ssh_secret: Option<String>,
+    #[serde(default)]
+    tls_passphrase: Option<String>,
 }
 
 /// Opens the connection of a saved profile: credentials from the dialog or,
@@ -489,14 +534,19 @@ async fn open_profile(
     app: &AppHandle,
     db: &State<'_, Db>,
     id: i64,
-    password: Option<String>,
-    ssh_secret: Option<String>,
+    typed: Typed,
 ) -> Result<OpenedProfile, ErrorOut> {
-    let (profile, db_acc) = {
+    let Typed {
+        password,
+        ssh_secret,
+        tls_passphrase,
+    } = typed;
+    let (profile, db_acc, tls_acc) = {
         let db = locked(&db.0);
         (
             storage::profile_get(&db, id).map_err(|e| internal(e.to_string()))?,
             db_account(&db, id).map_err(internal)?,
+            tls_key_account(&db, id).map_err(internal)?,
         )
     };
     let profile = profile.ok_or_else(|| internal(format!("profile {id} does not exist")))?;
@@ -532,6 +582,27 @@ async fn open_profile(
         }
         None => (None, None),
     };
+    // The client certificate before any network (§12.3): a wrong file or
+    // passphrase is said at once, not after the tunnel. The keychain is read
+    // only for an encrypted key: a plain one needs nothing from it.
+    let typed_tls = tls_passphrase.unwrap_or_default();
+    let tls_typed = !typed_tls.is_empty();
+    let (client_cert, tls_passphrase, tls_account) =
+        match storage::client_cert_paths(&profile).map_err(internal)? {
+            None => (None, String::new(), None),
+            Some((cert, key)) => {
+                let pass = if typed_tls.is_empty() && client_cert::key_is_encrypted(&key) {
+                    secrets::get(&service, &tls_acc)
+                        .map_err(internal)?
+                        .unwrap_or_default()
+                } else {
+                    typed_tls
+                };
+                let identity =
+                    client_cert::load(&cert, &key, Some(&pass)).map_err(client_cert_error)?;
+                (Some(identity), pass, Some(tls_acc))
+            }
+        };
     let typed_ssh = ssh_secret.unwrap_or_default();
     let ssh_typed = !typed_ssh.is_empty();
     let ssh_secret = match (&ssh_acc, typed_ssh.is_empty()) {
@@ -568,7 +639,13 @@ async fn open_profile(
     };
     let (session, execution, warnings) = app
         .state::<AppState>()
-        .open_session(&profile, &password, tunnel_port, &global)
+        .open_session(
+            &profile,
+            &password,
+            client_cert.clone(),
+            tunnel_port,
+            &global,
+        )
         .await?;
     Ok(OpenedProfile {
         profile,
@@ -583,6 +660,10 @@ async fn open_profile(
         ssh_typed,
         db_account: db_acc,
         ssh_account: ssh_acc,
+        client_cert,
+        tls_passphrase,
+        tls_typed,
+        tls_account,
     })
 }
 
@@ -707,11 +788,10 @@ async fn test_profile(
     app: AppHandle,
     db: State<'_, Db>,
     id: i64,
-    password: Option<String>,
-    ssh_secret: Option<String>,
+    typed: Typed,
 ) -> Result<TestOut, ErrorOut> {
     let started = std::time::Instant::now();
-    let opened = open_profile(&app, &db, id, password, ssh_secret).await?;
+    let opened = open_profile(&app, &db, id, typed).await?;
     let database = opened
         .session
         .current_database()
@@ -742,9 +822,8 @@ async fn connect_profile(
     state: State<'_, AppState>,
     db: State<'_, Db>,
     id: i64,
-    password: Option<String>,
+    typed: Typed,
     save_password: bool,
-    ssh_secret: Option<String>,
 ) -> Result<ConnectOut, ErrorOut> {
     let OpenedProfile {
         profile,
@@ -759,7 +838,11 @@ async fn connect_profile(
         ssh_account,
         execution,
         warnings,
-    } = open_profile(&app, &db, id, password, ssh_secret).await?;
+        client_cert,
+        tls_passphrase,
+        tls_typed,
+        tls_account,
+    } = open_profile(&app, &db, id, typed).await?;
     let one_db_per_conn = !session.capabilities().can_change_database_in_session;
     // Connections of the profile's previous session that the server may
     // still hold (closed after a sleep): closed now, before the tree and the
@@ -782,6 +865,7 @@ async fn connect_profile(
             Reopen {
                 profile,
                 password: password.clone(),
+                client_cert,
             },
         );
     }
@@ -802,6 +886,11 @@ async fn connect_profile(
                 r = r.and(secrets::save(&service, acc, &ssh_secret));
             }
         }
+        if let Some(acc) = &tls_account {
+            if tls_typed {
+                r = r.and(secrets::save(&service, acc, &tls_passphrase));
+            }
+        }
         r
     } else {
         // Checkbox cleared: the db password drops and so does the credential
@@ -816,7 +905,7 @@ async fn connect_profile(
             Ok(())
         };
         let mut r = forget_present(&db_account);
-        if let Some(acc) = &ssh_account {
+        for acc in ssh_account.iter().chain(&tls_account) {
             r = r.and(forget_present(acc));
         }
         r
@@ -880,14 +969,14 @@ async fn open_database(
             .find(|(_, (r, d))| *r == root && *d == db)
             .map(|(id, _)| *id)
     };
-    let (mut profile, password) = {
+    let (mut profile, password, client_cert) = {
         let reopen = locked(&state.reopen);
         let r = reopen.get(&root).ok_or_else(|| {
             internal(format!(
                 "connection {root} cannot open other databases: closed, or not PostgreSQL"
             ))
         })?;
-        (r.profile.clone(), r.password.clone())
+        (r.profile.clone(), r.password.clone(), r.client_cert.clone())
     };
     let target = if profile.database == db {
         Some(root)
@@ -904,7 +993,7 @@ async fn open_database(
             let port = locked(&state.tunnels).get(&root).map(|t| t.port);
             profile.database = db.clone();
             let (session, _, _) = state
-                .open_session(&profile, &password, port, &global)
+                .open_session(&profile, &password, client_cert, port, &global)
                 .await?;
             // Two opens of the same database at once (tree and page): the
             // second one gives up its session for the first one's.
@@ -938,6 +1027,8 @@ async fn open_database(
 struct SavedSecrets {
     db: bool,
     ssh: bool,
+    /// Passphrase of the client certificate key (§12.3).
+    tls_key: bool,
 }
 
 /// Are there credentials saved in the keychain for this profile? The dialog
@@ -952,7 +1043,7 @@ fn profile_password_present(
     id: i64,
 ) -> Result<SavedSecrets, String> {
     let service = keychain_service(app.config());
-    let (db_acc, ssh_acc) = {
+    let (db_acc, ssh_acc, tls_acc) = {
         let db = locked(&db.0);
         let sid = storage::profile_get(&db, id)
             .map_err(|e| e.to_string())?
@@ -960,6 +1051,7 @@ fn profile_password_present(
         (
             db_account(&db, id)?,
             sid.map(|sid| ssh_account(&db, sid)).transpose()?,
+            tls_key_account(&db, id)?,
         )
     };
     Ok(SavedSecrets {
@@ -968,6 +1060,7 @@ fn profile_password_present(
             Some(acc) => secrets::exists(&service, &acc)?,
             None => false,
         },
+        tls_key: secrets::exists(&service, &tls_acc)?,
     })
 }
 
@@ -1025,11 +1118,23 @@ async fn profile_save(
 ) -> Result<ProfileSaveOut, String> {
     let id = {
         let db = locked(&db.0);
-        let before = profile.id.map(|id| db_account(&db, id)).transpose()?;
+        let before = profile
+            .id
+            .map(|id| Ok::<_, String>((db_account(&db, id)?, tls_key_account(&db, id)?)))
+            .transpose()?;
         let id = storage::profile_save(&db, &profile).map_err(|e| e.to_string())?;
-        if let Some(old) = before.filter(|old| db_account(&db, id).ok().as_ref() != Some(old)) {
-            if let Err(e) = secrets::forget(&keychain_service(app.config()), &old) {
-                eprintln!("keychain (profile {id}): {e}");
+        // New tag: the passphrase goes with the password, the entries of a
+        // profile live and die together.
+        if let Some((old, old_tls)) =
+            before.filter(|(old, _)| db_account(&db, id).ok().as_ref() != Some(old))
+        {
+            let service = keychain_service(app.config());
+            for acc in [old, old_tls] {
+                if secrets::exists(&service, &acc).unwrap_or(true) {
+                    if let Err(e) = secrets::forget(&service, &acc) {
+                        eprintln!("keychain (profile {id}): {e}");
+                    }
+                }
             }
         }
         id
@@ -1106,12 +1211,17 @@ async fn push_execution(session: &Session, execution: &settings::Execution) {
 fn profile_delete(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), String> {
     let db = locked(&db.0);
     let account = db_account(&db, id)?;
+    let tls_account = tls_key_account(&db, id)?;
     storage::profile_delete(&db, id).map_err(|e| e.to_string())?;
     abandoned::forget(&db, id).map_err(|e| e.to_string())?;
-    // The db password dies with the profile. The SSH credential instead
-    // belongs to the (shared) SSH profile and dies with IT, in
-    // `ssh_profile_delete`.
-    secrets::forget(&keychain_service(app.config()), &account)
+    // The db password and the key passphrase die with the profile. The SSH
+    // credential instead belongs to the (shared) SSH profile and dies with
+    // IT, in `ssh_profile_delete`.
+    let service = keychain_service(app.config());
+    if secrets::exists(&service, &tls_account)? {
+        secrets::forget(&service, &tls_account)?;
+    }
+    secrets::forget(&service, &account)
 }
 
 // ------------------------------------------------------------- SSH profiles
@@ -1387,12 +1497,16 @@ async fn pick_file(
     picked.into_path().map(Some).map_err(|e| e.to_string())
 }
 
-/// "Browse…" of the profile's root CA (§12.2). `None` = cancelled.
+/// "Browse…" of the profile's TLS files: root CA (§12.2), client
+/// certificate or its key (§12.3, `key`). `None` = cancelled.
 #[tauri::command]
-async fn pick_root_cert(app: AppHandle) -> Result<Option<String>, String> {
-    Ok(pick_file(&app, "PEM certificate", &["pem", "crt", "cer"])
-        .await?
-        .map(|p| p.to_string_lossy().into_owned()))
+async fn pick_pem_file(app: AppHandle, key: bool) -> Result<Option<String>, String> {
+    let picked = if key {
+        pick_file(&app, "PEM private key", &["pem", "key"]).await?
+    } else {
+        pick_file(&app, "PEM certificate", &["pem", "crt", "cer"]).await?
+    };
+    Ok(picked.map(|p| p.to_string_lossy().into_owned()))
 }
 
 /// Subject, issuer and validity of the profile's root CA, shown under the
@@ -1400,6 +1514,19 @@ async fn pick_root_cert(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 fn inspect_root_cert(path: String) -> Result<CertOut, String> {
     alamo_session::x509::inspect_pem_file(&expand_home(&path)).map(CertOut::from)
+}
+
+/// The identity the profile presents (§12.3), shown under the client
+/// certificate field like the CA's.
+#[tauri::command]
+fn inspect_client_cert(path: String) -> Result<CertOut, String> {
+    client_cert::inspect(&expand_home(&path)).map(CertOut::from)
+}
+
+/// The key needs a passphrase: the dialog shows its field only then.
+#[tauri::command]
+fn client_key_encrypted(path: String) -> bool {
+    client_cert::key_is_encrypted(&expand_home(&path))
 }
 
 /// First half of the import: native open dialog, read, checks and preview.
@@ -3396,8 +3523,10 @@ pub fn run(context: tauri::Context<tauri::Wry>, extensions: Extensions) {
             ssh_profile_host_key_trust,
             connections_export,
             connections_import_open,
-            pick_root_cert,
+            pick_pem_file,
             inspect_root_cert,
+            inspect_client_cert,
+            client_key_encrypted,
             connections_import_apply,
             ssh_host_key_trust,
             autosave_get,

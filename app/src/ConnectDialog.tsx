@@ -44,6 +44,8 @@ const newProfile = (): Profile => ({
   username: engines()[0].default_user,
   sslmode: "prefer",
   ssl_root_cert: null,
+  ssl_client_cert: null,
+  ssl_client_key: null,
   color: null,
   is_production: false,
   read_only: false,
@@ -111,6 +113,9 @@ export default function ConnectDialog({
   /// Bastion password or key passphrase (depends on ssh_auth):
   /// like the db password, never persisted outside the keychain.
   const [sshSecret, setSshSecret] = useState("");
+  /// Passphrase of the client certificate key (§12.3): like the others,
+  /// never persisted outside the keychain.
+  const [tlsPassphrase, setTlsPassphrase] = useState("");
   const [savePassword, setSavePassword] = useState(false);
   /// There is a keychain entry for the selected profile (§12): drives the
   /// placeholder and the initial state of the checkbox. The password never arrives.
@@ -146,28 +151,15 @@ export default function ConnectDialog({
   /// Result of the last successful "Test connection"; disappears at the first
   /// change to the profile.
   const [testOk, setTestOk] = useState<TestOut | null>(null);
-  /// The root CA as the backend reads it (§12.2), for the path it was read
-  /// from: a result for a path that has since changed is not shown.
-  const [caInfo, setCaInfo] = useState<{ path: string; cert: CertOut | null; error: string | null } | null>(null);
+  /// The TLS files as the backend reads them (§12.2, §12.3): the root CA,
+  /// the client certificate, whether its key is encrypted.
   const caPath = verifiesChain(draft.sslmode) ? (draft.ssl_root_cert ?? "").trim() : "";
-  useEffect(() => {
-    if (!caPath) {
-      setCaInfo(null);
-      return;
-    }
-    let live = true;
-    // Debounced: the path is also typed by hand.
-    const timer = setTimeout(() => {
-      ipc.inspectRootCert(caPath).then(
-        (cert) => live && setCaInfo({ path: caPath, cert, error: null }),
-        (e) => live && setCaInfo({ path: caPath, cert: null, error: String(e) }),
-      );
-    }, 300);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [caPath]);
+  const caInfo = useFileCheck(caPath, ipc.inspectRootCert);
+  const usesTls = draft.sslmode !== "disable";
+  const clientCertPath = usesTls ? (draft.ssl_client_cert ?? "").trim() : "";
+  const clientKeyPath = usesTls ? (draft.ssl_client_key ?? "").trim() : "";
+  const clientInfo = useFileCheck(clientCertPath, ipc.inspectClientCert);
+  const keyEncrypted = useFileCheck(clientKeyPath, ipc.clientKeyEncrypted)?.value === true;
 
   const reload = useCallback(async (selectId?: number | null) => {
     const [list, sshList] = await Promise.all([ipc.profilesList(), ipc.sshProfilesList()]);
@@ -200,8 +192,9 @@ export default function ConnectDialog({
       .profilePasswordPresent(draft.id)
       .then((present) => {
         if (stale) return;
-        setPasswordSaved(present.db || present.ssh);
-        setSavePassword(present.db || present.ssh);
+        const any = present.db || present.ssh || present.tls_key;
+        setPasswordSaved(any);
+        setSavePassword(any);
       })
       .catch(() => {});
     return () => {
@@ -222,6 +215,7 @@ export default function ConnectDialog({
     setError(null);
     setPassword("");
     setSshSecret("");
+    setTlsPassphrase("");
     setConfirmDelete(false);
     void reload(initialProfileId ?? undefined);
   }, [open, initialProfileId, reload]);
@@ -372,7 +366,13 @@ export default function ConnectDialog({
     try {
       // Outside edit mode the SAVED profile is connected, as is.
       id = editing || draft.id === null ? await save() : draft.id;
-      const p = await ipc.connectProfile(id, password || null, savePassword && keychainAllowed(), sshSecret || null);
+      const p = await ipc.connectProfile(
+        id,
+        password || null,
+        savePassword && keychainAllowed(),
+        sshSecret || null,
+        tlsPassphrase || null,
+      );
       onConnected(p);
     } catch (e) {
       failed(e, id, "connect");
@@ -392,7 +392,7 @@ export default function ConnectDialog({
     let id: number | null = null;
     try {
       id = editing || draft.id === null ? await save() : draft.id;
-      setTestOk(await ipc.testProfile(id, password || null, sshSecret || null));
+      setTestOk(await ipc.testProfile(id, password || null, sshSecret || null, tlsPassphrase || null));
     } catch (e) {
       failed(e, id, "test");
     } finally {
@@ -659,6 +659,9 @@ export default function ConnectDialog({
                 onPassword={setPassword}
                 sshSecret={sshSecret}
                 onSshSecret={setSshSecret}
+                keyEncrypted={keyEncrypted}
+                tlsPassphrase={tlsPassphrase}
+                onTlsPassphrase={setTlsPassphrase}
                 passwordSaved={passwordSaved}
                 savePassword={savePassword}
                 onSavePassword={setSavePassword}
@@ -932,7 +935,7 @@ export default function ConnectDialog({
                         className="btn"
                         disabled={busy}
                         onClick={() =>
-                          void ipc.pickRootCert().then((p) => {
+                          void ipc.pickPemFile(false).then((p) => {
                             if (p) set({ ssl_root_cert: p });
                           })
                         }
@@ -945,13 +948,74 @@ export default function ConnectDialog({
                         ? t("Required: the certificate is checked against this CA only, the host name is not checked.")
                         : t("Optional: empty = the roots the system trusts. With a company CA, pick its certificate here.")}
                     </div>
-                    {caInfo &&
-                      caInfo.path === caPath &&
-                      (caInfo.error ? (
-                        <div className="form-error">{tMsg(caInfo.error)}</div>
-                      ) : (
-                        caInfo.cert && <CertFacts cert={caInfo.cert} />
-                      ))}
+                    <FileCertFacts check={caInfo} />
+                  </>
+                )}
+                {usesTls && (
+                  <>
+                    <div className="form-subhead">{t("Client certificate")}</div>
+                    <div className="form-hint">
+                      {t(
+                        "Only if the server authenticates you by certificate (PostgreSQL \u201ccert\u201d, MySQL REQUIRE X509). Empty = none."
+                      )}
+                    </div>
+                    <div className="form-row">
+                      <label className="grow">
+                        {t("Certificate (PEM)")}
+                        <input
+                          value={draft.ssl_client_cert ?? ""}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder={t("optional")}
+                          onChange={(e) => set({ ssl_client_cert: e.target.value || null })}
+                        />
+                      </label>
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() =>
+                          void ipc.pickPemFile(false).then((p) => {
+                            if (p) set({ ssl_client_cert: p });
+                          })
+                        }
+                      >
+                        {t("Browse…")}
+                      </button>
+                    </div>
+                    <FileCertFacts check={clientInfo} />
+                    <div className="form-row">
+                      <label className="grow">
+                        {t("Private key (PEM)")}
+                        <input
+                          value={draft.ssl_client_key ?? ""}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder={t("the same file if it holds both")}
+                          onChange={(e) => set({ ssl_client_key: e.target.value || null })}
+                        />
+                      </label>
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() =>
+                          void ipc.pickPemFile(true).then((p) => {
+                            if (p) set({ ssl_client_key: p });
+                          })
+                        }
+                      >
+                        {t("Browse…")}
+                      </button>
+                    </div>
+                    {keyEncrypted && (
+                      <TlsPassphraseField
+                        value={tlsPassphrase}
+                        onChange={setTlsPassphrase}
+                        saved={passwordSaved}
+                        onEnter={() => void connect()}
+                      />
+                    )}
                   </>
                 )}
               </>
@@ -1299,6 +1363,9 @@ function ProfileSummary({
   onPassword,
   sshSecret,
   onSshSecret,
+  keyEncrypted,
+  tlsPassphrase,
+  onTlsPassphrase,
   passwordSaved,
   savePassword,
   onSavePassword,
@@ -1310,6 +1377,9 @@ function ProfileSummary({
   onPassword: (v: string) => void;
   sshSecret: string;
   onSshSecret: (v: string) => void;
+  keyEncrypted: boolean;
+  tlsPassphrase: string;
+  onTlsPassphrase: (v: string) => void;
   passwordSaved: boolean;
   savePassword: boolean;
   onSavePassword: (v: boolean) => void;
@@ -1353,6 +1423,14 @@ function ProfileSummary({
         <dd>
           {tlsMode(draft.sslmode).label} <code className="tls-id">{draft.sslmode}</code>
         </dd>
+        {draft.sslmode !== "disable" && draft.ssl_client_cert?.trim() && (
+          <>
+            <dt>{t("Client certificate")}</dt>
+            <dd className="mono" title={draft.ssl_client_cert}>
+              {fileName(draft.ssl_client_cert)}
+            </dd>
+          </>
+        )}
         <dt>{t("SSH tunnel")}</dt>
         <dd className={ssh ? "mono" : undefined}>{ssh ? `${ssh.username}@${ssh.host}:${ssh.port}` : t("no")}</dd>
         {mode.length > 0 && (
@@ -1391,6 +1469,9 @@ function ProfileSummary({
           />
         </label>
       )}
+      {keyEncrypted && (
+        <TlsPassphraseField value={tlsPassphrase} onChange={onTlsPassphrase} saved={passwordSaved} onEnter={onEnter} />
+      )}
       {keychainAllowed() && (
         <label
           className="check"
@@ -1402,6 +1483,74 @@ function ProfileSummary({
       )}
     </>
   );
+}
+
+/// Passphrase of the client certificate key (§12.3), shown only when the
+/// key is encrypted: in the Security tab and in the read-only summary.
+function TlsPassphraseField({
+  value,
+  onChange,
+  saved,
+  onEnter,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  saved: boolean;
+  onEnter: () => void;
+}) {
+  return (
+    <label>
+      {t("Client key passphrase")}
+      <input
+        type="password"
+        value={value}
+        autoComplete="off"
+        placeholder={saved ? t("saved in the keychain — empty = use it") : t("never on disk: system keychain only")}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && onEnter()}
+      />
+    </label>
+  );
+}
+
+/// What the backend read from a TLS file of the profile, or why it could
+/// not: under the field, for the path it was read from.
+type FileCheck<T> = { path: string; value: T | null; error: string | null };
+
+/// Reads `path` with `check`, debounced (the path is also typed by hand).
+/// A result for a path that has since changed is dropped, not shown.
+function useFileCheck<T>(path: string, check: (path: string) => Promise<T>): FileCheck<T> | null {
+  const [state, setState] = useState<FileCheck<T> | null>(null);
+  useEffect(() => {
+    if (!path) {
+      setState(null);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      check(path).then(
+        (value) => live && setState({ path, value, error: null }),
+        (e) => live && setState({ path, value: null, error: String(e) }),
+      );
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [path, check]);
+  return state?.path === path ? state : null;
+}
+
+function FileCertFacts({ check }: { check: FileCheck<CertOut> | null }) {
+  if (!check) return null;
+  if (check.error) return <div className="form-error">{tMsg(check.error)}</div>;
+  return check.value && <CertFacts cert={check.value} />;
+}
+
+/// The last component of a path, for the summary: the full path is in the
+/// title.
+function fileName(path: string): string {
+  return path.trim().split(/[\\/]/).pop() ?? path;
 }
 
 /// §16 "Passwords": with "always ask" nothing is offered for the keychain

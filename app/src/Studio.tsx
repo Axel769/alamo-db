@@ -1010,6 +1010,8 @@ function StudioInner() {
                 username: "",
                 sslmode: "prefer",
                 ssl_root_cert: null,
+                ssl_client_cert: null,
+                ssl_client_key: null,
                 color: null,
                 is_production: false,
                 read_only: false,

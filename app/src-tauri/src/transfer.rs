@@ -65,6 +65,12 @@ pub struct ProfileEntry {
     pub sslmode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssl_root_cert: Option<String>,
+    /// Client certificate and key paths (§12.3); the key passphrase is
+    /// never in the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssl_client_cert: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssl_client_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     #[serde(default)]
@@ -138,6 +144,8 @@ pub fn build_export(db: &Connection, ids: &[i64]) -> rusqlite::Result<Built> {
             username: p.username,
             sslmode: p.sslmode,
             ssl_root_cert: p.ssl_root_cert,
+            ssl_client_cert: p.ssl_client_cert,
+            ssl_client_key: p.ssl_client_key,
             color: p.color,
             is_production: p.is_production,
             read_only: p.read_only,
@@ -431,7 +439,14 @@ pub fn normalize(doc: &mut ExportDoc, drivers: &Drivers) -> Result<(), String> {
                 &p.db_exclude,
             ],
         )?;
-        too_long(&what, &[p.ssl_root_cert.as_deref().unwrap_or("")])?;
+        too_long(
+            &what,
+            &[
+                p.ssl_root_cert.as_deref().unwrap_or(""),
+                p.ssl_client_cert.as_deref().unwrap_or(""),
+                p.ssl_client_key.as_deref().unwrap_or(""),
+            ],
+        )?;
         if p.name.is_empty() || p.host.is_empty() || p.port == 0 {
             return Err(format!("{what}: name, host or port missing"));
         }
@@ -453,6 +468,8 @@ pub fn normalize(doc: &mut ExportDoc, drivers: &Drivers) -> Result<(), String> {
             p.color = None;
         }
         none_if_blank(&mut p.ssl_root_cert);
+        none_if_blank(&mut p.ssl_client_cert);
+        none_if_blank(&mut p.ssl_client_key);
     }
     if let Some(s) = &doc.secrets {
         let p = s.kdf.params;
@@ -554,6 +571,15 @@ pub fn preview(
             if let Some(ca) = e.ssl_root_cert.as_deref().filter(|p| !exists(p)) {
                 warnings.push(format!("CA certificate not found on this computer: {ca}"));
             }
+            for f in [&e.ssl_client_cert, &e.ssl_client_key]
+                .into_iter()
+                .flatten()
+                .filter(|p| !exists(p))
+            {
+                warnings.push(format!(
+                    "client certificate file not found on this computer: {f}"
+                ));
+            }
             if let Some(key) = e_ssh
                 .filter(|s| s.auth == "key")
                 .and_then(|s| s.key_path.as_deref())
@@ -652,6 +678,8 @@ pub fn apply(
                 username: e.username.clone(),
                 sslmode: e.sslmode.clone(),
                 ssl_root_cert: e.ssl_root_cert.clone(),
+                ssl_client_cert: e.ssl_client_cert.clone(),
+                ssl_client_key: e.ssl_client_key.clone(),
                 color: e.color.clone(),
                 is_production: e.is_production,
                 read_only: e.read_only,
@@ -766,6 +794,8 @@ mod tests {
             username: "app".into(),
             sslmode: "require".into(),
             ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
             color: Some("#a02a83".into()),
             is_production: true,
             dialect: "postgres".into(),
@@ -1063,12 +1093,21 @@ mod tests {
         let sid = storage::ssh_profile_save(&db, &bastion("jump")).unwrap();
         let mut p = profile("a", Some(sid));
         p.ssl_root_cert = Some("/does/not/exist/ca.pem".into());
+        p.ssl_client_cert = Some("/does/not/exist/client.pem".into());
+        p.ssl_client_key = Some("/does/not/exist/client-key.pem".into());
         let a = storage::profile_save(&db, &p).unwrap();
         let doc = round_trip(&db, &[a]);
+        assert_eq!(
+            doc.profiles[0].ssl_client_key.as_deref(),
+            Some("/does/not/exist/client-key.pem")
+        );
         let rows = preview(&mem(), &doc, &|_| false).unwrap();
-        assert_eq!(rows[0].warnings.len(), 2, "{:?}", rows[0].warnings);
-        assert!(rows[0].warnings[0].contains("/does/not/exist/ca.pem"));
-        assert!(rows[0].warnings[1].contains("~/.ssh/id_ed25519"));
+        let w = &rows[0].warnings;
+        assert_eq!(w.len(), 4, "{w:?}");
+        assert!(w[0].contains("/does/not/exist/ca.pem"));
+        assert!(w[1].contains("/does/not/exist/client.pem"));
+        assert!(w[2].contains("/does/not/exist/client-key.pem"));
+        assert!(w[3].contains("~/.ssh/id_ed25519"));
     }
 
     #[test]

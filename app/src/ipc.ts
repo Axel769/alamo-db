@@ -120,6 +120,10 @@ export type Profile = {
   sslmode: string;
   /// Custom root CA (PEM path) for verify-ca/verify-full (§12).
   ssl_root_cert: string | null;
+  /// Client certificate and its key (PEM paths, may be the same file) for
+  /// servers that authenticate by certificate (mTLS, §12.3).
+  ssl_client_cert: string | null;
+  ssl_client_key: string | null;
   color: string | null;
   is_production: boolean;
   /// §9.7 point 4: read-only — writes rejected by the classifier and by
@@ -511,26 +515,38 @@ export type ImportOutcome = {
 export const ipc = {
   engines: () => invoke<EngineOut[]>("engines"),
   connect: (url: string | null) => invoke<number>("connect", { url }),
-  /// password/sshSecret null or empty = use the keychain entries, if
-  /// any. savePassword is the desired state of the keychain entries
-  /// (§12). sshSecret = bastion password or key passphrase.
+  /// password/sshSecret/tlsPassphrase null or empty = use the keychain
+  /// entries, if any. savePassword is the desired state of the keychain
+  /// entries (§12). sshSecret = bastion password or key passphrase;
+  /// tlsPassphrase = passphrase of the client certificate key (§12.3).
   connectProfile: (
     id: number,
     password: string | null,
     savePassword: boolean,
     sshSecret: string | null,
-  ) => invoke<ConnectOut>("connect_profile", { id, password, savePassword, sshSecret }),
+    tlsPassphrase: string | null,
+  ) =>
+    invoke<ConnectOut>("connect_profile", {
+      id,
+      savePassword,
+      typed: { password, ssh_secret: sshSecret, tls_passphrase: tlsPassphrase },
+    }),
   /// Credentials never cross the IPC towards the frontend: only the flags.
   /// "Test connection": opens, runs a query, closes. Does not touch the keychain.
-  testProfile: (id: number, password: string | null, sshSecret: string | null) =>
-    invoke<TestOut>("test_profile", { id, password, sshSecret }),
-  /// Native picker for the profile's root CA. `null` = cancelled.
-  pickRootCert: () => invoke<string | null>("pick_root_cert"),
+  testProfile: (id: number, password: string | null, sshSecret: string | null, tlsPassphrase: string | null) =>
+    invoke<TestOut>("test_profile", { id, typed: { password, ssh_secret: sshSecret, tls_passphrase: tlsPassphrase } }),
+  /// Native picker for the profile's TLS files: a certificate (root CA,
+  /// client certificate) or, with `key`, a private key. `null` = cancelled.
+  pickPemFile: (key: boolean) => invoke<string | null>("pick_pem_file", { key }),
   /// Subject, issuer and validity of the root CA file; rejects with the
   /// reason (missing, unreadable, not a PEM certificate).
   inspectRootCert: (path: string) => invoke<CertOut>("inspect_root_cert", { path }),
+  /// The same for the client certificate (§12.3): the identity presented.
+  inspectClientCert: (path: string) => invoke<CertOut>("inspect_client_cert", { path }),
+  /// The client key is encrypted: the dialog asks for its passphrase.
+  clientKeyEncrypted: (path: string) => invoke<boolean>("client_key_encrypted", { path }),
   profilePasswordPresent: (id: number) =>
-    invoke<{ db: boolean; ssh: boolean }>("profile_password_present", { id }),
+    invoke<{ db: boolean; ssh: boolean; tls_key: boolean }>("profile_password_present", { id }),
   sshProfilesList: () => invoke<SshProfileOut[]>("ssh_profiles_list"),
   /// Only the profile's own fields cross: a `SshProfileOut` is fine as input.
   sshProfileSave: ({ id, name, host, port, username, auth, key_path }: SshProfile) =>

@@ -1571,6 +1571,17 @@ passphrase cases (missing, wrong) are typed apart so the app asks instead
 of failing. Coverage: the `+tls` targets of the matrix create a user
 `alamo_mtls` that gets in only with the lab's client certificate.
 
+In the app the two paths are profile fields (migration 13), used only when
+the mode wants TLS; one without the other is refused before connecting.
+The key passphrase is a third keychain entry of the profile
+(`tlskey-<tag>`), saved and forgotten with the password under the same
+checkbox and dropped with it when the server changes. The keychain is read
+only for an encrypted key, and the dialog shows the passphrase field only
+then (`client_key_encrypted`). The certificate read at connect is kept for
+the other databases of a PG server (§3.3), so they do not ask again.
+Export carries the paths, never the passphrase: the key file does not
+travel either.
+
 ---
 
 ## 13. Licence and legal aspects
