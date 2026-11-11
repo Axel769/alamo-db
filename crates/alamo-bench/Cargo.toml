@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 alamo-core.workspace = true
 alamo-driver-postgres.workspace = true
+alamo-session.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 clap.workspace = true
 

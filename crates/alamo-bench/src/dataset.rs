@@ -5,6 +5,25 @@
 //! schema the numbers mean nothing and cannot be compared between two runs
 //! weeks apart.
 
+/// The engine of the bench server: the same tables and the same data in
+/// each one's SQL (`launch` measures both).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    Postgres,
+    /// MySQL 8.x (`INSERT … WITH RECURSIVE`, not in MariaDB).
+    MySql,
+}
+
+impl Engine {
+    pub fn of_url(url: &str) -> Engine {
+        if url.starts_with("mysql:") {
+            Engine::MySql
+        } else {
+            Engine::Postgres
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Table {
     /// T1 — narrow (~60 B/row), best case, measures the **per-field** overhead.
@@ -46,7 +65,18 @@ impl Table {
         [Table::Narrow, Table::Wide, Table::Int60]
     }
 
-    pub fn ddl(&self) -> String {
+    pub fn column_count(&self) -> usize {
+        match self {
+            Table::Narrow => 6,
+            Table::Wide => 14,
+            Table::Int60 => 60,
+        }
+    }
+
+    pub fn ddl(&self, engine: Engine) -> String {
+        if engine == Engine::MySql {
+            return self.mysql_ddl();
+        }
         match self {
             Table::Narrow => "\
 CREATE TABLE bench_narrow (
@@ -83,10 +113,53 @@ CREATE TABLE bench_wide (
         }
     }
 
-    /// `INSERT … SELECT … FROM generate_series`: generation happens on the
-    /// server. Inserting from the client would make the preparation slower
-    /// than the measurement it is meant to enable.
-    pub fn fill_sql(&self, from: u64, to: u64) -> String {
+    /// The same columns in MySQL types: `uuid` as `char(36)`, `jsonb` and
+    /// `text[]` as `json`, `timestamptz` as `timestamp`.
+    fn mysql_ddl(&self) -> String {
+        match self {
+            Table::Narrow => "\
+CREATE TABLE bench_narrow (
+  id         bigint,
+  parent_id  bigint,
+  qty        int,
+  ratio      double,
+  is_active  boolean,
+  created_at timestamp NULL
+)"
+            .to_owned(),
+            Table::Wide => "\
+CREATE TABLE bench_wide (
+  id          bigint,
+  parent_id   bigint,
+  uid         char(36),
+  code        varchar(16),
+  name        text,
+  description text,
+  amount      decimal(14,2),
+  ratio       double,
+  qty         int,
+  is_active   boolean,
+  created_at  timestamp NULL,
+  updated_at  timestamp NULL,
+  payload     json,
+  tags        json
+)"
+            .to_owned(),
+            Table::Int60 => {
+                let cols: Vec<String> = (0..60).map(|i| format!("  c{i:02} int")).collect();
+                format!("CREATE TABLE bench_int60 (\n{}\n)", cols.join(",\n"))
+            }
+        }
+    }
+
+    /// Statements that fill rows `from..=to`. Generation happens on the
+    /// server (`generate_series`, a recursive CTE on MySQL): inserting from
+    /// the client would make the preparation slower than the measurement it
+    /// is meant to enable.
+    pub fn fill_sql(&self, engine: Engine, from: u64, to: u64) -> String {
+        if engine == Engine::MySql {
+            return self.mysql_fill_sql(from, to);
+        }
         match self {
             Table::Narrow => format!(
                 "INSERT INTO bench_narrow
@@ -132,6 +205,54 @@ CREATE TABLE bench_wide (
                     cols.join(", ")
                 )
             }
+        }
+    }
+
+    /// Same values as the PG fill, row by row (`g` is the row number).
+    fn mysql_fill_sql(&self, from: u64, to: u64) -> String {
+        let select = match self {
+            Table::Narrow => "SELECT g, (g % 1000) + 1, g % 977, (g % 1000) / 7.0, g % 2 = 0,
+                       TIMESTAMP '2020-01-01 00:00:00' + INTERVAL (g % 100000) SECOND"
+                .to_owned(),
+            Table::Wide => "SELECT g, (g % 1000) + 1,
+                       INSERT(INSERT(INSERT(INSERT(md5(g), 21, 0, '-'), 17, 0, '-'), 13, 0, '-'), 9, 0, '-'),
+                       left(md5(g), 16),
+                       left(repeat(md5(g), 2), 24),
+                       CASE WHEN g % 100 < 15 THEN NULL ELSE left(repeat(md5(g), 4), 120) END,
+                       (g % 100000000) / 100,
+                       (g % 1000) / 7.0,
+                       g % 977,
+                       g % 2 = 0,
+                       TIMESTAMP '2020-01-01 00:00:00' + INTERVAL (g % 100000) SECOND,
+                       CASE WHEN g % 7 = 0 THEN NULL
+                            ELSE TIMESTAMP '2021-01-01 00:00:00' + INTERVAL (g % 90000) SECOND END,
+                       JSON_OBJECT('id', g, 'hash', md5(g),
+                                   'nested', JSON_OBJECT('a', g % 13, 'b', md5(g + 1)),
+                                   'flags', JSON_ARRAY(g % 2 = 0, g % 3 = 0, g % 5 = 0)),
+                       JSON_ARRAY(left(md5(g), 8), left(md5(g + 1), 8), CONCAT('tag', g % 20))"
+                .to_owned(),
+            Table::Int60 => {
+                let cols: Vec<String> = (0..60).map(|i| format!("g % {}", i + 7)).collect();
+                format!("SELECT {}", cols.join(", "))
+            }
+        };
+        // The CTE recursion limit is 1000 by default: one batch at a time.
+        format!(
+            "SET SESSION cte_max_recursion_depth = {};
+             INSERT INTO {} WITH RECURSIVE seq (g) AS
+               (SELECT {from} UNION ALL SELECT g + 1 FROM seq WHERE g < {to})
+             {select} FROM seq",
+            to - from + 2,
+            self.name()
+        )
+    }
+
+    /// Statistics after the fill: without them the first SELECT also pays
+    /// for them and the first repetition turns out artificially slow.
+    pub fn analyze_sql(&self, engine: Engine) -> String {
+        match engine {
+            Engine::Postgres => format!("ANALYZE {}", self.name()),
+            Engine::MySql => format!("ANALYZE TABLE {}", self.name()),
         }
     }
 

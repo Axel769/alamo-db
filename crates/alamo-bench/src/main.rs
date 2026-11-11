@@ -17,9 +17,11 @@
 //! alamo-bench prepare --url postgres://… --rows 1000000
 //! alamo-bench run     --url postgres://… --table t1 --reps 5
 //! alamo-bench all     --url postgres://…
+//! alamo-bench launch  --url postgres://… | mysql://…   (launch.rs)
 //! ```
 
 mod dataset;
+mod launch;
 mod report;
 mod rss;
 
@@ -29,7 +31,7 @@ use clap::{Parser, Subcommand};
 
 use alamo_driver_postgres::execute::{execute_collect, measure_ceiling, FetchOptions};
 use alamo_driver_postgres::PgSession;
-use dataset::Table;
+use dataset::{Engine, Table};
 use report::{grade_higher_better, grade_lower_better, Band, Metric, Report};
 
 #[derive(Parser)]
@@ -81,6 +83,17 @@ enum Command {
         #[arg(long, default_value_t = 5)]
         reps: usize,
     },
+    /// The launch numbers: the app's path (`Session`) on PG or MySQL, one
+    /// Markdown table (`launch.rs`).
+    Launch {
+        #[arg(long, env = "ALAMO_BENCH_URL")]
+        url: String,
+        /// t1, t2, t3 (repeatable). Default: all.
+        #[arg(long)]
+        table: Vec<String>,
+        #[arg(long, default_value_t = 5)]
+        reps: usize,
+    },
 }
 
 #[tokio::main]
@@ -103,6 +116,10 @@ async fn main() {
             None => Err(format!("unknown table: {table} (expected t1, t2, t3)")),
         },
         Command::All { url, reps } => run_all(&url, reps).await,
+        Command::Launch { url, table, reps } => match parse_tables(&table) {
+            Ok(t) => launch::run(&url, &t, reps).await,
+            Err(e) => Err(e),
+        },
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
@@ -120,28 +137,35 @@ async fn connect(url: &str) -> Result<PgSession, String> {
 // prepare
 // ---------------------------------------------------------------------------
 
-async fn prepare(url: &str, rows: u64, tables: &[String], force: bool) -> Result<(), String> {
-    let selected: Vec<Table> = if tables.is_empty() {
-        Table::all().to_vec()
-    } else {
-        tables
-            .iter()
-            .map(|t| Table::parse(t).ok_or_else(|| format!("unknown table: {t}")))
-            .collect::<Result<_, _>>()?
-    };
+fn parse_tables(tables: &[String]) -> Result<Vec<Table>, String> {
+    if tables.is_empty() {
+        return Ok(Table::all().to_vec());
+    }
+    tables
+        .iter()
+        .map(|t| Table::parse(t).ok_or_else(|| format!("unknown table: {t}")))
+        .collect()
+}
 
-    let session = connect(url).await?;
-    let client = &session.client;
+/// Through a `Session`, so the same command fills a PG or a MySQL server.
+async fn prepare(url: &str, rows: u64, tables: &[String], force: bool) -> Result<(), String> {
+    let selected = parse_tables(tables)?;
+    let engine = Engine::of_url(url);
+    let session = alamo_session::Session::connect(url)
+        .await
+        .map_err(|e| format!("connection failed: {}", e.message))?;
+    let sql = |s: String| {
+        let session = &session;
+        async move { launch::run_sql(session, &s).await }
+    };
 
     for t in selected {
         if force {
-            client
-                .batch_execute(&format!("DROP TABLE IF EXISTS {}", t.name()))
+            sql(format!("DROP TABLE IF EXISTS {}", t.name()))
                 .await
                 .map_err(|e| format!("drop {}: {e}", t.name()))?;
         }
-        client
-            .batch_execute(&t.ddl())
+        sql(t.ddl(engine))
             .await
             .map_err(|e| format!("create {}: {e} (use --force to recreate)", t.name()))?;
 
@@ -153,8 +177,7 @@ async fn prepare(url: &str, rows: u64, tables: &[String], force: bool) -> Result
         while done < rows {
             let from = done + 1;
             let to = (done + BATCH).min(rows);
-            client
-                .batch_execute(&t.fill_sql(from, to))
+            sql(t.fill_sql(engine, from, to))
                 .await
                 .map_err(|e| format!("fill {}: {e}", t.name()))?;
             done = to;
@@ -167,11 +190,7 @@ async fn prepare(url: &str, rows: u64, tables: &[String], force: bool) -> Result
             t.name(),
             started.elapsed().as_secs_f64()
         );
-
-        // ANALYZE: without it, the first SELECT also pays for the missing
-        // statistics and the first repetition turns out artificially slow.
-        client
-            .batch_execute(&format!("ANALYZE {}", t.name()))
+        sql(t.analyze_sql(engine))
             .await
             .map_err(|e| format!("analyze {}: {e}", t.name()))?;
     }
