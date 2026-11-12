@@ -51,7 +51,7 @@ impl server::Handler for SrvHandler {
     async fn auth_publickey(
         &mut self,
         user: &str,
-        _key: &russh::keys::PublicKey,
+        _key: russh::server::VerifiedPublicKey<'_>,
     ) -> Result<Auth, Self::Error> {
         Ok(if user == USER {
             Auth::Accept
