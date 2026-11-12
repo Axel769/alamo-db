@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- If the interface stops with an error, the window no longer goes blank (black on the dark theme): it says so, with Try again (back where you were, connections and tabs kept), Copy details for a bug report, and Reload.
 - Alamo DB Pro: schema comparison for MySQL and MariaDB (panel in the left bar) is a Pro feature, with a 14-day trial from the first start of this version. The "Alamo DB Pro" panel shows how many days are left and takes the licence key; everything else stays free.
 - Client certificate (mTLS): for servers that recognise you by certificate (PostgreSQL "cert", MySQL and MariaDB users REQUIRE X509), the Security tab of a profile takes the certificate and its private key (PEM, the same file if it holds both), shows whose certificate it is and until when it is valid, and asks for the key passphrase when the key is encrypted. The passphrase can be saved in the system keychain like the password. .p12/.pfx files and keys in the old OpenSSL format are not read: the message gives the openssl command that converts them. Export and import carry the two paths, never the passphrase.
 - SSH profiles: the private key field has a Browse… button too, opening in the .ssh folder of your home and showing every file (SSH keys usually have no extension).

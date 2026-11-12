@@ -544,6 +544,12 @@ const IT: Record<string, string> = {
   "New SQL tab (from a table tab it inherits the database)": "Nuova tab SQL (dalla tab tabella eredita il database)",
   "new profile": "nuovo profilo",
   "Root CA (PEM)": "CA radice (PEM)",
+  "The interface stopped with an error": "L'interfaccia si è fermata per un errore",
+  "Your connections are still open. Try again to go back where you were; if it happens again, copy the details and send them to us.":
+    "Le connessioni sono ancora aperte. Riprova per tornare dov'eri; se succede di nuovo, copia i dettagli e mandaceli.",
+  "Try again": "Riprova",
+  "Copy details": "Copia dettagli",
+  "Reload (closes the connections)": "Ricarica (chiude le connessioni)",
   "Client certificate": "Certificato client",
   "Only if the server authenticates you by certificate (PostgreSQL \u201ccert\u201d, MySQL REQUIRE X509). Empty = none.":
     "Solo se il server ti riconosce dal certificato (PostgreSQL \u201ccert\u201d, MySQL REQUIRE X509). Vuoto = nessuno.",
