@@ -686,7 +686,11 @@ Pending → Running → (Completed | Failed | Cancelling → Cancelled)
 - Two clicks = a single action (idempotence).
 - **Escalation**: first click → cancel/`KILL QUERY`; if after ~10s nothing happens,
   offer terminating the connection (`pg_terminate_backend`, `KILL CONNECTION`),
-  which is destructive and must be chosen deliberately.
+  which is destructive and must be chosen deliberately. The Stop of a paused
+  MySQL fetch (§11) escalates the same way: its `KILL QUERY` may not get through
+  either. Meanwhile the status bar says the query is stopping, not paused.
+  Terminating closes Alamo's side of the connection even when the `KILL`
+  fails: the stuck stream dies with it.
 
 ### 7.3 Partial data
 

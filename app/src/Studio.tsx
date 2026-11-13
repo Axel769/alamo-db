@@ -41,7 +41,7 @@ import SchemaTree from "./SchemaTree";
 import { recordHistory } from "./history";
 import TabBar from "./TabBar";
 import TableTab from "./TableTab";
-import { freeSticky } from "./sticky";
+import { freeSticky, stopExecution } from "./sticky";
 import { ErrorPanel, resultIncomplete, singleSourceTable } from "./ResultPane";
 import SqlResultPane from "./SqlResultPane";
 import { ExportDialog } from "./ExportDialog";
@@ -381,6 +381,8 @@ function StudioInner() {
   // working — no spinner, timer or progress thread.
   const tabPaused = tab?.statements.find((x) => x.budgetPaused);
   const tabWorking = !!tab?.running && !tabPaused;
+  // Stop or Cancel sent, the server has not let go yet.
+  const tabStopping = !!tab?.running && !!tab.stoppingSince;
 
   // §9.7: pre-execution confirmation on prod (first write / irreversible).
   const [writeGate, setWriteGate] = useState<WriteGate | null>(null);
@@ -416,13 +418,24 @@ function StudioInner() {
   const [avMenu, setAvMenu] = useState<{ connId: number; x: number; y: number } | null>(null);
   const [avArmed, setAvArmed] = useState(false);
 
-  // Escalation §7.2: if ~10s after the cancel the execution is still alive,
-  // the server did not take it (pooler, non-interruptible query) → the
-  // termination of the connection is offered, destructive and never automatic.
-  const [escalate, setEscalate] = useState(false);
+  // Escalation §7.2: if ~10s after Cancel or Stop the execution is still
+  // alive, the server did not take it (pooler, non-interruptible query, no
+  // free connection for the KILL) → the termination of the connection is
+  // offered, destructive and never automatic.
+  const stoppingSince = stickyTab?.stoppingSince ?? null;
+  const [escalateFor, setEscalateFor] = useState<number | null>(null);
   useEffect(() => {
-    if (!anyRunning) setEscalate(false);
-  }, [anyRunning]);
+    if (stoppingSince === null) return;
+    const id = window.setTimeout(
+      () => setEscalateFor(stoppingSince),
+      Math.max(0, stoppingSince + ESCALATE_AFTER_MS - Date.now())
+    );
+    return () => window.clearTimeout(id);
+  }, [stoppingSince]);
+  const escalate = stoppingSince !== null && escalateFor === stoppingSince;
+  // The termination opens a connection for the KILL: on a server that does
+  // not answer it takes up to the connect timeout.
+  const [terminating, setTerminating] = useState(false);
 
   // The connection's database (the sticky's real one) is read at connect
   // and at every end of execution (store, `handleEvent` finished): a `USE`
@@ -617,24 +630,20 @@ function StudioInner() {
     if (!conn) return;
     const running = stickyRunningTab(s, conn.connId);
     if (!running || running.execId === null) return;
-    const execId = running.execId;
-    void ipc.cancel(conn.connId, execId);
-    window.setTimeout(() => {
-      const cur = useStore.getState();
-      const t = cur.tabs.find((x) => x.connId === conn.connId && x.execId === execId);
-      if (t?.running) setEscalate(true);
-    }, 10_000);
+    stopExecution(conn.connId, running.execId, "cancel");
   }, []);
 
   const terminate = useCallback(async () => {
-    setEscalate(false);
     const s = useStore.getState();
     const conn = connById(s, activeTab(s)?.connId ?? s.activeConnId);
     if (!conn) return;
+    setTerminating(true);
     try {
       await ipc.terminateConnection(conn.connId);
     } catch (e) {
       console.error(e);
+    } finally {
+      setTerminating(false);
     }
     useStore.getState().removeConnection(conn.connId);
     if (useStore.getState().connections.length === 0) openConnectDialog();
@@ -1632,11 +1641,11 @@ function StudioInner() {
                 />
               )}
               <div className="results-pane">
-                {escalate && anyRunning && (
+                {escalate && (
                   <div className="banner warn">
-                    {t("The server has not responded to the cancel request for 10 seconds.")}
-                    <button className="btn danger" onClick={() => void terminate()}>
-                      {t("Terminate connection")}
+                    {t("The query has not stopped on the server after 10 seconds.")}
+                    <button className="btn danger" disabled={terminating} onClick={() => void terminate()}>
+                      {terminating ? t("terminating…") : t("Terminate connection")}
                     </button>
                     <span className="banner-note">
                       {t(
@@ -1726,12 +1735,14 @@ function StudioInner() {
             ? t("connecting…")
             : !tab || tab.execState === "idle"
             ? t("ready")
+            : tabStopping
+            ? t("stopping on the server…")
             : tabPaused
               ? tabPaused.budgetByRows
                 ? t("paused — scroll for more rows")
                 : t("paused")
               : stateLabel(tab.execState, tab.running)}
-          {tabWorking && <Elapsed startedAt={tab.startedAt} prefix=" · " />}
+          {tabWorking && <Elapsed startedAt={tabStopping ? tab.stoppingSince ?? null : tab.startedAt} prefix=" · " />}
           {tabConnecting && !tabWorking && <Elapsed startedAt={reconnecting.startedAt} prefix=" · " />}
         </span>
         {sel && sel.resultId !== null && (
@@ -2237,6 +2248,10 @@ function badgeClass(st: StatementUi): string {
   if (st.outcome?.kind === "cancelled") return " cancelled";
   return "";
 }
+
+/// Escalation of §7.2: how long Stop or Cancel may take before the
+/// termination of the connection is offered.
+const ESCALATE_AFTER_MS = 10_000;
 
 function stateLabel(state: string, running: boolean): string {
   if (running) return t("running…");

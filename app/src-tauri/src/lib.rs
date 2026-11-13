@@ -1074,9 +1074,11 @@ async fn terminate_connection(
     conn_id: u64,
 ) -> Result<bool, ErrorOut> {
     let session = state.session(conn_id).map_err(internal)?;
-    let terminated = session.terminate().await.map_err(|e| ErrorOut::from(&*e))?;
+    // Forgotten even when the KILL fails (no answer, refused): the UI drops
+    // the connection anyway, and closing ours stops the stuck stream.
+    let terminated = session.terminate().await;
     state.forget(&db, conn_id);
-    Ok(terminated)
+    terminated.map_err(|e| ErrorOut::from(&*e))
 }
 
 #[tauri::command]
