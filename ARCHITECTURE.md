@@ -1472,7 +1472,14 @@ and the UI must warn, not silently make an open transaction disappear.
 
 - TLS via `rustls`, with explicit handling of the `sslmode` modes
   (`alamo_core::tls`); what the user sees of it is §12.2.
-- SSH tunnel via `russh`.
+- SSH tunnel via `russh`. **One SSH session per forwarded connection**
+  (decided 2026-11-13), not one channel each on a shared session: russh
+  grants a channel's window on receipt, not on consumption, and delivers
+  every channel from one read loop, so a connection that stops reading — a
+  paused MySQL result, which the server keeps sending (§11) — stalled the
+  whole tunnel, the `KILL QUERY` that would stop it included. Cost: one
+  bastion login per database connection, paid once per lane. Key file,
+  known_hosts and saved fingerprint are read once when the tunnel opens.
 - **SSH profiles are a shared entity** (`ssh_profiles`, referenced by
   `profiles.ssh_profile_id`): a bastion is saved once and used by several
   connections, and so is its credential in the keychain. They are created,

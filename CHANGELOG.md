@@ -11,6 +11,10 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- Connections through SSH: a large MySQL or MariaDB result paused after its first rows froze every other connection going through the same SSH server, so stopping it ("still stopping on the server: try again in a moment"), the tables panel and the other tabs waited forever. Each connection now goes through its own SSH session, and a paused result holds up only itself.
+
 ## [0.1.0-alpha.16] - 2026-11-13
 
 - Windows: typing in the filter of the tables panel could freeze the window (black, "Maximum update depth exceeded" behind it): the lists of the filtered databases kept resizing one another. They now settle at once.

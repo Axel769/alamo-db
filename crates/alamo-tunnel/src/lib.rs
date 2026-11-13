@@ -5,7 +5,8 @@
 //!
 //! Model: a TCP listener on `127.0.0.1:random_port`; every accepted
 //! connection becomes a `direct-tcpip` channel towards the database, on the
-//! other side of the tunnel. The database session stays transport-agnostic:
+//! other side of the tunnel, each on an SSH session of its own (see
+//! `forward`). The database session stays transport-agnostic:
 //! the app rewrites host/port of the connection string to point at the
 //! listener, and ALL connections — lanes, out-of-band cancel/KILL,
 //! escalation — go through here by construction, because they share the
@@ -196,7 +197,7 @@ pub async fn probe(ssh: &SshEndpoint) -> Result<(), TunnelError> {
 
 /// `probe` with the network choices of §16.
 pub async fn probe_with(ssh: &SshEndpoint, net: TunnelNet) -> Result<(), TunnelError> {
-    let handle = session(ssh, net).await?;
+    let handle = Bastion::prepare(ssh)?.session(net).await?;
     // Best-effort goodbye: the handshake already answered the question.
     let _ = handle
         .disconnect(russh::Disconnect::ByApplication, "", "en")
@@ -204,53 +205,94 @@ pub async fn probe_with(ssh: &SshEndpoint, net: TunnelNet) -> Result<(), TunnelE
     Ok(())
 }
 
-/// Connection to the bastion, host key verified, user authenticated: the
-/// part of the tunnel that can fail for reasons the user can act on.
-async fn session(ssh: &SshEndpoint, net: TunnelNet) -> Result<Handle<HostCheck>, TunnelError> {
-    let config = Arc::new(client::Config {
-        // A tunnel stays up for hours with long silences: the keepalive
-        // prevents NAT/firewall from dropping the idle connection.
-        keepalive_interval: Some(net.keepalive),
-        ..Default::default()
-    });
-    // Read BEFORE connecting: an unreadable known_hosts or a broken
-    // saved key stop everything, never "no known host".
-    let known_hosts = match ssh.known_hosts.clone().or_else(default_known_hosts) {
-        Some(path) => host_key::read_known_hosts(&path).map_err(TunnelError::Config)?,
-        None => String::new(),
-    };
-    let pinned = ssh
-        .trusted_key
-        .as_deref()
-        .map(ssh_key::PublicKey::from_openssh)
-        .transpose()
-        .map_err(|e| TunnelError::Config(format!("invalid saved fingerprint: {e}")))?;
-    let checker = HostCheck {
-        host: ssh.host.clone(),
-        port: ssh.port,
-        known_hosts,
-        pinned,
-    };
-    // One bound for TCP, key exchange and authentication: a bastion that
-    // accepts and stays silent must not hang the connect.
-    let timeout = || TunnelError::Timeout {
-        host: ssh.host.clone(),
-        port: ssh.port,
-        secs: net.connect_timeout.as_secs(),
-    };
-    let mut handle = tokio::time::timeout(
-        net.connect_timeout,
-        client::connect(config, (ssh.host.as_str(), ssh.port), checker),
-    )
-    .await
-    .map_err(|_| timeout())??;
-    tokio::time::timeout(
-        net.connect_timeout,
-        authenticate(&mut handle, &ssh.user, &ssh.auth),
-    )
-    .await
-    .map_err(|_| timeout())??;
-    Ok(handle)
+/// What logging into the bastion needs, read once: every forwarded
+/// connection opens a session of its own (see `forward`), and a key file
+/// moved after the tunnel opened must not break the next one.
+struct Bastion {
+    host: String,
+    port: u16,
+    user: String,
+    login: Login,
+    checker: HostCheck,
+}
+
+/// `TunnelAuth` with the key file already read and decrypted.
+enum Login {
+    Agent,
+    Password(String),
+    Key(Arc<ssh_key::PrivateKey>),
+}
+
+impl Bastion {
+    /// Reads known_hosts, the saved fingerprint and the key file BEFORE
+    /// connecting: an unreadable known_hosts or a broken saved key stop
+    /// everything, never "no known host".
+    fn prepare(ssh: &SshEndpoint) -> Result<Bastion, TunnelError> {
+        let known_hosts = match ssh.known_hosts.clone().or_else(default_known_hosts) {
+            Some(path) => host_key::read_known_hosts(&path).map_err(TunnelError::Config)?,
+            None => String::new(),
+        };
+        let pinned = ssh
+            .trusted_key
+            .as_deref()
+            .map(ssh_key::PublicKey::from_openssh)
+            .transpose()
+            .map_err(|e| TunnelError::Config(format!("invalid saved fingerprint: {e}")))?;
+        let login = match &ssh.auth {
+            TunnelAuth::Agent => Login::Agent,
+            TunnelAuth::Password(p) => Login::Password(p.clone()),
+            TunnelAuth::Key { path, passphrase } => {
+                Login::Key(Arc::new(load_secret_key(path, passphrase.as_deref())?))
+            }
+        };
+        Ok(Bastion {
+            host: ssh.host.clone(),
+            port: ssh.port,
+            user: ssh.user.clone(),
+            login,
+            checker: HostCheck {
+                host: ssh.host.clone(),
+                port: ssh.port,
+                known_hosts,
+                pinned,
+            },
+        })
+    }
+
+    /// Connection to the bastion, host key verified, user authenticated:
+    /// the part of the tunnel that can fail for reasons the user can act on.
+    async fn session(&self, net: TunnelNet) -> Result<Handle<HostCheck>, TunnelError> {
+        let config = Arc::new(client::Config {
+            // A tunnel stays up for hours with long silences: the keepalive
+            // prevents NAT/firewall from dropping the idle connection.
+            keepalive_interval: Some(net.keepalive),
+            ..Default::default()
+        });
+        // One bound for TCP, key exchange and authentication: a bastion that
+        // accepts and stays silent must not hang the connect.
+        let timeout = || TunnelError::Timeout {
+            host: self.host.clone(),
+            port: self.port,
+            secs: net.connect_timeout.as_secs(),
+        };
+        let mut handle = tokio::time::timeout(
+            net.connect_timeout,
+            client::connect(
+                config,
+                (self.host.as_str(), self.port),
+                self.checker.clone(),
+            ),
+        )
+        .await
+        .map_err(|_| timeout())??;
+        tokio::time::timeout(
+            net.connect_timeout,
+            authenticate(&mut handle, &self.user, &self.login),
+        )
+        .await
+        .map_err(|_| timeout())??;
+        Ok(handle)
+    }
 }
 
 /// Active tunnel. Lives as long as the database session that uses it: on
@@ -259,9 +301,10 @@ pub struct Tunnel {
     /// Listener port on 127.0.0.1: this is where the connection string points.
     pub local_port: u16,
     accept_task: tokio::task::JoinHandle<()>,
-    /// Keeps the SSH connection alive: the channels opened by the accept
-    /// task die if the handle is dropped.
-    _handle: Arc<Handle<HostCheck>>,
+    /// The session opened by `open_at`: it proved the bastion accepts us,
+    /// and its keepalive tells `is_closed` when the bastion is gone. The
+    /// forwarded connections have sessions of their own.
+    _handle: Handle<HostCheck>,
 }
 
 impl Drop for Tunnel {
@@ -294,7 +337,8 @@ impl Tunnel {
         local_port: Option<u16>,
         net: TunnelNet,
     ) -> Result<Tunnel, TunnelError> {
-        let handle = session(&cfg.ssh, net).await?;
+        let bastion = Arc::new(Bastion::prepare(&cfg.ssh)?);
+        let handle = bastion.session(net).await?;
 
         // Random port on loopback: no conflicts, no exposure outside the
         // machine.
@@ -303,9 +347,6 @@ impl Tunnel {
             Some(port) => bind_retry(port).await?,
         };
         let local_port = listener.local_addr()?.port();
-        let handle = Arc::new(handle);
-        let accept_handle = Arc::clone(&handle);
-        let (target_host, target_port) = (cfg.target_host.clone(), u32::from(cfg.target_port));
         let accept_task = tokio::spawn(async move {
             // The forwarded connections live here: when the tunnel is dropped
             // (abort of this task) the JoinSet closes them all. On an SSH that
@@ -313,26 +354,18 @@ impl Tunnel {
             // (minutes), and with them the running queries and opens.
             let mut conns = tokio::task::JoinSet::new();
             loop {
-                let Ok((mut sock, peer)) = listener.accept().await else {
+                let Ok((sock, peer)) = listener.accept().await else {
                     // Listener dead: the tunnel is over, no point looping.
                     break;
                 };
                 while conns.try_join_next().is_some() {}
-                let h = Arc::clone(&accept_handle);
-                let (th, tp) = (target_host.clone(), target_port);
-                conns.spawn(async move {
-                    // Channel refused (db down as seen from the bastion,
-                    // policy): the socket is closed and the driver sees
-                    // "connection reset", its normal connection error.
-                    let Ok(channel) = h
-                        .channel_open_direct_tcpip(th, tp, "127.0.0.1", u32::from(peer.port()))
-                        .await
-                    else {
-                        return;
-                    };
-                    let mut stream = channel.into_stream();
-                    let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
-                });
+                conns.spawn(forward(
+                    sock,
+                    peer.port(),
+                    Arc::clone(&bastion),
+                    (cfg.target_host.clone(), cfg.target_port),
+                    net,
+                ));
             }
         });
         Ok(Tunnel {
@@ -341,6 +374,43 @@ impl Tunnel {
             _handle: handle,
         })
     }
+}
+
+/// One forwarded connection, on an SSH session of its own. russh grants the
+/// channel window on receipt, not on consumption, and delivers every
+/// channel from a single read loop: a connection that stops reading (a
+/// paused MySQL result, which the server keeps sending) would stall every
+/// channel of a shared session, including the `KILL QUERY` that stops it.
+/// Its own session costs one login per database connection, which lanes
+/// keep open for hours.
+async fn forward(
+    mut sock: tokio::net::TcpStream,
+    peer_port: u16,
+    bastion: Arc<Bastion>,
+    (target_host, target_port): (String, u16),
+    net: TunnelNet,
+) {
+    // Bastion or channel refused (db down as seen from the bastion,
+    // policy): the socket is closed and the driver sees "connection
+    // reset", its normal connection error.
+    let Ok(handle) = bastion.session(net).await else {
+        return;
+    };
+    let channel = handle
+        .channel_open_direct_tcpip(
+            target_host,
+            u32::from(target_port),
+            "127.0.0.1",
+            u32::from(peer_port),
+        )
+        .await;
+    if let Ok(channel) = channel {
+        let mut stream = channel.into_stream();
+        let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
+    }
+    let _ = handle
+        .disconnect(russh::Disconnect::ByApplication, "", "en")
+        .await;
 }
 
 async fn bind_retry(port: u16) -> std::io::Result<tokio::net::TcpListener> {
@@ -360,18 +430,17 @@ async fn bind_retry(port: u16) -> std::io::Result<tokio::net::TcpListener> {
 async fn authenticate(
     handle: &mut Handle<HostCheck>,
     user: &str,
-    auth: &TunnelAuth,
+    login: &Login,
 ) -> Result<(), TunnelError> {
-    let result = match auth {
-        TunnelAuth::Password(p) => handle.authenticate_password(user, p.clone()).await?,
-        TunnelAuth::Key { path, passphrase } => {
-            let key = load_secret_key(path, passphrase.as_deref())?;
+    let result = match login {
+        Login::Password(p) => handle.authenticate_password(user, p.clone()).await?,
+        Login::Key(key) => {
             let hash = handle.best_supported_rsa_hash().await?.flatten();
             handle
-                .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
+                .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::clone(key), hash))
                 .await?
         }
-        TunnelAuth::Agent => {
+        Login::Agent => {
             // macOS/Linux: the SSH_AUTH_SOCK socket. Windows: the OpenSSH
             // agent (ssh-agent service) on its named pipe.
             #[cfg(unix)]
@@ -442,6 +511,7 @@ fn default_known_hosts() -> Option<PathBuf> {
 }
 
 /// Host key verification (policy in `host_key`).
+#[derive(Clone)]
 struct HostCheck {
     host: String,
     port: u16,
