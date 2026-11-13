@@ -59,6 +59,9 @@ pub struct MySession {
     /// TLS regime of the profile: cancel/terminate reopen connections and
     /// must speak the same TLS (§12).
     tls: TlsOptions,
+    /// Network choices of the profile (§16): the connect timeout bounds
+    /// the connection that fires cancel/terminate.
+    net: NetOptions,
 }
 
 impl MySession {
@@ -142,6 +145,7 @@ impl MySession {
             server_version,
             url: url.to_owned(),
             tls: TlsOptions::plain(),
+            net: *net,
         })
     }
 
@@ -149,13 +153,13 @@ impl MySession {
     /// current statement, the target connection survives. `false` = the
     /// server refused (privileges) or the connection no longer exists.
     pub async fn cancel_query(&self) -> Result<bool, MyError> {
-        kill(&self.url, self.connection_id, false, &self.tls).await
+        kill(&self.url, self.connection_id, false, &self.tls, &self.net).await
     }
 
     /// Escalation (§7.2): `KILL <id>` kills the **connection**, not just the
     /// query — the equivalent of `pg_terminate_backend`.
     pub async fn terminate(&self) -> Result<bool, MyError> {
-        kill(&self.url, self.connection_id, true, &self.tls).await
+        kill(&self.url, self.connection_id, true, &self.tls, &self.net).await
     }
 
     /// The two pieces of data needed to cancel from outside (§7.1): the
@@ -300,24 +304,40 @@ fn server_refused_tls(e: &MyError) -> bool {
 
 /// `KILL [QUERY] <id>` on a connection opened on purpose (§7.1): by
 /// definition outside the connection that is executing, with the TLS of the
-/// target session (§12).
+/// target session (§12). Bounded by the connect timeout: a server that
+/// does not answer (no free connection slot, network gone) must not leave
+/// the stop waiting forever.
 pub async fn kill(
     url: &str,
     connection_id: u32,
     whole_connection: bool,
     tls: &TlsOptions,
+    net: &NetOptions,
 ) -> Result<bool, MyError> {
     let opts = Opts::from_url(url).map_err(|e| MyError::from(mysql_async::Error::from(e)))?;
     let opts = OptsBuilder::from_opts(opts).ssl_opts(ssl_opts(tls)?);
-    let mut killer = Conn::new(opts).await.map_err(MyError::from)?;
     let verb = if whole_connection {
         "KILL"
     } else {
         "KILL QUERY"
     };
-    let res = killer.query_drop(format!("{verb} {connection_id}")).await;
-    let _ = killer.disconnect().await;
-    Ok(res.is_ok())
+    let fire = async {
+        let mut killer = Conn::new(opts).await.map_err(MyError::from)?;
+        let res = killer.query_drop(format!("{verb} {connection_id}")).await;
+        let _ = killer.disconnect().await;
+        Ok(res.is_ok())
+    };
+    tokio::time::timeout(net.connect_timeout, fire)
+        .await
+        .unwrap_or_else(|_| {
+            Err(MyError(mysql_async::Error::Other(
+                format!(
+                    "{verb}: no answer from the server within {} s",
+                    net.connect_timeout.as_secs()
+                )
+                .into(),
+            )))
+        })
 }
 
 /// Server start instant in Unix seconds, from `Uptime` and the client's

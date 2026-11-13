@@ -299,14 +299,18 @@ pub async fn execute_streaming(
 
     // Stop mid-stream: the connection stays occupied by the unconsumed
     // result set (§11) and the server would go on sending the rest of it —
-    // minutes on a large table behind SSH. `KILL QUERY` first, then the
-    // drain reads only the rows already in flight and the interruption
-    // error. A cancel has already sent it (§7.1).
+    // minutes on a large table behind SSH. `KILL QUERY` stops it, and the
+    // drain reads the rows in flight meanwhile, up to the interruption
+    // error: a server blocked on a full socket may only notice the KILL
+    // once it can write again. A cancel has already sent it (§7.1); if the
+    // KILL does not get through, the drain reads the whole rest.
     if state != ResultSetState::Complete && error.is_none() {
-        if state != ResultSetState::PartialCancelled {
-            kill_query.await;
+        let drain = async { while let Ok(Some(_)) = qr.next().await {} };
+        if state == ResultSetState::PartialCancelled {
+            drain.await;
+        } else {
+            tokio::join!(kill_query, drain);
         }
-        while let Ok(Some(_)) = qr.next().await {}
     }
     drop(qr);
 

@@ -512,7 +512,7 @@ async fn stop_kills_instead_of_draining(url: &str) {
             &opts,
             &mut rx,
             async {
-                alamo_driver_mysql::kill(&kill_url, id, false, &tls)
+                alamo_driver_mysql::kill(&kill_url, id, false, &tls, &Default::default())
                     .await
                     .expect("KILL QUERY");
             },
