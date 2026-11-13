@@ -11,7 +11,7 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
-## Unreleased
+## [0.1.0-alpha.16] - 2026-11-13
 
 - Windows: typing in the filter of the tables panel could freeze the window (black, "Maximum update depth exceeded" behind it): the lists of the filtered databases kept resizing one another. They now settle at once.
 - If the interface stops with an error, the window no longer goes blank (black on the dark theme): it says so, with Try again (back where you were, connections and tabs kept), Copy details for a bug report, and Reload.
