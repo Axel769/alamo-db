@@ -487,7 +487,7 @@ function FileFormat({ open, onToggle }: { open: boolean; onToggle: () => void })
             </li>
             <li>
               {t(
-                "Optional: color (\"#RRGGBB\"), is_production, read_only, ssl_root_cert (path of the CA), db_include and db_exclude (database filters), ssh (the ref of a tunnel)."
+                "Optional: color (\"#RRGGBB\"), is_production, read_only, ssl_root_cert (path of the CA), ssl_client_cert and ssl_client_key (client certificate and key), db_include and db_exclude (database filters), ssh (the ref of a tunnel)."
               )}
             </li>
             <li>

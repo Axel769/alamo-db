@@ -22,6 +22,7 @@
 //! the dialog; here it is only worth remembering that it is not a bug, it is
 //! libpq's historical semantics.
 
+use std::fmt;
 use std::path::PathBuf;
 
 /// TLS mode, from the profile's `sslmode` field.
@@ -90,6 +91,35 @@ pub struct TlsOptions {
     /// The PG driver ignores it: there `host` + `hostaddr` in the
     /// connection string play the same role.
     pub tls_server_name: Option<String>,
+    /// Certificate the client presents when the server asks for one (mTLS:
+    /// PG `cert` authentication, MySQL `REQUIRE X509`). Ignored with
+    /// `disable`.
+    pub client_cert: Option<ClientIdentity>,
+}
+
+/// The profile's client certificate, already read and, if the key was
+/// encrypted, decrypted (`alamo_session::client_cert`). Bytes and not paths:
+/// decrypting needs a crate this one cannot have, both drivers consume it,
+/// and so the passphrase never travels to the lanes.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClientIdentity {
+    /// Certificate chain, PEM, the client's own certificate first.
+    pub cert_chain_pem: Vec<u8>,
+    /// Private key, unencrypted PEM (PKCS#8, PKCS#1 or SEC1).
+    pub key_pem: Vec<u8>,
+}
+
+/// The key never reaches a log or a panic message.
+impl fmt::Debug for ClientIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientIdentity")
+            .field(
+                "cert_chain_pem",
+                &format_args!("{} bytes", self.cert_chain_pem.len()),
+            )
+            .field("key_pem", &"<redacted>")
+            .finish()
+    }
 }
 
 impl TlsOptions {
@@ -98,6 +128,7 @@ impl TlsOptions {
             mode: TlsMode::Disable,
             root_cert: None,
             tls_server_name: None,
+            client_cert: None,
         }
     }
 
@@ -170,6 +201,7 @@ mod tests {
             mode: TlsMode::VerifyCa,
             root_cert: None,
             tls_server_name: None,
+            client_cert: None,
         };
         assert!(t.check().is_err());
         t.root_cert = Some("/etc/ca.pem".into());
@@ -193,5 +225,16 @@ mod tests {
         assert!(!TlsMode::Require.verifies_chain());
         assert!(TlsMode::VerifyCa.verifies_chain());
         assert!(TlsMode::VerifyFull.verifies_chain());
+    }
+
+    #[test]
+    fn client_key_is_not_printed() {
+        let id = ClientIdentity {
+            cert_chain_pem: b"CERT".to_vec(),
+            key_pem: b"SECRET-KEY".to_vec(),
+        };
+        let shown = format!("{id:?}");
+        assert!(!shown.contains("SECRET"), "{shown}");
+        assert!(shown.contains("4 bytes"), "{shown}");
     }
 }

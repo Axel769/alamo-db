@@ -6,9 +6,9 @@
 //! `secrets` module) or only in memory — never in here.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use alamo_core::tls::{TlsMode, TlsOptions};
+use alamo_core::tls::{ClientIdentity, TlsMode, TlsOptions};
 use alamo_session::driver::ConnectTarget;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,13 @@ pub struct Profile {
     /// Custom root CA for the verifying modes (path of a PEM, §12).
     #[serde(default)]
     pub ssl_root_cert: Option<String>,
+    /// Client certificate and its private key (PEM paths, may be the same
+    /// file) for servers that authenticate by certificate (mTLS, §12.3).
+    /// The key passphrase lives in the keychain, never here.
+    #[serde(default)]
+    pub ssl_client_cert: Option<String>,
+    #[serde(default)]
+    pub ssl_client_key: Option<String>,
     pub color: Option<String>,
     pub is_production: bool,
     /// §9.7 point 4: read-only, complementary to `is_production` — manual
@@ -115,6 +122,7 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     migration_10_default_sort_only,
     migration_11_tree_favorites,
     migration_12_profile_settings,
+    migration_13_client_cert,
 ];
 
 /// Step 1: initial schema (M1-M3). Idempotent by construction, see the
@@ -311,6 +319,14 @@ fn migration_12_profile_settings(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch("ALTER TABLE profiles ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';")
 }
 
+/// Step 13: client certificate for mTLS (§12.3).
+fn migration_13_client_cert(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "ALTER TABLE profiles ADD COLUMN ssl_client_cert TEXT;
+         ALTER TABLE profiles ADD COLUMN ssl_client_key TEXT;",
+    )
+}
+
 fn migration_11_tree_favorites(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(
         "CREATE TABLE tree_favorites (
@@ -359,12 +375,15 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
             let raw: String = row.get(15)?;
             serde_json::from_str(&raw).unwrap_or_default()
         },
+        ssl_client_cert: row.get(16)?,
+        ssl_client_key: row.get(17)?,
     })
 }
 
 const PROFILE_COLS: &str = "id, name, host, port, database, username, sslmode, color, \
                             is_production, dialect, read_only, ssl_root_cert, ssh_profile_id, \
-                            db_include, db_exclude, settings_json";
+                            db_include, db_exclude, settings_json, ssl_client_cert, \
+                            ssl_client_key";
 
 pub fn profiles_list(db: &Connection) -> rusqlite::Result<Vec<Profile>> {
     let mut stmt = db.prepare(&format!(
@@ -402,6 +421,7 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                                      sslmode=?7, color=?8, is_production=?9, dialect=?10,
                                      read_only=?11, ssl_root_cert=?12, ssh_profile_id=?13,
                                      db_include=?14, db_exclude=?15, settings_json=?16,
+                                     ssl_client_cert=?17, ssl_client_key=?18,
                                      secret_tag = CASE WHEN host = ?3 AND port = ?4
                                                         AND username = ?6 AND dialect = ?10
                                                        THEN secret_tag
@@ -424,7 +444,9 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                     p.ssh_profile_id,
                     p.db_include,
                     p.db_exclude,
-                    serde_json::Value::Object(p.settings.clone()).to_string()
+                    serde_json::Value::Object(p.settings.clone()).to_string(),
+                    p.ssl_client_cert,
+                    p.ssl_client_key
                 ],
             )?;
             Ok(id)
@@ -432,8 +454,8 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
         None => {
             db.execute(
                 &format!(
-                    "INSERT INTO profiles (name, host, port, database, username, sslmode, color, is_production, dialect, read_only, ssl_root_cert, ssh_profile_id, db_include, db_exclude, settings_json, secret_tag)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, {NEW_SECRET_TAG})"
+                    "INSERT INTO profiles (name, host, port, database, username, sslmode, color, is_production, dialect, read_only, ssl_root_cert, ssh_profile_id, db_include, db_exclude, settings_json, ssl_client_cert, ssl_client_key, secret_tag)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, {NEW_SECRET_TAG})"
                 ),
                 params![
                     name,
@@ -450,7 +472,9 @@ pub fn profile_save(db: &Connection, p: &Profile) -> rusqlite::Result<i64> {
                     p.ssh_profile_id,
                     p.db_include,
                     p.db_exclude,
-                    serde_json::Value::Object(p.settings.clone()).to_string()
+                    serde_json::Value::Object(p.settings.clone()).to_string(),
+                    p.ssl_client_cert,
+                    p.ssl_client_key
                 ],
             )?;
             Ok(db.last_insert_rowid())
@@ -805,9 +829,32 @@ fn tls_mode(p: &Profile) -> TlsMode {
     TlsMode::parse(&p.sslmode).unwrap_or_default()
 }
 
+/// The profile's client certificate files (§12.3), `~/` expanded. `None`
+/// = no mTLS, or a mode that does not use TLS at all. One field without
+/// the other is an error: the server would refuse with a less clear one.
+pub fn client_cert_paths(p: &Profile) -> Result<Option<(PathBuf, PathBuf)>, String> {
+    if !tls_mode(p).wants_tls() {
+        return Ok(None);
+    }
+    fn field(v: &Option<String>) -> Option<&str> {
+        v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    }
+    match (field(&p.ssl_client_cert), field(&p.ssl_client_key)) {
+        (None, None) => Ok(None),
+        (Some(c), Some(k)) => Ok(Some((crate::expand_home(c), crate::expand_home(k)))),
+        _ => Err(
+            "client certificate: set both the certificate and its private key \
+                  (the same file if it holds both)"
+                .into(),
+        ),
+    }
+}
+
 /// TLS regime of the profile (§12), for the drivers' connector. `~/` in
 /// the CA path as in the SSH key path: the field is typed by hand too.
-pub fn tls_options(p: &Profile, tunneled: bool) -> TlsOptions {
+/// `client_cert`: read by the caller (`alamo_session::client_cert`), which
+/// knows the passphrase.
+pub fn tls_options(p: &Profile, tunneled: bool, client_cert: Option<ClientIdentity>) -> TlsOptions {
     TlsOptions {
         mode: tls_mode(p),
         root_cert: p
@@ -818,6 +865,7 @@ pub fn tls_options(p: &Profile, tunneled: bool) -> TlsOptions {
         // SSH tunnel: the TCP points to 127.0.0.1 but the certificate must
         // be verified against the real name.
         tls_server_name: tunneled.then(|| p.host.clone()),
+        client_cert,
     }
 }
 
@@ -841,6 +889,8 @@ mod tests {
             username: "postgres".into(),
             sslmode: "prefer".into(),
             ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
             color: Some("#a02a83".into()),
             is_production: false,
             dialect: "postgres".into(),
@@ -1007,21 +1057,21 @@ mod tests {
         );
         // The real name travels in `tls_server_name`, only through a tunnel.
         assert_eq!(
-            tls_options(&p, true).tls_server_name.as_deref(),
+            tls_options(&p, true, None).tls_server_name.as_deref(),
             Some("localhost")
         );
-        assert!(tls_options(&p, false).tls_server_name.is_none());
+        assert!(tls_options(&p, false, None).tls_server_name.is_none());
     }
 
     #[test]
     fn tls_options_from_profile() {
         use alamo_core::tls::TlsMode;
         let mut p = profile();
-        assert_eq!(tls_options(&p, false).mode, TlsMode::Prefer);
-        assert!(tls_options(&p, false).root_cert.is_none());
+        assert_eq!(tls_options(&p, false, None).mode, TlsMode::Prefer);
+        assert!(tls_options(&p, false, None).root_cert.is_none());
         p.sslmode = "verify-ca".into();
         p.ssl_root_cert = Some("/etc/ca.pem".into());
-        let t = tls_options(&p, false);
+        let t = tls_options(&p, false, None);
         assert_eq!(t.mode, TlsMode::VerifyCa);
         assert_eq!(
             t.root_cert.as_deref(),
@@ -1029,10 +1079,37 @@ mod tests {
         );
         // Empty string = no CA, not a CA with path "".
         p.ssl_root_cert = Some("  ".into());
-        assert!(tls_options(&p, false).root_cert.is_none());
+        assert!(tls_options(&p, false, None).root_cert.is_none());
         // Unknown: never upwards.
         p.sslmode = "unknown".into();
-        assert_eq!(tls_options(&p, false).mode, TlsMode::Prefer);
+        assert_eq!(tls_options(&p, false, None).mode, TlsMode::Prefer);
+    }
+
+    #[test]
+    fn client_cert_paths_from_profile() {
+        let db = mem();
+        let mut p = profile();
+        assert_eq!(client_cert_paths(&p), Ok(None));
+        p.ssl_client_cert = Some("/etc/client.pem".into());
+        assert!(client_cert_paths(&p).unwrap_err().contains("both"));
+        p.ssl_client_key = Some("  ".into());
+        assert!(client_cert_paths(&p).is_err(), "blank key = missing key");
+        p.ssl_client_key = Some("/etc/client-key.pem".into());
+        assert_eq!(
+            client_cert_paths(&p),
+            Ok(Some((
+                "/etc/client.pem".into(),
+                "/etc/client-key.pem".into()
+            )))
+        );
+        // No TLS, no certificate: the fields stay but are not used.
+        p.sslmode = "disable".into();
+        assert_eq!(client_cert_paths(&p), Ok(None));
+        // Saved and read back.
+        let id = profile_save(&db, &p).unwrap();
+        let got = profile_get(&db, id).unwrap().unwrap();
+        assert_eq!(got.ssl_client_cert.as_deref(), Some("/etc/client.pem"));
+        assert_eq!(got.ssl_client_key.as_deref(), Some("/etc/client-key.pem"));
     }
 
     #[test]

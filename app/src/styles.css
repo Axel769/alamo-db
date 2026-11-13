@@ -2262,6 +2262,41 @@ body,
   color: var(--ui-danger);
 }
 
+.crash-screen {
+  max-width: 640px;
+  margin: 12vh auto 0;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--cell-fg);
+}
+.crash-screen h1 {
+  margin: 0;
+  font-size: 18px;
+}
+.crash-screen p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cell-muted-fg);
+}
+.crash-detail {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cell-divider);
+  border-radius: 6px;
+  background: var(--state-alt);
+  font: 12px ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.crash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .banner {
   display: flex;
   align-items: center;
@@ -3047,6 +3082,15 @@ ul.transfer-hint {
   font-size: 11px;
   line-height: 1.4;
   color: var(--cell-muted-fg);
+}
+
+.profile-form .form-subhead {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cell-divider);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cell-fg);
 }
 
 .profile-form label.check {

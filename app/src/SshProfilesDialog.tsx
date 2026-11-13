@@ -333,17 +333,30 @@ export default function SshProfilesDialog({ initialId, onClose }: Props) {
                     </label>
                   </div>
                   {draft.auth === "key" && (
-                    <label>
-                      {t("Private key (path)")}
-                      <input
-                        value={draft.key_path ?? ""}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        placeholder="~/.ssh/id_ed25519"
-                        onChange={(e) => set({ key_path: e.target.value || null })}
-                      />
-                    </label>
+                    <div className="form-row">
+                      <label className="grow">
+                        {t("Private key (path)")}
+                        <input
+                          value={draft.key_path ?? ""}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder="~/.ssh/id_ed25519"
+                          onChange={(e) => set({ key_path: e.target.value || null })}
+                        />
+                      </label>
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() =>
+                          void ipc.pickSshKey().then((p) => {
+                            if (p) set({ key_path: p });
+                          })
+                        }
+                      >
+                        {t("Browse…")}
+                      </button>
+                    </div>
                   )}
                   {draft.auth !== "agent" && (
                     <>

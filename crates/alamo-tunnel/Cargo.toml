@@ -8,7 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "flate2", "rsa"] }
 tokio = { workspace = true, features = ["net", "io-util", "rt", "sync", "time", "macros"] }
 # Hashed hosts in known_hosts (HashKnownHosts): HMAC-SHA1 with the line's salt.
 # Same versions that russh already pulls in.

@@ -588,6 +588,7 @@ async fn tls_require_establishes_encrypted_channel() {
         mode: TlsMode::Require,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     let mut s = MySession::connect(&url, &opts)
         .await
@@ -608,6 +609,7 @@ async fn tls_status_reports_the_channel() {
         mode: TlsMode::Require,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     let mut s = MySession::connect(&url, &opts)
         .await
@@ -659,6 +661,7 @@ async fn tls_verify_full_rejects_self_signed() {
         mode: TlsMode::VerifyFull,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     assert!(
         MySession::connect(&url, &opts).await.is_err(),
@@ -677,6 +680,7 @@ async fn tls_verify_ca_without_ca_rejected() {
         mode: TlsMode::VerifyCa,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     let err = match MySession::connect(&url, &opts).await {
         Ok(_) => panic!("verify-ca without CA connected"),
@@ -700,6 +704,7 @@ async fn tls_verify_ca_mysql_not_available() {
         mode: TlsMode::VerifyCa,
         root_cert: Some("/any/ca.pem".into()),
         tls_server_name: None,
+        client_cert: None,
     };
     let err = match MySession::connect(&url, &opts).await {
         Ok(_) => panic!("verify-ca on MySQL connected"),
@@ -723,6 +728,7 @@ async fn tls_prefer_matches_the_channel() {
             mode: TlsMode::Prefer,
             root_cert: None,
             tls_server_name: None,
+            client_cert: None,
         };
         let mut s = MySession::connect(&url, &opts)
             .await
@@ -745,6 +751,7 @@ async fn tls_kill_query_on_encrypted_session() {
         mode: TlsMode::Require,
         root_cert: None,
         tls_server_name: None,
+        client_cert: None,
     };
     let s = MySession::connect(&url, &opts)
         .await

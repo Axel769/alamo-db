@@ -26,7 +26,7 @@ pub use execute::{
 pub use tls::{tls_status, TlsStatus};
 
 use mysql_async::prelude::Queryable;
-use mysql_async::{Conn, Opts, OptsBuilder, SslOpts};
+use mysql_async::{ClientIdentity, Conn, Opts, OptsBuilder, SslOpts};
 
 use alamo_core::tls::{TlsMode, TlsOptions};
 use alamo_core::NetOptions;
@@ -277,6 +277,14 @@ fn ssl_opts(tls: &TlsOptions) -> Result<Option<SslOpts>, MyError> {
         ssl = ssl
             .with_danger_accept_invalid_certs(true)
             .with_danger_skip_domain_validation(true);
+    }
+    if let Some(id) = &tls.client_cert {
+        // `REQUIRE X509` users (mTLS): PEM buffers, read and decrypted by
+        // the caller; mysql_async parses them at the handshake.
+        ssl = ssl.with_client_identity(Some(ClientIdentity::new(
+            id.cert_chain_pem.clone().into(),
+            id.key_pem.clone().into(),
+        )));
     }
     Ok(Some(ssl))
 }

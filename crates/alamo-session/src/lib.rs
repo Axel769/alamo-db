@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod client_cert;
 pub mod driver;
 pub mod events;
 pub mod exec;

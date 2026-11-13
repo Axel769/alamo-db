@@ -7,8 +7,9 @@
 //! Keychain Access. The account is derived from the profile's random tag
 //! (`storage`, migration 7), or from the id for legacy profiles: it survives
 //! a rename, changes with the server and dies (explicitly, `forget`) when
-//! the profile is deleted. Two entries per profile: database password and
-//! SSH credential (bastion password or key passphrase, §12).
+//! the profile is deleted. Up to three entries per profile: database
+//! password, SSH credential (bastion password or key passphrase, §12) and
+//! the passphrase of the client certificate key (§12.3).
 
 use keyring::Entry;
 
@@ -30,6 +31,15 @@ pub fn ssh_account(ssh_profile_id: i64, tag: Option<&str>) -> String {
     match tag {
         Some(t) => format!("ssh-{t}"),
         None => format!("ssh-{ssh_profile_id}"),
+    }
+}
+
+/// Account of the client certificate key passphrase (mTLS, §12.3): the
+/// database profile's, like its password, and gone with it.
+pub fn tls_key_account(profile_id: i64, tag: Option<&str>) -> String {
+    match tag {
+        Some(t) => format!("tlskey-{t}"),
+        None => format!("tlskey-{profile_id}"),
     }
 }
 

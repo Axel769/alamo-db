@@ -451,13 +451,45 @@ fn start(
 
 /// The lab certificate copied into the image and the server told to use
 /// it. TLS is offered, not required: the plain suites (`TlsOptions::plain`)
-/// must keep working against these servers too.
+/// must keep working against these servers too. Only `MTLS_USER` must
+/// present the lab's client certificate.
 fn with_lab_certificate(
     request: ContainerRequest<GenericImage>,
     engine: Engine,
     lab: &tls::TlsFiles,
 ) -> ContainerRequest<GenericImage> {
+    let mtls_sql = format!(
+        "CREATE USER '{u}'@'%' IDENTIFIED BY '{PASSWORD}' REQUIRE X509;\n\
+         GRANT ALL ON {DATABASE}.* TO '{u}'@'%';\n",
+        u = tls::MTLS_USER
+    );
+    // PG: `cert` authentication for the mTLS user only (the CN of the
+    // certificate is the user name); the others as in the image.
+    let pg_hba = format!(
+        "local all all trust\n\
+         hostssl all {u} all cert\n\
+         host all all all scram-sha-256\n",
+        u = tls::MTLS_USER
+    );
+    let pg_sql = format!(
+        "CREATE ROLE {u} LOGIN;\nGRANT ALL ON DATABASE {DATABASE} TO {u};\n",
+        u = tls::MTLS_USER
+    );
+    let (init_sql, request) = match engine {
+        Engine::Postgres => (
+            pg_sql,
+            request.with_copy_to(
+                CopyTargetOptions::new("/tls/pg_hba.conf").with_mode(0o644),
+                CopyDataSource::Data(pg_hba.into_bytes()),
+            ),
+        ),
+        _ => (mtls_sql, request),
+    };
     let request = request
+        .with_copy_to(
+            CopyTargetOptions::new("/docker-entrypoint-initdb.d/mtls.sql").with_mode(0o644),
+            CopyDataSource::Data(init_sql.into_bytes()),
+        )
         .with_copy_to(
             CopyTargetOptions::new("/tls/ca.pem").with_mode(0o644),
             CopyDataSource::Data(lab.ca_pem.clone().into_bytes()),
@@ -481,7 +513,9 @@ fn with_lab_certificate(
              && chmod 600 /var/lib/postgresql/server-key.pem \
              && exec docker-entrypoint.sh postgres -c ssl=on \
                 -c ssl_cert_file=/var/lib/postgresql/server.pem \
-                -c ssl_key_file=/var/lib/postgresql/server-key.pem",
+                -c ssl_key_file=/var/lib/postgresql/server-key.pem \
+                -c ssl_ca_file=/tls/ca.pem \
+                -c hba_file=/tls/pg_hba.conf",
         ]),
         Engine::MySql => request.with_cmd([
             "mysqld",
@@ -539,6 +573,13 @@ fn tls_lab() {
         containers.push(container);
     }
     println!("CA: {}", lab.ca_path().display());
+    let (client, client_key) = lab.client_paths();
+    println!(
+        "mTLS: user {}, certificate {}, key {}",
+        tls::MTLS_USER,
+        client.display(),
+        client_key.display()
+    );
     println!(
         "profiles: host 127.0.0.1, user postgres/root, password {PASSWORD}, database {DATABASE}"
     );

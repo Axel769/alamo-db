@@ -1010,6 +1010,8 @@ function StudioInner() {
                 username: "",
                 sslmode: "prefer",
                 ssl_root_cert: null,
+                ssl_client_cert: null,
+                ssl_client_key: null,
                 color: null,
                 is_production: false,
                 read_only: false,
@@ -1700,7 +1702,11 @@ function StudioInner() {
                     <ScriptPane tab={tab} onSelect={(i) => store.select(tab.id, i)} />
                   ))}
                 {!tab && !store.connectError && (
-                  <div className="hint">{t("No tabs open. Create one with the + in the bar.")}</div>
+                  <div className="hint">
+                    {keyHint("tab.new_query")
+                      ? t("No tabs open. Create one with {key} or the + in the bar.", { key: keyHint("tab.new_query") })
+                      : t("No tabs open. Create one with the + in the bar.")}
+                  </div>
                 )}
                 {tab && !sel && !store.connectError && (
                   <div className="hint">

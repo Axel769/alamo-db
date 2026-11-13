@@ -4,9 +4,20 @@
 // scroll height. Rows have an estimated height; every rendered row is
 // measured, so an expanded row (a table with its columns) does not shift
 // the slice. Short runs (under `threshold`) render as before: no wrappers.
+//
+// The slice never feeds back into itself: offsets depend on the measured
+// heights only, never on the slice, and a slice that still covers the
+// view is kept. Otherwise a slice change moved the rows, the move changed
+// the slice, and React stopped the loop with "Maximum update depth
+// exceeded" (#185): seen on Windows, where the scrollbars take room and
+// fractional display scaling rounds row positions differently at every
+// pass, with the tree filter opening many runs at once.
 import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const OVERSCAN = 8;
+/// A measured height that moves by less than this is the same height:
+/// sub-pixel rounding, not a resized row.
+const HEIGHT_EPSILON = 0.5;
 
 type Props<T> = {
   items: readonly T[];
@@ -21,6 +32,8 @@ export function VirtualRows<T>({ items, keyOf, rowHeight, render, threshold = 20
   const host = useRef<HTMLDivElement | null>(null);
   const heights = useRef(new Map<string, number>());
   const [range, setRange] = useState<[number, number]>([0, Math.min(items.length, 40)]);
+  /// Bumped when a measured height changes: the offsets follow it.
+  const [measured, setMeasured] = useState(0);
   const windowed = items.length >= threshold;
 
   // Offset of every row from the top of the run, from the measured heights.
@@ -30,10 +43,9 @@ export function VirtualRows<T>({ items, keyOf, rowHeight, render, threshold = 20
       out[i + 1] = out[i] + (heights.current.get(keyOf(items[i])) ?? rowHeight);
     }
     return out;
-    // `range` is a dependency on purpose: a measurement changes the map and
-    // then the range, which recomputes the offsets.
+    // `measured` stands for the heights map, which a ref does not signal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, keyOf, rowHeight, range]);
+  }, [items, keyOf, rowHeight, measured]);
 
   useLayoutEffect(() => {
     const el = host.current;
@@ -44,11 +56,18 @@ export function VirtualRows<T>({ items, keyOf, rowHeight, render, threshold = 20
       const top = el.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop;
       const from = parent.scrollTop - top;
       const to = from + parent.clientHeight;
-      let start = lowerBound(offsets, from) - OVERSCAN;
-      let end = lowerBound(offsets, to) + OVERSCAN;
-      start = Math.max(0, Math.min(start, items.length));
-      end = Math.max(start, Math.min(end, items.length));
-      setRange((r) => (r[0] === start && r[1] === end ? r : [start, end]));
+      const clamp = (i: number) => Math.max(0, Math.min(i, items.length));
+      // The rows in view, then the slice with its margin around them.
+      const first = clamp(lowerBound(offsets, from));
+      const last = Math.max(first, clamp(lowerBound(offsets, to) + 1));
+      const start = clamp(first - OVERSCAN);
+      const end = Math.max(start, clamp(last + OVERSCAN));
+      setRange((r) =>
+        // Kept while it covers the view and is not much larger than it.
+        r[0] <= first && r[1] >= last && r[1] <= items.length && r[1] - r[0] <= end - start + 2 * OVERSCAN
+          ? r
+          : [start, end]
+      );
     };
     compute();
     parent.addEventListener("scroll", compute, { passive: true });
@@ -61,7 +80,7 @@ export function VirtualRows<T>({ items, keyOf, rowHeight, render, threshold = 20
   }, [windowed, items.length, offsets]);
 
   // Measured heights of the rendered rows: a change re-renders (the
-  // offsets follow `range`) so the spacers stay exact.
+  // offsets follow `measured`) so the spacers stay exact.
   const rowsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const rows = rowsRef.current;
@@ -72,12 +91,13 @@ export function VirtualRows<T>({ items, keyOf, rowHeight, render, threshold = 20
         const key = (e.target as HTMLElement).dataset.vkey;
         if (key === undefined) continue;
         const h = e.contentRect.height;
-        if (h > 0 && heights.current.get(key) !== h) {
+        const old = heights.current.get(key);
+        if (h > 0 && (old === undefined || Math.abs(old - h) >= HEIGHT_EPSILON)) {
           heights.current.set(key, h);
           changed = true;
         }
       }
-      if (changed) setRange((r) => [...r] as [number, number]);
+      if (changed) setMeasured((m) => m + 1);
     });
     for (const child of rows.children) ro.observe(child);
     return () => ro.disconnect();
@@ -85,7 +105,9 @@ export function VirtualRows<T>({ items, keyOf, rowHeight, render, threshold = 20
 
   if (!windowed) return <>{items.map(render)}</>;
 
-  const [start, end] = range;
+  // The run may have shrunk (filter) before the slice follows it.
+  const end = Math.min(range[1], items.length);
+  const start = Math.min(range[0], end);
   return (
     <div ref={host}>
       <div style={{ height: offsets[start] }} />

@@ -11,6 +11,15 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## [0.1.0-alpha.16] - 2026-11-13
+
+- Windows: typing in the filter of the tables panel could freeze the window (black, "Maximum update depth exceeded" behind it): the lists of the filtered databases kept resizing one another. They now settle at once.
+- If the interface stops with an error, the window no longer goes blank (black on the dark theme): it says so, with Try again (back where you were, connections and tabs kept), Copy details for a bug report, and Reload.
+- Alamo DB Pro: schema comparison for MySQL and MariaDB (panel in the left bar) is a Pro feature, with a 14-day trial from the first start of this version. The "Alamo DB Pro" panel shows how many days are left and takes the licence key; everything else stays free.
+- Client certificate (mTLS): for servers that recognise you by certificate (PostgreSQL "cert", MySQL and MariaDB users REQUIRE X509), the Security tab of a profile takes the certificate and its private key (PEM, the same file if it holds both), shows whose certificate it is and until when it is valid, and asks for the key passphrase when the key is encrypted. The passphrase can be saved in the system keychain like the password. .p12/.pfx files and keys in the old OpenSSL format are not read: the message gives the openssl command that converts them. Export and import carry the two paths, never the passphrase.
+- SSH profiles: the private key field has a Browse… button too, opening in the .ssh folder of your home and showing every file (SSH keys usually have no extension).
+- New SQL tab with ⌘T (Ctrl+T on Windows and Linux), changeable in Settings → Shortcuts; the DBeaver preset keeps Ctrl+]. The key is shown on the + of the tab bar, in the command palette and in the "No tabs open" message.
+
 ## [0.1.0-alpha.15] - 2026-11-10
 
 - New app icon: a poplar under an arch on green hills, in the Dock, the taskbar, the window and the connections dialog.

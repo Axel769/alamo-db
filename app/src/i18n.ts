@@ -302,7 +302,7 @@ const IT: Record<string, string> = {
   "File format": "Formato del file",
   "A JSON file with \"format\": \"alamo-connections\" and \"version\": 1. Export from Alamo creates it; it can also be written by hand.": "Un file JSON con \"format\": \"alamo-connections\" e \"version\": 1. Lo crea l'export di Alamo; si può anche scrivere a mano.",
   "Each connection in profiles: name, dialect (\"postgres\", or \"mysql\" also for MariaDB), host, port, database (may be empty), username, sslmode (disable, prefer, require, verify-ca, verify-full).": "Ogni connessione in profiles: name, dialect (\"postgres\", oppure \"mysql\" anche per MariaDB), host, port, database (può essere vuoto), username, sslmode (disable, prefer, require, verify-ca, verify-full).",
-  "Optional: color (\"#RRGGBB\"), is_production, read_only, ssl_root_cert (path of the CA), db_include and db_exclude (database filters), ssh (the ref of a tunnel).": "Facoltativi: color (\"#RRGGBB\"), is_production, read_only, ssl_root_cert (percorso della CA), db_include e db_exclude (filtri sui database), ssh (il ref di un tunnel).",
+  "Optional: color (\"#RRGGBB\"), is_production, read_only, ssl_root_cert (path of the CA), ssl_client_cert and ssl_client_key (client certificate and key), db_include and db_exclude (database filters), ssh (the ref of a tunnel).": "Facoltativi: color (\"#RRGGBB\"), is_production, read_only, ssl_root_cert (percorso della CA), ssl_client_cert e ssl_client_key (certificato client e chiave), db_include e db_exclude (filtri sui database), ssh (il ref di un tunnel).",
   "Tunnels in ssh_profiles: ref, name, host, port, username, auth (\"agent\", \"password\" or \"key\"), key_path with \"key\".": "Tunnel in ssh_profiles: ref, name, host, port, username, auth (\"agent\", \"password\" o \"key\"), key_path con \"key\".",
   "No passwords in a hand-written file: they are asked at the first connection.": "Niente password in un file scritto a mano: vengono chieste alla prima connessione.",
   "⌘↵ back to the grid · Esc undoes": "⌘↵ torna alla griglia · Esc annulla",
@@ -535,6 +535,7 @@ const IT: Record<string, string> = {
   "No changes applied: ROLLBACK, the database is unchanged.": "Nessuna modifica applicata: ROLLBACK, il database è come prima.",
   "No query matches.": "Nessuna query corrisponde.",
   "No tabs open. Create one with the + in the bar.": "Nessuna tab aperta. Creane una con il + nella barra.",
+  "No tabs open. Create one with {key} or the + in the bar.": "Nessuna tab aperta. Creane una con {key} o con il + nella barra.",
   "none": "nessuno",
   "Name": "Nome",
   "not connected": "non connesso",
@@ -543,6 +544,19 @@ const IT: Record<string, string> = {
   "New SQL tab (from a table tab it inherits the database)": "Nuova tab SQL (dalla tab tabella eredita il database)",
   "new profile": "nuovo profilo",
   "Root CA (PEM)": "CA radice (PEM)",
+  "The interface stopped with an error": "L'interfaccia si è fermata per un errore",
+  "Your connections are still open. Try again to go back where you were; if it happens again, copy the details and send them to us.":
+    "Le connessioni sono ancora aperte. Riprova per tornare dov'eri; se succede di nuovo, copia i dettagli e mandaceli.",
+  "Try again": "Riprova",
+  "Copy details": "Copia dettagli",
+  "Reload (closes the connections)": "Ricarica (chiude le connessioni)",
+  "Client certificate": "Certificato client",
+  "Only if the server authenticates you by certificate (PostgreSQL \u201ccert\u201d, MySQL REQUIRE X509). Empty = none.":
+    "Solo se il server ti riconosce dal certificato (PostgreSQL \u201ccert\u201d, MySQL REQUIRE X509). Vuoto = nessuno.",
+  "Certificate (PEM)": "Certificato (PEM)",
+  "Private key (PEM)": "Chiave privata (PEM)",
+  "the same file if it holds both": "lo stesso file se contiene entrambi",
+  "Client key passphrase": "Passphrase della chiave client",
   "today": "oggi",
   "Operations that can NOT be undone with Rollback:": "Operazioni NON annullabili col Rollback:",
   "optional — no default schema": "opzionale — nessuno schema di default",
@@ -1035,6 +1049,32 @@ const MSG: Record<string, string> = {
   "root CA {}: not readable: {e}": "CA radice {}: non leggibile: {e}",
   "root CA {}: no PEM certificate in the file": "CA radice {}: nessun certificato PEM nel file",
   "certificate: {e}": "certificato: {e}",
+  // Client certificate (mTLS, §12.3).
+  "the client certificate key is encrypted: enter its passphrase":
+    "la chiave del certificato client è cifrata: inserisci la sua passphrase",
+  "wrong passphrase for the client certificate key": "passphrase errata per la chiave del certificato client",
+  "client certificate {}: file not found": "certificato client {}: file non trovato",
+  "client certificate key {}: file not found": "chiave del certificato client {}: file non trovato",
+  "client certificate {}: not readable: {e}": "certificato client {}: non leggibile: {e}",
+  "client certificate key {}: not readable: {e}": "chiave del certificato client {}: non leggibile: {e}",
+  "client certificate {}: no PEM certificate in the file": "certificato client {}: nessun certificato PEM nel file",
+  "client certificate {}: no PEM certificate in the file. If it is a .p12/.pfx file, convert it: {cmd}":
+    "certificato client {}: nessun certificato PEM nel file. Se è un file .p12/.pfx, convertilo: {cmd}",
+  "client certificate key {}: no PEM private key in the file ({e})":
+    "chiave del certificato client {}: nessuna chiave privata PEM nel file ({e})",
+  "client certificate key {}: no PEM private key in the file ({e}). If it is a .p12/.pfx file, convert it: {cmd}":
+    "chiave del certificato client {}: nessuna chiave privata PEM nel file ({e}). Se è un file .p12/.pfx, convertilo: {cmd}",
+  "client certificate key {}: encrypted in the legacy OpenSSL format, which is not supported. Convert it to PKCS#8: {cmd}":
+    "chiave del certificato client {}: cifrata nel vecchio formato OpenSSL, non supportato. Convertila in PKCS#8: {cmd}",
+  "encryption not supported (only PBES2 with AES). Convert it: {cmd}":
+    "cifratura non supportata (solo PBES2 con AES). Convertila: {cmd}",
+  "client certificate key {}: {e}": "chiave del certificato client {}: {e}",
+  "client certificate {}: {e}": "certificato client {}: {e}",
+  "client certificate: {e}": "certificato client: {e}",
+  "client certificate key: {e}": "chiave del certificato client: {e}",
+  "client certificate: no certificate": "certificato client: nessun certificato",
+  "client certificate: set both the certificate and its private key (the same file if it holds both)":
+    "certificato client: indica sia il certificato sia la sua chiave privata (lo stesso file se li contiene entrambi)",
   "no trust root: empty system root store and no custom CA": "nessuna radice di fiducia: root store di sistema vuoto e nessuna CA custom",
   "{} unreadable: it is a directory": "{} illeggibile: è una directory",
   "{} unreadable: {e}": "{} illeggibile: {e}",
@@ -1103,6 +1143,8 @@ const MSG: Record<string, string> = {
   "{what}: field too long": "{what}: campo troppo lungo",
   "CA certificate not found on this computer: {ca}": "certificato CA non trovato su questo computer: {ca}",
   "SSH key not found on this computer: {key}": "chiave SSH non trovata su questo computer: {key}",
+  "client certificate file not found on this computer: {f}":
+    "file del certificato client non trovato su questo computer: {f}",
   "invalid selection": "selezione non valida",
   "SSH tunnel missing from the file": "tunnel SSH assente dal file",
   // settings.rs (§16)
