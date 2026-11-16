@@ -1,6 +1,7 @@
 # Alamo DB
 
 Desktop database editor/tool. PostgreSQL, MySQL, MariaDB.
+Website and downloads: **[alamodb.com](https://alamodb.com)**.
 The dominant design criterion: **performance on large result sets**.
 
 The architecture document is [`ARCHITECTURE.md`](ARCHITECTURE.md): it is the
