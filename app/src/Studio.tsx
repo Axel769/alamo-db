@@ -50,6 +50,7 @@ import { connForDatabase } from "./databases";
 import { asErrorOut } from "./errors";
 import { locale, t, tMsg, useLang } from "./i18n";
 import {
+  closeLoss,
   closeTabsGuarded,
   cycleMru,
   cyclePositional,
@@ -575,20 +576,20 @@ function StudioInner() {
 
   /// "Reconnect" on demand (menu and connection page): tunnel and
   /// connections redone right away, without waiting for the drop to be
-  /// noticed. With uncommitted writes the first click arms, like
-  /// "Disconnect": reconnecting loses them. `false` = only armed.
+  /// noticed. When something is lost (`closeLoss`: uncommitted writes, a
+  /// running query) the first click arms, like "Disconnect". A running
+  /// query ends cancelled: Reconnect is the way out of one stuck on the
+  /// server (§7.2). `false` = only armed.
   const [recArmed, setRecArmed] = useState<number | null>(null);
-  const reconnectConn = (connId: number, hasWrites: boolean): boolean => {
-    if (hasWrites && recArmed !== connId) {
+  const reconnectConn = (connId: number): boolean => {
+    if (closeLoss(useStore.getState(), connId) !== null && recArmed !== connId) {
       setRecArmed(connId);
       window.setTimeout(() => setRecArmed((a) => (a === connId ? null : a)), 4000);
       return false;
     }
     setRecArmed(null);
     setConnNote(null);
-    void stickyReady(connId).then((free) => {
-      if (free) void ensureLive(connId, 0, true);
-    });
+    void ensureLive(connId, 0, true);
     return true;
   };
   const forcing = (connId: number) => reconnecting?.connId === connId && reconnecting.force;
@@ -850,14 +851,13 @@ function StudioInner() {
     };
   }, [avMenu]);
 
-  /// Closes the connection; `false` if one of its tabs is executing.
-  /// `false` = not closed (execution in progress, or Cancel on the unsaved
+  /// Closes the connection; `false` = not closed (Cancel on the unsaved
   /// changes question).
   const closeConn = async (connId: number): Promise<boolean> => {
     // With the connections to the server's other databases (§3.3).
     const family = connFamily(useStore.getState().connections, connId);
     if (!(await guardUnsaved(dirtyTabIds((tb) => tb.connId !== null && family.has(tb.connId))))) return false;
-    if (!disconnectConn(connId)) return false;
+    disconnectConn(connId);
     // Drop the introspection cache of THESE connections: the others stay
     // warm (keys ["...", connId, ...]).
     queryClient.removeQueries({ predicate: (q) => family.has(q.queryKey[1] as number) });
@@ -1589,15 +1589,14 @@ function StudioInner() {
                 <>
                 <button
                   className={"btn small" + (recArmed === page.connId ? " danger" : "")}
-                  disabled={anyRunning || forcing(page.connId)}
+                  disabled={forcing(page.connId)}
                   title={t("Reopens the SSH tunnel and server connections right away, without waiting for the drop to be noticed")}
-                  onClick={() => void reconnectConn(page.connId, !!page.txn?.hasWrites)}
+                  onClick={() => void reconnectConn(page.connId)}
                 >
-                  {recArmed === page.connId ? t("Uncommitted writes — confirm?") : t("Reconnect")}
+                  {(recArmed === page.connId && closeLoss(store, page.connId)) || t("Reconnect")}
                 </button>
                 <button
                   className={"btn small" + (discArmed ? " danger" : "")}
-                  disabled={anyRunning}
                   title={
                     pageWrites
                       ? t("The open transaction has uncommitted writes: disconnecting = ROLLBACK (§9.7.2)")
@@ -1607,9 +1606,10 @@ function StudioInner() {
                   }
                   onClick={() => {
                     const connId = pageRoot?.connId ?? page.connId;
-                    // §9.7.2: disconnecting with pending writes = lost work. It
-                    // must be said, not discovered: first click arms, second executes.
-                    if (pageWrites && !discArmed) {
+                    // §9.7.2: disconnecting with pending writes (or a running
+                    // query) = lost work. It must be said, not discovered:
+                    // first click arms, second executes.
+                    if (closeLoss(store, connId) !== null && !discArmed) {
                       setDiscArmed(true);
                       window.setTimeout(() => setDiscArmed(false), 4000);
                       return;
@@ -1618,7 +1618,7 @@ function StudioInner() {
                     void closeConn(connId);
                   }}
                 >
-                  {discArmed ? t("Uncommitted writes — confirm?") : t("Disconnect")}
+                  {(discArmed && closeLoss(store, pageRoot?.connId ?? page.connId)) || t("Disconnect")}
                 </button>
                 </>
               }
@@ -1766,8 +1766,7 @@ function StudioInner() {
         (() => {
           const c = store.connections.find((x) => x.connId === avMenu.connId);
           if (!c) return null;
-          const running = store.tabs.some((tb) => tb.running && rootConnId(store.connections, tb.connId) === c.connId);
-          const writes = familyWrites(store.connections, c.connId);
+          const loss = closeLoss(store, c.connId);
           return (
             <div
               className="tab-menu"
@@ -1777,32 +1776,27 @@ function StudioInner() {
               <div className="tab-menu-label">{c.profile.name}</div>
               <button
                 className="tab-menu-item"
-                disabled={running || forcing(c.connId)}
-                title={
-                  running
-                    ? t("Query running on this connection: cancel it first")
-                    : t("Reopens the SSH tunnel and server connections right away, without waiting for the drop to be noticed")
-                }
+                disabled={forcing(c.connId)}
+                title={t("Reopens the SSH tunnel and server connections right away, without waiting for the drop to be noticed")}
                 onClick={() => {
-                  if (reconnectConn(c.connId, !!c.txn?.hasWrites)) setAvMenu(null);
+                  if (reconnectConn(c.connId)) setAvMenu(null);
                 }}
               >
-                {recArmed === c.connId ? t("Uncommitted writes — confirm?") : t("Reconnect")}
+                {(recArmed === c.connId && loss) || t("Reconnect")}
               </button>
               <button
                 className="tab-menu-item"
-                disabled={running}
-                title={running ? t("Query running on this connection: cancel it first") : undefined}
                 onClick={() => {
-                  // §9.7.2: pending writes = lost work, the first click arms.
-                  if (writes && !avArmed) {
+                  // §9.7.2: pending writes or a running query = lost work,
+                  // the first click arms.
+                  if (loss !== null && !avArmed) {
                     setAvArmed(true);
                     return;
                   }
                   void closeConn(c.connId).then((done) => done && setAvMenu(null));
                 }}
               >
-                {avArmed ? t("Uncommitted writes — confirm?") : t("Disconnect")}
+                {(avArmed && loss) || t("Disconnect")}
               </button>
             </div>
           );

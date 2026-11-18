@@ -16,6 +16,7 @@ Before launching "Release (alpha)": bump `version` in
 - Connections through SSH: a large MySQL or MariaDB result paused after its first rows froze every other connection going through the same SSH server, so stopping it ("still stopping on the server: try again in a moment"), the tables panel and the other tabs waited forever. Each connection now goes through its own SSH session, and a paused result holds up only itself.
 - MySQL and MariaDB: stopping a paused result no longer waits forever when the server does not answer the request to stop it: the request gives up after the connect timeout (Settings → Connections), and the rows still on their way are read while it travels.
 - While a query stops (Stop, Cancel, or Run on a paused result) the status bar says "stopping on the server…" with the seconds, instead of still showing it paused; "Load all" disappears. If after 10 seconds it has not stopped, Terminate connection is offered, as for Cancel. Terminating now always closes the connection, even when the server does not answer.
+- Reconnect and Disconnect (connection menu, connection page, connections panel) work even while a query is running or stuck stopping: the first click says the query will be stopped, the second confirms; the rows already received stay readable. Before, both stayed disabled and a query that never stopped left no way out but quitting the app.
 
 ## [0.1.0-alpha.16] - 2026-11-13
 

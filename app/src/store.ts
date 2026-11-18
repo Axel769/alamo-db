@@ -622,6 +622,7 @@ export const useStore = create<Store>((set, get) => ({
                 execId: null,
                 execState: "idle",
                 running: false,
+                stoppingSince: null,
                 statements: [],
                 selected: 0,
               }
@@ -1022,6 +1023,16 @@ export const useStore = create<Store>((set, get) => ({
           t.running = false;
           t.stoppingSince = null;
           t.execState = ev.state;
+          // Execution dropped by Reconnect or Disconnect (§7.2): its open
+          // statement got no `statement_finished`. Its rows stay, cancelled.
+          t.statements.forEach((st, i) => {
+            if (!st.running && !st.streaming && !st.budgetPaused) return;
+            const open = at(i);
+            open.running = false;
+            open.streaming = false;
+            open.budgetPaused = false;
+            open.outcome ??= { kind: "cancelled", result_id: open.resultId, rows: open.rows };
+          });
           break;
         }
       }

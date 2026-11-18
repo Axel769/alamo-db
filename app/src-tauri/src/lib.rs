@@ -284,7 +284,11 @@ impl AppState {
         });
         locked(&self.reopen).remove(&conn_id);
         for id in gone {
-            locked(&self.sessions).remove(&id);
+            // A stream stuck on the server would keep its connection alive
+            // past the session (§7.2).
+            if let Some(s) = locked(&self.sessions).remove(&id) {
+                s.registry.abort_all();
+            }
             locked(&self.tunnels).remove(&id);
             locked(&self.db_filters).remove(&id);
         }
@@ -2646,9 +2650,6 @@ async fn reconnect(
     conn_id: u64,
 ) -> Result<alamo_session::ReconnectOut, ErrorOut> {
     let session = state.session(conn_id).map_err(internal)?;
-    if session.registry.has_active_execution() {
-        return Err(internal("running on this connection: cancel it first"));
-    }
     rebuild_tunnel(&state, state.root(conn_id)).await?;
     session
         .force_reconnect()

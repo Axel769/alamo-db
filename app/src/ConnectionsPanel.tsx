@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { t } from "./i18n";
 import { ipc } from "./ipc";
 import { familyWrites, profileConns, rootConnId, useStore } from "./store";
-import { disconnectConn } from "./tabs";
+import { closeLoss, disconnectConn } from "./tabs";
 import { dirtyTabIds, guardUnsaved } from "./pending";
 import { IconMore, IconX } from "./icons";
 import type { TransferKind } from "./ConnectionsTransfer";
@@ -55,10 +55,10 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
   }, [menu, headMenu]);
 
   /// `false` = only armed (pending writes, the second click is needed).
-  const requestDisconnect = async (connId: number, hasWrites: boolean): Promise<boolean> => {
-    // §9.7.2: disconnecting with pending writes = lost work. It must be
-    // said, not discovered.
-    if (hasWrites && armedId !== connId) {
+  const requestDisconnect = async (connId: number): Promise<boolean> => {
+    // §9.7.2: disconnecting with pending writes (or a running query) = lost
+    // work. It must be said, not discovered.
+    if (closeLoss(useStore.getState(), connId) !== null && armedId !== connId) {
       setArmedId(connId);
       window.setTimeout(() => setArmedId(null), 4000);
       return false;
@@ -66,7 +66,7 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
     setArmedId(null);
     // Unsaved grid edits on its tabs: the question comes first.
     if (!(await guardUnsaved(dirtyTabIds((t) => t.connId === connId)))) return true;
-    if (!disconnectConn(connId)) return true;
+    disconnectConn(connId);
     // Drop the introspection cache of THIS connection (keys
     // ["...", connId, ...]) — as in Studio.
     qc.removeQueries({ predicate: (q) => q.queryKey[1] === connId });
@@ -102,7 +102,6 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
       <div className="tree-body">
         {connections.length > 0 && <div className="panel-section">{t("open connections")}</div>}
         {connections.map((c) => {
-          const running = tabs.some((t) => t.running && rootConnId(allConns, t.connId) === c.connId);
           const armed = armedId === c.connId;
           return (
             <div
@@ -143,17 +142,15 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
               </button>
               <button
                 className={"conn-x" + (armed ? " danger" : "")}
-                disabled={running}
                 title={
-                  running
-                    ? t("Query running on this connection: cancel it first")
-                    : armed
-                      ? t("Uncommitted writes — confirm? (disconnecting = ROLLBACK)")
-                      : t("Closes the connection \"{name}\"; its tabs remain, detached", {
-                          name: c.profile.name,
-                        })
+                  armed && familyWrites(allConns, c.connId)
+                    ? t("Uncommitted writes — confirm? (disconnecting = ROLLBACK)")
+                    : (armed && closeLoss({ connections: allConns, tabs }, c.connId)) ||
+                      t("Closes the connection \"{name}\"; its tabs remain, detached", {
+                        name: c.profile.name,
+                      })
                 }
-                onClick={() => void requestDisconnect(c.connId, familyWrites(allConns, c.connId))}
+                onClick={() => void requestDisconnect(c.connId)}
               >
                 <IconX />
               </button>
@@ -214,7 +211,7 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
         (() => {
           const c = connections.find((x) => x.connId === menu.connId);
           if (!c) return null;
-          const running = tabs.some((t) => t.running && rootConnId(allConns, t.connId) === c.connId);
+          const loss = closeLoss({ connections: allConns, tabs }, c.connId);
           return (
             <div
               className="tab-menu"
@@ -223,12 +220,11 @@ export default function ConnectionsPanel({ onOpenDialog, onTransfer }: Props) {
             >
               <button
                 className="tab-menu-item"
-                disabled={running}
                 onClick={() => {
-                  void requestDisconnect(c.connId, familyWrites(allConns, c.connId)).then((done) => done && setMenu(null));
+                  void requestDisconnect(c.connId).then((done) => done && setMenu(null));
                 }}
               >
-                {armedId === c.connId ? t("Uncommitted writes — confirm?") : t("Disconnect")}
+                {(armedId === c.connId && loss) || t("Disconnect")}
               </button>
             </div>
           );

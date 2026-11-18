@@ -691,6 +691,18 @@ Pending → Running → (Completed | Failed | Cancelling → Cancelled)
   either. Meanwhile the status bar says the query is stopping, not paused.
   Terminating closes Alamo's side of the connection even when the `KILL`
   fails: the stuck stream dies with it.
+- **Way out**: Reconnect and Disconnect are never disabled by a running query;
+  they say on the first click that it will be stopped, and the second confirms.
+  Both drop the execution's task (`Registry::abort_all`): on a server that
+  answers nothing, Cancel and Stop never reach the stream, and only dropping
+  it frees the lane and the connection. The task's guard still emits
+  `Finished` (`cancelled`), so the UI leaves "stopping", and the rows already
+  arrived stay, marked partial (§7.3). On a server that cannot be reached
+  Reconnect fails at the connect timeout and changes nothing; Disconnect always
+  works. mysql_async closes a dropped connection politely in a task of its own
+  (reads the rest of the result, then `COM_QUIT`): on a frozen server that
+  socket lingers until TCP gives up or the tunnel closes, and the query dies
+  with the `KILL` of `kill_abandoned` (Reconnect) or of the next connect.
 
 ### 7.3 Partial data
 

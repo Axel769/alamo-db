@@ -648,8 +648,8 @@ impl Session {
     /// is alive — with the network just back the check can wait minutes on
     /// a connection that died silently — and closes on the server the old
     /// one and the auxiliary ones, which reopen at first use (one being
-    /// reopened, slot busy, manages by itself). The caller rules out running
-    /// executions.
+    /// reopened, slot busy, manages by itself). Executions still running
+    /// end cancelled (`Registry::abort_all`).
     pub async fn force_reconnect(&self) -> Result<ReconnectOut, Box<DbError>> {
         let fresh = Self::open_lane(
             &*self.driver,
@@ -667,6 +667,9 @@ impl Session {
         .await?;
         let lost = self.txn.snapshot();
         let old = std::mem::replace(&mut *self.sticky.write().unwrap(), fresh.clone());
+        // A query still running (or stuck stopping) belonged to the old
+        // connections: it ends cancelled, the lanes are free again.
+        self.registry.abort_all();
         self.source_cache.lock().unwrap().clear();
         fresh.kill_abandoned(old.server_conn_id().as_slice()).await;
         for slot in [&self.introspect, &self.stats, &self.shared] {
@@ -1381,7 +1384,7 @@ impl Session {
             tracker: Arc::clone(&self.txn),
             begin_first: self.manual_commit() && !self.read_only && !self.txn.snapshot().open,
         };
-        tokio::spawn(exec::run_execution(
+        exec::spawn_execution(
             self.sticky(),
             Arc::clone(&self.registry),
             exec_id,
@@ -1393,7 +1396,7 @@ impl Session {
                 read_only_txn: self.read_only && self.capabilities().read_only_txn,
             },
             emit,
-        ));
+        );
         Ok(exec_id)
     }
 
@@ -1440,7 +1443,7 @@ impl Session {
                 ))
             })?;
         let emit: Emit = Arc::new(emit);
-        tokio::spawn(exec::run_execution(
+        exec::spawn_execution(
             shared,
             Arc::clone(&self.registry),
             exec_id,
@@ -1452,7 +1455,7 @@ impl Session {
                 read_only_txn,
             },
             emit,
-        ));
+        );
         Ok(exec_id)
     }
 
@@ -1695,7 +1698,7 @@ impl Session {
                 })?;
             (shared, exec_id, None)
         };
-        tokio::spawn(exec::run_execution(
+        exec::spawn_execution(
             conn,
             Arc::clone(&self.registry),
             exec_id,
@@ -1707,7 +1710,7 @@ impl Session {
                 read_only_txn: false,
             },
             emit,
-        ));
+        );
         Ok(exec_id)
     }
 

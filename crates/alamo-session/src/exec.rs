@@ -42,31 +42,59 @@ pub struct ExecConfig {
 }
 
 /// RAII guard on the state machine of §7.2: if the `run_execution` task dies
-/// without a terminal outcome (panic in the emit callback, driver bug), the
-/// entry would stay non-terminal and the lane busy forever. On Drop, an
-/// execution still open is marked `Failed`; with a terminal outcome already
-/// written it is a no-op.
+/// without a terminal outcome (panic in the emit callback, driver bug, task
+/// dropped by `Registry::abort_all`), the entry would stay non-terminal and
+/// the lane busy forever. On Drop, an execution still open ends `Cancelled`
+/// if a cancel was asked, `Failed` otherwise, and the UI gets `Finished`
+/// (not during a panic: the emit itself may be what panicked). With a
+/// terminal outcome already written it is a no-op.
 struct ExecGuard {
     registry: Arc<Registry>,
     exec_id: u64,
+    emit: Emit,
 }
 
 impl Drop for ExecGuard {
     fn drop(&mut self) {
-        let terminal = self
-            .registry
-            .exec_state(self.exec_id)
-            .is_some_and(ExecState::is_terminal);
-        if !terminal {
-            self.registry
-                .set_exec_state(self.exec_id, ExecState::Failed);
+        let state = match self.registry.exec_state(self.exec_id) {
+            Some(s) if s.is_terminal() => return,
+            Some(ExecState::Cancelling) => ExecState::Cancelled,
+            _ => ExecState::Failed,
+        };
+        self.registry.set_exec_state(self.exec_id, state);
+        if !std::thread::panicking() {
+            (self.emit)(ExecEvent::Finished {
+                exec_id: self.exec_id,
+                state: state.as_str(),
+            });
         }
     }
 }
 
+/// Starts `run_execution` in its own task, which the registry can drop
+/// (`Registry::abort_all`).
+pub fn spawn_execution(
+    conn: DbConn,
+    registry: Arc<Registry>,
+    exec_id: u64,
+    sql: String,
+    cfg: ExecConfig,
+    emit: Emit,
+) {
+    let task = tokio::spawn(run_execution(
+        conn,
+        Arc::clone(&registry),
+        exec_id,
+        sql,
+        cfg,
+        emit,
+    ));
+    registry.set_task(exec_id, task.abort_handle());
+}
+
 /// Runs the whole batch. To be launched in a dedicated task; the exec_id has
 /// already been handed to the caller (§8: `execute` returns immediately).
-pub async fn run_execution(
+async fn run_execution(
     conn: DbConn,
     registry: Arc<Registry>,
     exec_id: u64,
@@ -77,6 +105,7 @@ pub async fn run_execution(
     let _guard = ExecGuard {
         registry: Arc::clone(&registry),
         exec_id,
+        emit: Arc::clone(&emit),
     };
     let ExecConfig {
         opts,
@@ -193,6 +222,7 @@ pub async fn run_execution(
                     if !schema.is_empty() {
                         let l = LiveResult::new(Arc::clone(&schema));
                         let result_id = registry_cb.new_result(l.clone());
+                        registry_cb.set_live(exec_id, l.clone());
                         emit_cb(ExecEvent::Schema {
                             exec_id,
                             index,
@@ -484,6 +514,7 @@ mod tests {
         drop(ExecGuard {
             registry: Arc::clone(&registry),
             exec_id,
+            emit: Arc::new(|_| {}),
         });
         assert_eq!(
             registry.exec_state(exec_id),
@@ -501,7 +532,48 @@ mod tests {
         drop(ExecGuard {
             registry: Arc::clone(&registry),
             exec_id,
+            emit: Arc::new(|_| {}),
         });
         assert_eq!(registry.exec_state(exec_id), Some(ExecState::Completed));
+    }
+
+    #[tokio::test]
+    async fn abort_all_ends_a_stuck_task_cancelled_and_tells_the_ui() {
+        let registry = Arc::new(Registry::new());
+        let exec_id = registry.try_new_execution(test_canceller()).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let guard = ExecGuard {
+            registry: Arc::clone(&registry),
+            exec_id,
+            emit: Arc::new(move |ev| {
+                let _ = tx.send(ev);
+            }),
+        };
+        // A stream on a server that never answers: only the abort ends it.
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        });
+        registry.set_task(exec_id, task.abort_handle());
+        registry.set_exec_state(exec_id, ExecState::Running);
+        let live = LiveResult::new(Arc::from([]));
+        registry.set_live(exec_id, live.clone());
+
+        registry.abort_all();
+        assert_eq!(
+            live.state(),
+            ResultSetState::PartialCancelled,
+            "rows kept, marked partial"
+        );
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(registry.exec_state(exec_id), Some(ExecState::Cancelled));
+        assert!(!registry.has_active_execution(), "the sticky is free again");
+        assert!(matches!(
+            rx.recv().await,
+            Some(ExecEvent::Finished {
+                state: "cancelled",
+                ..
+            })
+        ));
     }
 }

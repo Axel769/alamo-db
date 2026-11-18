@@ -13,8 +13,10 @@ import { dropCache } from "./rowCache";
 import { connForDatabase, openDatabasePageOn } from "./databases";
 import {
   activeTab,
+  ConnUi,
   connFamily,
   emptyTab,
+  familyWrites,
   openedDbByConn,
   placeTab,
   profileDatabase,
@@ -541,22 +543,32 @@ export function cycleMru(): void {
   if (next) activateTab(next);
 }
 
+/// What Disconnect or Reconnect of a profile's connection throws away,
+/// said on the first click: the second confirms (§9.7.2). Lost writes come
+/// first; a running query, even one stuck stopping, ends cancelled (§7.2).
+/// `null` = nothing is lost, it acts at once.
+export function closeLoss(s: { connections: ConnUi[]; tabs: TabUi[] }, rootId: number): string | null {
+  if (familyWrites(s.connections, rootId)) return t("Uncommitted writes — confirm?");
+  const family = connFamily(s.connections, rootId);
+  if (s.tabs.some((tb) => tb.running && tb.connId !== null && family.has(tb.connId))) {
+    return t("Query running: it will be stopped — confirm?");
+  }
+  return null;
+}
+
 /// Disconnection of ONE connection (M3.5): releases the results of its tabs
-/// (which remain, disconnected) and closes the session in Rust. Refused if
-/// one of its tabs is executing: cancel first.
-/// Closes a profile's connection, with those to its server's other
-/// databases (§3.3).
-export function disconnectConn(connId: number): boolean {
+/// (which remain, disconnected) and closes the session in Rust, with those
+/// to its server's other databases (§3.3). A query still running ends
+/// there: it is the way out of one stuck on the server (§7.2).
+export function disconnectConn(connId: number): void {
   const s = useStore.getState();
   const family = connFamily(s.connections, connId);
-  if (s.tabs.some((t) => t.connId !== null && family.has(t.connId) && t.running)) return false;
   for (const t of s.tabs) {
     if (t.connId !== null && family.has(t.connId)) releaseTabResults(t);
   }
   s.removeConnection(connId);
   void ipc.disconnect(connId);
   persistWorkspace();
-  return true;
 }
 
 export function cyclePositional(delta: 1 | -1): void {
