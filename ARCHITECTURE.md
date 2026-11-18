@@ -640,6 +640,11 @@ Note: `sqlparser-rs` is a *strict* parser and fails on incomplete text → **it 
 suitable for autocomplete while typing**. Two different things are needed: a tolerant
 tokenizer on the frontend side for completion, and the robust splitter on the Rust side.
 
+The splitter and the classifier (§9.7.3) share one lexer, `alamo-core/src/lexer.rs`,
+with the lexical rules of each dialect (2026-11-18): `#`, `--`, nested comments,
+backslash, backtick, dollar-quoting and MySQL executable comments. A second scanner
+with its own rules would split one way and classify another.
+
 ---
 
 ## 7. Cancellation
@@ -1451,6 +1456,31 @@ Mitigations, all necessary:
 
 **Conservative rule: if the statement cannot be classified with certainty, on a prod profile
 it counts as a write.**
+
+**`WITH` is followed, not guessed** (2026-11-18). A query written with CTEs is a read
+like any other, and treating every `WITH` as unknown asked to confirm a write before
+plain reports on prod and lit up Commit afterwards. The classifier reads the `WITH`
+list: name, optional columns, `AS [NOT] MATERIALIZED`, the body in parentheses, PG's
+`SEARCH`/`CYCLE`, then the final statement, and classifies each body and the final
+statement on their own.
+
+- All reads → read. The same `SELECT` without `WITH` was already a read, so nothing
+  that a plain `SELECT` could not already do gets through: functions with side
+  effects, `FOR UPDATE` and `SELECT … INTO` are open gaps of `SELECT` itself.
+- A DML body (PG: `INSERT`/`UPDATE`/`DELETE`/`MERGE … RETURNING`) or DML final
+  statement (MySQL 8: `WITH … UPDATE`/`DELETE`) → write, with the `WHERE` checked
+  on each one: `WITH a AS (…) DELETE FROM t` is unfiltered and irreversible.
+  PG rejects data-modifying `WITH` below the top level, and neither dialect
+  accepts `(DELETE …)`, so a body or subquery that starts with a read cannot
+  hide a write.
+- Any other shape, any other kind of statement inside, nesting beyond 32 levels
+  and **any MySQL executable comment** (`WITH a AS (SELECT 1) /*! DELETE FROM t */`
+  deletes every row) → unknown.
+
+The text is read with the server's lexical rules (§6.5). Verified on PG 18, MySQL 8.0
+and MariaDB 11.8: `WITH a AS (SELECT 1 # 2), d AS (DELETE …` on PG and
+`WITH a AS (SELECT 1 --1) DELETE … /*` on MySQL delete every row, and with the other
+dialect's rules both would look like reads.
 
 ---
 

@@ -22,6 +22,7 @@ pub mod column;
 pub mod dialect;
 pub mod error;
 pub mod fmt;
+pub mod lexer;
 pub mod lob;
 pub mod meta;
 pub mod result_set;

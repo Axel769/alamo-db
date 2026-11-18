@@ -2247,15 +2247,15 @@ async fn classify_sql(
     conn_id: u64,
     sql: String,
 ) -> Result<Vec<StatementClassOut>, String> {
-    use alamo_core::classify::{classify_statement, StatementClass};
+    use alamo_core::classify::{classify_statement, Rules, StatementClass};
     let session = state.session(conn_id)?;
     let caps = session.capabilities();
-    let transactional_ddl = caps.transactional_ddl;
+    let rules = Rules::from(&caps);
     Ok(
         alamo_core::splitter::split_statements(&sql, caps.backslash_escapes)
             .iter()
             .map(|stmt| {
-                let info = classify_statement(&stmt.sql, transactional_ddl);
+                let info = classify_statement(&stmt.sql, rules);
                 StatementClassOut {
                     index: stmt.origin.index,
                     char_offset: stmt.origin.char_offset,
