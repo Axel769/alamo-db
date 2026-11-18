@@ -1398,6 +1398,13 @@ servers, where tables are dropped and recreated all day.
 **the estimate of affected rows derived from `EXPLAIN`**, which is free and does not require the
 `COUNT(*)` forbidden in §5.2.
 
+The dialog says why each statement is there, truthfully (2026-11-18): `UPDATE`/`DELETE`
+without `WHERE` are listed as such ("they change every row"), also on prod, because inside
+the prod transaction a Rollback undoes them; "can NOT be undone with Rollback" is kept for
+the dialects without transactional DDL, with the implicit-commit note only when one of the
+statements is DDL; on PG `DROP`/`TRUNCATE` read "always confirmed, even with this
+transaction already open", which is what point 3 does.
+
 #### 9.7.1 Trap 1 — in MySQL the manual commit is partly a fiction
 
 MySQL **has no transactional DDL**. `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`,

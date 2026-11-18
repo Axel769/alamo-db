@@ -560,6 +560,7 @@ const IT: Record<string, string> = {
   "Client key passphrase": "Passphrase della chiave client",
   "today": "oggi",
   "Operations that can NOT be undone with Rollback:": "Operazioni NON annullabili col Rollback:",
+  "Always confirmed, even with this transaction already open:": "Confermate sempre, anche con questa transazione già aperta:",
   "optional — no default schema": "opzionale — nessuno schema di default",
   "Neutralize formulas (Excel)": "Neutralizza le formule (Excel)",
   "Prefixes ' to values starting with = + - @: opening the file, Excel does not run them as formulas": "Antepone ' ai valori che iniziano con = + - @: aprendo il file, Excel non li esegue come formule",

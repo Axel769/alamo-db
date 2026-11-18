@@ -703,9 +703,11 @@ function StudioInner() {
     // §9.7: on a prod profile, confirmation at the first write of the
     // transaction (decision 8) and ALWAYS on irreversible operations — even
     // with the gate already open there is no safety net for MySQL DDL,
-    // TRUNCATE, DROP, UPDATE/DELETE without WHERE. On the other profiles
-    // only UPDATE/DELETE without WHERE, as DataGrip and DBeaver do — and
-    // only there can the setting turn it off.
+    // TRUNCATE, DROP, UPDATE/DELETE without WHERE, SELECT … INTO OUTFILE.
+    // UPDATE/DELETE without WHERE are listed as such, not as irreversible:
+    // a Rollback undoes them. On the other profiles only UPDATE/DELETE
+    // without WHERE, as DataGrip and DBeaver do — and only there can the
+    // setting turn it off.
     const conn = connById(s, connId);
     if (conn && !conn.profile.is_production && !conn.profile.read_only && setting("editor.confirm_unfiltered_writes")) {
       try {
@@ -719,6 +721,7 @@ function StudioInner() {
             base,
             firstWrite: false,
             irreversible: [],
+            irreversibleDdl: false,
             ddl: [],
             unknown: [],
             unfiltered: unfiltered.map((c) => statementSnippet(sql, classes, c)),
@@ -746,6 +749,7 @@ function StudioInner() {
               base,
               firstWrite: false,
               irreversible: [],
+              irreversibleDdl: false,
               ddl: [],
               unknown: unknown.map((c) => statementSnippet(sql, classes, c)),
               unfiltered: [],
@@ -753,13 +757,14 @@ function StudioInner() {
             return;
           }
         } else {
-          const irreversible = classes.filter((c) => c.irreversible);
+          const unfiltered = classes.filter((c) => c.unfiltered);
+          const irreversible = classes.filter((c) => c.irreversible && !c.unfiltered);
           // DDL a Rollback could undo: confirmed only when the setting asks.
           const ddl = executionFor(connId).confirm_ddl_on_production
             ? classes.filter((c) => c.class === "ddl" && !c.irreversible)
             : [];
           const firstWrite = classes.some((c) => c.is_write) && !conn.txn?.hasWrites;
-          if (firstWrite || irreversible.length > 0 || ddl.length > 0) {
+          if (firstWrite || irreversible.length > 0 || unfiltered.length > 0 || ddl.length > 0) {
             setWriteGate({
               connId,
               tabId: tab.id,
@@ -767,9 +772,10 @@ function StudioInner() {
               base,
               firstWrite,
               irreversible: irreversible.map((c) => statementSnippet(sql, classes, c)),
+              irreversibleDdl: irreversible.some((c) => c.class === "ddl"),
               ddl: ddl.map((c) => statementSnippet(sql, classes, c)),
               unknown: [],
-              unfiltered: [],
+              unfiltered: unfiltered.map((c) => statementSnippet(sql, classes, c)),
             });
             return;
           }
@@ -2270,8 +2276,12 @@ type WriteGate = {
   /// Offset of `sql` in the editor (see TabUi.execBase).
   base: number;
   firstWrite: boolean;
-  /// Snippets of the statements that cannot be undone, to list them plainly.
+  /// Snippets of the statements confirmed every time (§9.7 point 3): MySQL
+  /// DDL, TRUNCATE, DROP, SELECT … INTO OUTFILE.
   irreversible: string[];
+  /// Some of them are DDL: on a dialect without transactional DDL the dialog
+  /// says they also commit what was pending (§9.7.1).
+  irreversibleDdl: boolean;
   /// Prod with "Confirm schema changes" on (§16): the transactional DDL,
   /// listed apart from the irreversible ones because a Rollback undoes it.
   ddl: string[];
@@ -2279,8 +2289,8 @@ type WriteGate = {
   /// the server net should stop them if they write, but on prod the
   /// confirmation remains (§9.7.3).
   unknown: string[];
-  /// Non-prod profiles: UPDATE/DELETE without WHERE (on prod they are
-  /// listed among the irreversible ones).
+  /// UPDATE/DELETE without WHERE, on every profile: they change every row,
+  /// but a Rollback undoes them where a transaction is open.
   unfiltered: string[];
 };
 
@@ -2405,7 +2415,9 @@ function WriteGateDialog({
           )}
           {gate.irreversible.length > 0 && (
             <div className="banner warn gate-warn">
-              {t("Operations that can NOT be undone with Rollback:")}
+              {profile && transactionalDdl(profile.dialect)
+                ? t("Always confirmed, even with this transaction already open:")
+                : t("Operations that can NOT be undone with Rollback:")}
               <ul className="gate-list">
                 {gate.irreversible.map((s, i) => (
                   <li key={i} className="mono">
@@ -2413,7 +2425,7 @@ function WriteGateDialog({
                   </li>
                 ))}
               </ul>
-              {profile && !transactionalDdl(profile.dialect) && (
+              {gate.irreversibleDdl && profile && !transactionalDdl(profile.dialect) && (
                 <div className="banner-note">
                   {t("On {engine}, DDL implicitly commits anything still pending (§9.7.1).", {
                     engine: engineShortName(profile.dialect),
