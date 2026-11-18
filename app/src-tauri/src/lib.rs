@@ -284,7 +284,11 @@ impl AppState {
         });
         locked(&self.reopen).remove(&conn_id);
         for id in gone {
-            locked(&self.sessions).remove(&id);
+            // A stream stuck on the server would keep its connection alive
+            // past the session (§7.2).
+            if let Some(s) = locked(&self.sessions).remove(&id) {
+                s.registry.abort_all();
+            }
             locked(&self.tunnels).remove(&id);
             locked(&self.db_filters).remove(&id);
         }
@@ -1074,9 +1078,11 @@ async fn terminate_connection(
     conn_id: u64,
 ) -> Result<bool, ErrorOut> {
     let session = state.session(conn_id).map_err(internal)?;
-    let terminated = session.terminate().await.map_err(|e| ErrorOut::from(&*e))?;
+    // Forgotten even when the KILL fails (no answer, refused): the UI drops
+    // the connection anyway, and closing ours stops the stuck stream.
+    let terminated = session.terminate().await;
     state.forget(&db, conn_id);
-    Ok(terminated)
+    terminated.map_err(|e| ErrorOut::from(&*e))
 }
 
 #[tauri::command]
@@ -2241,15 +2247,15 @@ async fn classify_sql(
     conn_id: u64,
     sql: String,
 ) -> Result<Vec<StatementClassOut>, String> {
-    use alamo_core::classify::{classify_statement, StatementClass};
+    use alamo_core::classify::{classify_statement, Rules, StatementClass};
     let session = state.session(conn_id)?;
     let caps = session.capabilities();
-    let transactional_ddl = caps.transactional_ddl;
+    let rules = Rules::from(&caps);
     Ok(
         alamo_core::splitter::split_statements(&sql, caps.backslash_escapes)
             .iter()
             .map(|stmt| {
-                let info = classify_statement(&stmt.sql, transactional_ddl);
+                let info = classify_statement(&stmt.sql, rules);
                 StatementClassOut {
                     index: stmt.origin.index,
                     char_offset: stmt.origin.char_offset,
@@ -2644,9 +2650,6 @@ async fn reconnect(
     conn_id: u64,
 ) -> Result<alamo_session::ReconnectOut, ErrorOut> {
     let session = state.session(conn_id).map_err(internal)?;
-    if session.registry.has_active_execution() {
-        return Err(internal("running on this connection: cancel it first"));
-    }
     rebuild_tunnel(&state, state.root(conn_id)).await?;
     session
         .force_reconnect()

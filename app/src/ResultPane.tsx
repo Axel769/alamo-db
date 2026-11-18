@@ -4,6 +4,7 @@
 import { useRef, useState } from "react";
 import { ipc, ColumnOut, ErrorOut, PendingValue } from "./ipc";
 import { StatementUi, tableMayHaveMore, TabUi } from "./store";
+import { stopExecution } from "./sticky";
 import GridView, { RowActions, ServerSortProps } from "./GridView";
 import InspectPanel from "./InspectPanel";
 import RowPanel, { RowLinks } from "./RowPanel";
@@ -129,7 +130,9 @@ export function StatementPane({
   const [allFor, setAllFor] = useState<number | null>(null);
   // When paged the bar stays even between one page and the next: appearing
   // and disappearing at every page would make the grid jump while scrolling.
-  const paged = st.budgetByRows && (st.budgetPaused || st.streaming) && allFor !== execId;
+  // Stop or Cancel sent: no more pages will come.
+  const paged =
+    st.budgetByRows && (st.budgetPaused || st.streaming) && allFor !== execId && !tab.stoppingSince;
   // New rows are `st.rows + i`: both panels show their pending values.
   const extraCount = extraRows?.after.length ?? 0;
   const inspecting =
@@ -336,7 +339,7 @@ function BudgetBanner({ tab, st }: { tab: TabUi; st: StatementUi }) {
       <button className="btn" onClick={() => ok && void ipc.budgetResume(connId, execId)}>
         {t("Continue")}
       </button>
-      <button className="btn" onClick={() => ok && void ipc.budgetStop(connId, execId)}>
+      <button className="btn" onClick={() => ok && stopExecution(connId, execId, "stop")}>
         {t("Stop")}
       </button>
     </div>

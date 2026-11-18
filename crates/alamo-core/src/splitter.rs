@@ -1,15 +1,9 @@
 //! Statement splitter — §6.5.
 //!
 //! It must handle **Postgres dollar-quoting `$$`** (MySQL's `DELIMITER` comes
-//! with M3): it is a classic breaking point.
-//!
-//! There are two sets of lexical rules, PG and MySQL/MariaDB, and they diverge
-//! exactly where a statement hides: on MySQL `--` is a comment only if
-//! followed by whitespace, `#` opens a line comment, block comments do not
-//! nest, the backtick delimits identifiers and `$` quotes nothing. The
-//! splitter remains a heuristic anyway (the server's `sql_mode`, e.g.
-//! `NO_BACKSLASH_ESCAPES`, changes the rules): the MySQL driver has the server
-//! confirm that each piece is a single statement.
+//! with M3): it is a classic breaking point. The lexical rules of each dialect
+//! live in `lexer`, shared with the classifier: a `;` splits only when it is a
+//! token of its own.
 //!
 //! Every statement carries its start offset in the full buffer **both in
 //! bytes and in characters** (§6.1): PG reports error positions in 1-based
@@ -21,6 +15,7 @@
 //! things and this splitter must not try to cover both (§6.5).
 
 use crate::error::StatementOrigin;
+use crate::lexer::tokens;
 
 /// A statement found in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,278 +26,48 @@ pub struct SplitStatement {
     pub origin: StatementOrigin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum State {
-    Plain,
-    LineComment,
-    /// Block comments in PG nest: `/* /* */ */` is a single comment. The
-    /// field is the depth (on MySQL it stays 1).
-    BlockComment(u32),
-    SingleQuote,
-    /// MySQL: identifier between backticks, a doubled `` `` `` is an escape.
-    Backtick,
-    /// `E'...'`: the backslash escapes, including `\'`.
-    EscapeString,
-    DoubleQuote,
-    /// Dollar-quoting: the value is the byte length of the opening tag
-    /// (`$tag$` including the two `$`), stored as a start index into the
-    /// buffer for textual comparison.
-    Dollar {
-        tag_start: usize,
-        tag_len: usize,
-    },
-}
-
 /// Splits the buffer into statements on the `;` at level zero.
 ///
 /// Empty statements (whitespace or comments only) are dropped. The last
 /// statement does not require a `;`.
 ///
-/// `backslash_escapes` comes from `Capabilities` (§2.1) and is true only for
-/// MySQL/MariaDB: besides the backslash in ordinary strings (`'a\';b'` is ONE
-/// string) it enables the other MySQL lexical rules (see the module doc).
+/// `backslash_escapes` comes from `Capabilities` (§2.1): see `lexer::tokens`.
 pub fn split_statements(sql: &str, backslash_escapes: bool) -> Vec<SplitStatement> {
-    let mysql = backslash_escapes;
-    let bytes = sql.as_bytes();
     let mut out = Vec::new();
-    let mut state = State::Plain;
-
     // Start of the current statement (first byte after the last `;`).
-    let mut stmt_start_byte = 0usize;
-    // Characters seen up to stmt_start_byte.
-    let mut stmt_start_char = 0u32;
-    let mut chars_seen = 0u32;
-
+    let mut stmt_start = 0usize;
+    // Characters up to `counted`, advanced as statements start: the starts
+    // only grow, so the whole buffer is counted once.
+    let mut counted = 0usize;
+    let mut chars = 0u32;
+    let mut char_at = |byte: usize| {
+        chars += sql[counted..byte].chars().count() as u32;
+        counted = byte;
+        chars
+    };
     // Does the current statement contain anything besides whitespace and
     // comments? Without this flag "-- comment only;" would be sent to the
     // server as a statement of its own (EmptyQueryResponse: harmless but noise
     // in the UI).
     let mut has_content = false;
 
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let b = bytes[i];
-        // Advance in characters: count only UTF-8 leading bytes.
-        let is_char_boundary = (b & 0xC0) != 0x80;
-
-        match state {
-            State::Plain => match b {
-                // MySQL: `--1` is "minus minus one", not a comment.
-                b'-' if bytes.get(i + 1) == Some(&b'-')
-                    && (!mysql
-                        || bytes
-                            .get(i + 2)
-                            .is_none_or(|c| c.is_ascii_whitespace() || c.is_ascii_control())) =>
-                {
-                    state = State::LineComment
-                }
-                b'#' if mysql => state = State::LineComment,
-                b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                    state = State::BlockComment(1);
-                    // MySQL: `/*!…*/`, `/*M!…*/` and `/*+…*/` are code
-                    // (executable comments and hints), not comments.
-                    if mysql && matches!(bytes.get(i + 2), Some(b'!' | b'M' | b'+')) {
-                        has_content = true;
-                    }
-                    // Consume the asterisk too, so `/*/` is not re-read.
-                    i += 1;
-                    chars_seen += 1;
-                }
-                b'\'' => {
-                    state = State::SingleQuote;
-                    has_content = true;
-                }
-                b'`' if mysql => {
-                    state = State::Backtick;
-                    has_content = true;
-                }
-                b'e' | b'E'
-                    if !mysql && bytes.get(i + 1) == Some(&b'\'') && !prev_is_ident(bytes, i) =>
-                {
-                    state = State::EscapeString;
-                    has_content = true;
-                    i += 1;
-                    chars_seen += 1;
-                }
-                b'"' => {
-                    state = State::DoubleQuote;
-                    has_content = true;
-                }
-                b'$' => {
-                    has_content = true;
-                    if let Some(tag_len) = dollar_tag_len(bytes, i).filter(|_| !mysql) {
-                        state = State::Dollar {
-                            tag_start: i,
-                            tag_len,
-                        };
-                        // Skip the whole tag: it is ASCII, bytes = characters.
-                        i += tag_len;
-                        chars_seen += tag_len as u32;
-                        continue;
-                    }
-                }
-                b';' => {
-                    if has_content {
-                        push_statement(
-                            sql,
-                            stmt_start_byte,
-                            i,
-                            stmt_start_char,
-                            out.len() as u32,
-                            &mut out,
-                        );
-                    }
-                    stmt_start_byte = i + 1;
-                    stmt_start_char = chars_seen + 1;
-                    has_content = false;
-                }
-                b if !b.is_ascii_whitespace() => has_content = true,
-                _ => {}
-            },
-            State::LineComment => {
-                if b == b'\n' {
-                    state = State::Plain;
-                }
+    for tok in tokens(sql, backslash_escapes) {
+        if tok.is_symbol(sql, b';') {
+            if has_content {
+                let start_char = char_at(stmt_start);
+                push_statement(sql, stmt_start, tok.start, start_char, &mut out);
             }
-            State::BlockComment(depth) => {
-                if b == b'*' && bytes.get(i + 1) == Some(&b'/') {
-                    state = if depth == 1 {
-                        State::Plain
-                    } else {
-                        State::BlockComment(depth - 1)
-                    };
-                    i += 1;
-                    chars_seen += 1;
-                } else if !mysql && b == b'/' && bytes.get(i + 1) == Some(&b'*') {
-                    state = State::BlockComment(depth + 1);
-                    i += 1;
-                    chars_seen += 1;
-                }
-            }
-            State::SingleQuote => {
-                if backslash_escapes && b == b'\\' {
-                    // MySQL: skip the escaped byte, covers `\'`.
-                    if i + 1 < bytes.len() {
-                        if (bytes[i + 1] & 0xC0) != 0x80 {
-                            chars_seen += 1;
-                        }
-                        i += 1;
-                    }
-                } else if b == b'\'' {
-                    // `''` is an escaped quote, not a closing one.
-                    if bytes.get(i + 1) == Some(&b'\'') {
-                        i += 1;
-                        chars_seen += 1;
-                    } else {
-                        state = State::Plain;
-                    }
-                }
-            }
-            State::Backtick => {
-                if b == b'`' {
-                    if bytes.get(i + 1) == Some(&b'`') {
-                        i += 1;
-                        chars_seen += 1;
-                    } else {
-                        state = State::Plain;
-                    }
-                }
-            }
-            State::EscapeString => {
-                if b == b'\\' {
-                    // Skip the next byte whatever it is (covers `\'`).
-                    if i + 1 < bytes.len() {
-                        if (bytes[i + 1] & 0xC0) != 0x80 {
-                            chars_seen += 1;
-                        }
-                        i += 1;
-                    }
-                } else if b == b'\'' {
-                    if bytes.get(i + 1) == Some(&b'\'') {
-                        i += 1;
-                        chars_seen += 1;
-                    } else {
-                        state = State::Plain;
-                    }
-                }
-            }
-            State::DoubleQuote => {
-                // In MySQL (without ANSI_QUOTES) `"..."` is a string and the
-                // backslash escapes here too.
-                if backslash_escapes && b == b'\\' {
-                    if i + 1 < bytes.len() {
-                        if (bytes[i + 1] & 0xC0) != 0x80 {
-                            chars_seen += 1;
-                        }
-                        i += 1;
-                    }
-                } else if b == b'"' {
-                    if bytes.get(i + 1) == Some(&b'"') {
-                        i += 1;
-                        chars_seen += 1;
-                    } else {
-                        state = State::Plain;
-                    }
-                }
-            }
-            State::Dollar { tag_start, tag_len } => {
-                if b == b'$' && i + tag_len <= bytes.len() {
-                    let open = &bytes[tag_start..tag_start + tag_len];
-                    if &bytes[i..i + tag_len] == open {
-                        state = State::Plain;
-                        i += tag_len;
-                        chars_seen += tag_len as u32;
-                        continue;
-                    }
-                }
-            }
+            stmt_start = tok.end;
+            has_content = false;
+        } else {
+            has_content = true;
         }
-
-        if is_char_boundary {
-            chars_seen += 1;
-        }
-        i += 1;
     }
-
     if has_content {
-        push_statement(
-            sql,
-            stmt_start_byte,
-            bytes.len(),
-            stmt_start_char,
-            out.len() as u32,
-            &mut out,
-        );
+        let start_char = char_at(stmt_start);
+        push_statement(sql, stmt_start, sql.len(), start_char, &mut out);
     }
     out
-}
-
-/// Can the previous byte be part of an identifier? If so, the `E` of
-/// `TABLE E'...'`-like sequences belongs to the word before (`UPDATE`,
-/// `DELETE`…) and does not introduce an escape string.
-fn prev_is_ident(bytes: &[u8], i: usize) -> bool {
-    if i == 0 {
-        return false;
-    }
-    let p = bytes[i - 1];
-    p.is_ascii_alphanumeric() || p == b'_' || p >= 0x80
-}
-
-/// If a valid dollar-quoting tag (`$$` or `$ident$`) starts at
-/// `bytes[i] == b'$'`, returns the tag length in bytes.
-fn dollar_tag_len(bytes: &[u8], i: usize) -> Option<usize> {
-    debug_assert_eq!(bytes[i], b'$');
-    let mut j = i + 1;
-    while j < bytes.len() {
-        match bytes[j] {
-            b'$' => return Some(j - i + 1),
-            b if b.is_ascii_alphanumeric() || b == b'_' => j += 1,
-            // `$1` is a placeholder, not a tag; any other byte breaks the
-            // tag.
-            _ => return None,
-        }
-    }
-    None
 }
 
 fn push_statement(
@@ -310,7 +75,6 @@ fn push_statement(
     start_byte: usize,
     end_byte: usize,
     start_char: u32,
-    index: u32,
     out: &mut Vec<SplitStatement>,
 ) {
     let raw = &sql[start_byte..end_byte];
@@ -328,7 +92,7 @@ fn push_statement(
         origin: StatementOrigin {
             byte_offset: (start_byte + trimmed_start) as u32,
             char_offset: start_char + lead_chars,
-            index,
+            index: out.len() as u32,
         },
     });
 }

@@ -11,6 +11,18 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## [0.1.0-alpha.17] - 2026-11-18
+
+- Connections through SSH: a large MySQL or MariaDB result paused after its first rows froze every other connection going through the same SSH server, so stopping it ("still stopping on the server: try again in a moment"), the tables panel and the other tabs waited forever. Each connection now goes through its own SSH session, and a paused result holds up only itself.
+- MySQL and MariaDB: stopping a paused result no longer waits forever when the server does not answer the request to stop it: the request gives up after the connect timeout (Settings → Connections), and the rows still on their way are read while it travels.
+- While a query stops (Stop, Cancel, or Run on a paused result) the status bar says "stopping on the server…" with the seconds, instead of still showing it paused; "Load all" disappears. If after 10 seconds it has not stopped, Terminate connection is offered, as for Cancel. Terminating now always closes the connection, even when the server does not answer.
+- Reconnect and Disconnect (connection menu, connection page, connections panel) work even while a query is running or stuck stopping: the first click says the query will be stopped, the second confirms; the rows already received stay readable. Before, both stayed disabled and a query that never stopped left no way out but quitting the app.
+- Production connections: a query written with WITH (common table expressions) that only reads no longer asks to confirm a write, and no longer lights up Commit. A WITH that writes is still confirmed, and WITH … DELETE or UPDATE without WHERE now asks for confirmation every time, like a plain DELETE without WHERE.
+- SELECT … INTO is no longer taken for a read. On production, SELECT … INTO a new table (PostgreSQL) asks to confirm the write, and SELECT … INTO OUTFILE or DUMPFILE (MySQL, MariaDB) is always confirmed, because the file stays on the server after a Rollback. On read-only connections both are refused. SELECT … INTO @variable is still a read.
+- Production write confirmation: UPDATE or DELETE without WHERE are listed as "Without WHERE: they change every row of the table" instead of "can NOT be undone with Rollback" (a Rollback does undo them), and the MySQL note about DDL committing what was pending only appears when there is DDL. On PostgreSQL, DROP and TRUNCATE are listed as "always confirmed", since there a Rollback undoes them.
+- Read-only connections: START TRANSACTION or SET with a MySQL executable comment (/*! … */) is refused, because what is inside could switch read-only off.
+- Connections and SSH profiles: when the form is longer than the window, the error of "Test connection" was squashed to a thin strip with its text cut off. It now shows in full and the form scrolls to it.
+
 ## [0.1.0-alpha.16] - 2026-11-13
 
 - Windows: typing in the filter of the tables panel could freeze the window (black, "Maximum update depth exceeded" behind it): the lists of the filtered databases kept resizing one another. They now settle at once.

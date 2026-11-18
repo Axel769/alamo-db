@@ -14,6 +14,7 @@ use alamo_core::result_set::{ResultSet, ResultSetBuilder, ResultSetState};
 use alamo_core::window::{Window, WINDOW_CELL_TRUNCATE};
 use alamo_driver_postgres::{StopReason, StreamControl};
 use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 
 use crate::driver::Canceller;
 
@@ -552,6 +553,12 @@ struct ExecEntry {
     /// replaced at every statement of the batch.
     control: Option<mpsc::Sender<StreamControl>>,
     cancel: Arc<dyn Canceller>,
+    /// The `run_execution` task: `abort_all` drops it when the connection
+    /// under it is replaced or closed (§7.2, last resort).
+    task: Option<AbortHandle>,
+    /// Result set the current statement is filling: an abort leaves it
+    /// marked partial (§7.3), as a Cancel would.
+    live: Option<LiveResult>,
     /// Budget pause in progress (§5.1): the counter tells the pauses apart,
     /// so the watchdog of an old pause does not stop the new one.
     paused: bool,
@@ -600,6 +607,8 @@ impl Registry {
                 lane,
                 control: None,
                 cancel,
+                task: None,
+                live: None,
                 paused: false,
                 pause_gen: 0,
             },
@@ -640,6 +649,46 @@ impl Registry {
     pub(crate) fn set_control(&self, exec_id: u64, control: mpsc::Sender<StreamControl>) {
         if let Some(e) = self.execs.lock().unwrap().get_mut(&exec_id) {
             e.control = Some(control);
+        }
+    }
+
+    pub(crate) fn set_task(&self, exec_id: u64, task: AbortHandle) {
+        if let Some(e) = self.execs.lock().unwrap().get_mut(&exec_id) {
+            e.task = Some(task);
+        }
+    }
+
+    pub(crate) fn set_live(&self, exec_id: u64, live: LiveResult) {
+        if let Some(e) = self.execs.lock().unwrap().get_mut(&exec_id) {
+            e.live = Some(live);
+        }
+    }
+
+    /// Reconnect or Disconnect (§7.2): the executions still open end
+    /// `Cancelled` without waiting for the server. A stream stuck on a
+    /// server that does not answer never sees Cancel; dropping its task
+    /// releases the connection and the lane, and the task's guard tells
+    /// the UI it finished. The rows already arrived stay, marked partial.
+    pub fn abort_all(&self) {
+        let open: Vec<(Option<AbortHandle>, Option<LiveResult>)> = self
+            .execs
+            .lock()
+            .unwrap()
+            .values_mut()
+            .filter(|e| !e.state.is_terminal())
+            .map(|e| {
+                e.state = ExecState::Cancelling;
+                e.paused = false;
+                (e.task.take(), e.live.take())
+            })
+            .collect();
+        for (task, live) in open {
+            if let Some(t) = task {
+                t.abort();
+            }
+            if let Some(l) = live {
+                l.finish(ResultSetState::PartialCancelled, None);
+            }
         }
     }
 

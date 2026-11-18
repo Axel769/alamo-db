@@ -299,6 +299,84 @@ async fn drop_closes_forwarded_connections() {
     assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
 }
 
+/// A "database" that never stops sending after the first byte `F` (a large
+/// result set), and echoes otherwise.
+async fn spawn_firehose_or_echo() -> u16 {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let Ok(n) = sock.read(&mut buf).await else {
+                    return;
+                };
+                if buf[..n].first() == Some(&b'F') {
+                    let rows = [b'r'; 16 * 1024];
+                    while sock.write_all(&rows).await.is_ok() {}
+                    return;
+                }
+                let mut n = n;
+                while n > 0 && sock.write_all(&buf[..n]).await.is_ok() {
+                    n = sock.read(&mut buf).await.unwrap_or(0);
+                }
+            });
+        }
+    });
+    port
+}
+
+/// A paused MySQL result stops reading its socket while the server keeps
+/// sending: the other connections of the tunnel (the `KILL QUERY` that
+/// stops it, the tree, the table tabs) must still get through. russh grants
+/// the window on receipt, not on consumption, so on a shared SSH session
+/// the unread channel stalls every channel.
+#[tokio::test(flavor = "multi_thread")]
+async fn stalled_connection_does_not_block_the_others() {
+    let target = spawn_firehose_or_echo().await;
+    let (ssh_port, key) = spawn_sshd().await;
+    let tunnel = Tunnel::open(TunnelConfig {
+        ssh: SshEndpoint {
+            host: "127.0.0.1".into(),
+            port: ssh_port,
+            user: USER.into(),
+            auth: TunnelAuth::Password(PASSWORD.into()),
+            known_hosts: Some(known_hosts_file("stalled", None)),
+            trusted_key: Some(key.to_openssh().unwrap()),
+        },
+        target_host: "127.0.0.1".into(),
+        target_port: target,
+    })
+    .await
+    .expect("opening tunnel");
+
+    let mut paused = tokio::net::TcpStream::connect(("127.0.0.1", tunnel.local_port))
+        .await
+        .unwrap();
+    paused.write_all(b"F").await.unwrap();
+    let mut buf = [0u8; 1024];
+    paused.read_exact(&mut buf).await.unwrap();
+    // Stops reading: the buffers between here and the server fill up.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let other = async {
+        let mut sock = tokio::net::TcpStream::connect(("127.0.0.1", tunnel.local_port))
+            .await
+            .unwrap();
+        sock.write_all(b"KILL QUERY").await.unwrap();
+        let mut buf = [0u8; 16];
+        let n = sock.read(&mut buf).await.unwrap();
+        buf[..n].to_vec()
+    };
+    let echoed = tokio::time::timeout(std::time::Duration::from_secs(5), other)
+        .await
+        .expect("the other connection is stuck behind the unread one");
+    assert_eq!(echoed, b"KILL QUERY");
+    drop(paused);
+}
+
 /// Tunnel dropped and rebuilt on the SAME port (`open_at`): the session's
 /// connection string does not change and bytes flow again. The bind
 /// succeeds even right after the drop, while the old listener is still

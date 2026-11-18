@@ -41,7 +41,7 @@ import SchemaTree from "./SchemaTree";
 import { recordHistory } from "./history";
 import TabBar from "./TabBar";
 import TableTab from "./TableTab";
-import { freeSticky } from "./sticky";
+import { freeSticky, stopExecution } from "./sticky";
 import { ErrorPanel, resultIncomplete, singleSourceTable } from "./ResultPane";
 import SqlResultPane from "./SqlResultPane";
 import { ExportDialog } from "./ExportDialog";
@@ -50,6 +50,7 @@ import { connForDatabase } from "./databases";
 import { asErrorOut } from "./errors";
 import { locale, t, tMsg, useLang } from "./i18n";
 import {
+  closeLoss,
   closeTabsGuarded,
   cycleMru,
   cyclePositional,
@@ -381,6 +382,8 @@ function StudioInner() {
   // working — no spinner, timer or progress thread.
   const tabPaused = tab?.statements.find((x) => x.budgetPaused);
   const tabWorking = !!tab?.running && !tabPaused;
+  // Stop or Cancel sent, the server has not let go yet.
+  const tabStopping = !!tab?.running && !!tab.stoppingSince;
 
   // §9.7: pre-execution confirmation on prod (first write / irreversible).
   const [writeGate, setWriteGate] = useState<WriteGate | null>(null);
@@ -416,13 +419,24 @@ function StudioInner() {
   const [avMenu, setAvMenu] = useState<{ connId: number; x: number; y: number } | null>(null);
   const [avArmed, setAvArmed] = useState(false);
 
-  // Escalation §7.2: if ~10s after the cancel the execution is still alive,
-  // the server did not take it (pooler, non-interruptible query) → the
-  // termination of the connection is offered, destructive and never automatic.
-  const [escalate, setEscalate] = useState(false);
+  // Escalation §7.2: if ~10s after Cancel or Stop the execution is still
+  // alive, the server did not take it (pooler, non-interruptible query, no
+  // free connection for the KILL) → the termination of the connection is
+  // offered, destructive and never automatic.
+  const stoppingSince = stickyTab?.stoppingSince ?? null;
+  const [escalateFor, setEscalateFor] = useState<number | null>(null);
   useEffect(() => {
-    if (!anyRunning) setEscalate(false);
-  }, [anyRunning]);
+    if (stoppingSince === null) return;
+    const id = window.setTimeout(
+      () => setEscalateFor(stoppingSince),
+      Math.max(0, stoppingSince + ESCALATE_AFTER_MS - Date.now())
+    );
+    return () => window.clearTimeout(id);
+  }, [stoppingSince]);
+  const escalate = stoppingSince !== null && escalateFor === stoppingSince;
+  // The termination opens a connection for the KILL: on a server that does
+  // not answer it takes up to the connect timeout.
+  const [terminating, setTerminating] = useState(false);
 
   // The connection's database (the sticky's real one) is read at connect
   // and at every end of execution (store, `handleEvent` finished): a `USE`
@@ -562,20 +576,20 @@ function StudioInner() {
 
   /// "Reconnect" on demand (menu and connection page): tunnel and
   /// connections redone right away, without waiting for the drop to be
-  /// noticed. With uncommitted writes the first click arms, like
-  /// "Disconnect": reconnecting loses them. `false` = only armed.
+  /// noticed. When something is lost (`closeLoss`: uncommitted writes, a
+  /// running query) the first click arms, like "Disconnect". A running
+  /// query ends cancelled: Reconnect is the way out of one stuck on the
+  /// server (§7.2). `false` = only armed.
   const [recArmed, setRecArmed] = useState<number | null>(null);
-  const reconnectConn = (connId: number, hasWrites: boolean): boolean => {
-    if (hasWrites && recArmed !== connId) {
+  const reconnectConn = (connId: number): boolean => {
+    if (closeLoss(useStore.getState(), connId) !== null && recArmed !== connId) {
       setRecArmed(connId);
       window.setTimeout(() => setRecArmed((a) => (a === connId ? null : a)), 4000);
       return false;
     }
     setRecArmed(null);
     setConnNote(null);
-    void stickyReady(connId).then((free) => {
-      if (free) void ensureLive(connId, 0, true);
-    });
+    void ensureLive(connId, 0, true);
     return true;
   };
   const forcing = (connId: number) => reconnecting?.connId === connId && reconnecting.force;
@@ -617,24 +631,20 @@ function StudioInner() {
     if (!conn) return;
     const running = stickyRunningTab(s, conn.connId);
     if (!running || running.execId === null) return;
-    const execId = running.execId;
-    void ipc.cancel(conn.connId, execId);
-    window.setTimeout(() => {
-      const cur = useStore.getState();
-      const t = cur.tabs.find((x) => x.connId === conn.connId && x.execId === execId);
-      if (t?.running) setEscalate(true);
-    }, 10_000);
+    stopExecution(conn.connId, running.execId, "cancel");
   }, []);
 
   const terminate = useCallback(async () => {
-    setEscalate(false);
     const s = useStore.getState();
     const conn = connById(s, activeTab(s)?.connId ?? s.activeConnId);
     if (!conn) return;
+    setTerminating(true);
     try {
       await ipc.terminateConnection(conn.connId);
     } catch (e) {
       console.error(e);
+    } finally {
+      setTerminating(false);
     }
     useStore.getState().removeConnection(conn.connId);
     if (useStore.getState().connections.length === 0) openConnectDialog();
@@ -693,9 +703,11 @@ function StudioInner() {
     // §9.7: on a prod profile, confirmation at the first write of the
     // transaction (decision 8) and ALWAYS on irreversible operations — even
     // with the gate already open there is no safety net for MySQL DDL,
-    // TRUNCATE, DROP, UPDATE/DELETE without WHERE. On the other profiles
-    // only UPDATE/DELETE without WHERE, as DataGrip and DBeaver do — and
-    // only there can the setting turn it off.
+    // TRUNCATE, DROP, UPDATE/DELETE without WHERE, SELECT … INTO OUTFILE.
+    // UPDATE/DELETE without WHERE are listed as such, not as irreversible:
+    // a Rollback undoes them. On the other profiles only UPDATE/DELETE
+    // without WHERE, as DataGrip and DBeaver do — and only there can the
+    // setting turn it off.
     const conn = connById(s, connId);
     if (conn && !conn.profile.is_production && !conn.profile.read_only && setting("editor.confirm_unfiltered_writes")) {
       try {
@@ -709,6 +721,7 @@ function StudioInner() {
             base,
             firstWrite: false,
             irreversible: [],
+            irreversibleDdl: false,
             ddl: [],
             unknown: [],
             unfiltered: unfiltered.map((c) => statementSnippet(sql, classes, c)),
@@ -736,6 +749,7 @@ function StudioInner() {
               base,
               firstWrite: false,
               irreversible: [],
+              irreversibleDdl: false,
               ddl: [],
               unknown: unknown.map((c) => statementSnippet(sql, classes, c)),
               unfiltered: [],
@@ -743,13 +757,14 @@ function StudioInner() {
             return;
           }
         } else {
-          const irreversible = classes.filter((c) => c.irreversible);
+          const unfiltered = classes.filter((c) => c.unfiltered);
+          const irreversible = classes.filter((c) => c.irreversible && !c.unfiltered);
           // DDL a Rollback could undo: confirmed only when the setting asks.
           const ddl = executionFor(connId).confirm_ddl_on_production
             ? classes.filter((c) => c.class === "ddl" && !c.irreversible)
             : [];
           const firstWrite = classes.some((c) => c.is_write) && !conn.txn?.hasWrites;
-          if (firstWrite || irreversible.length > 0 || ddl.length > 0) {
+          if (firstWrite || irreversible.length > 0 || unfiltered.length > 0 || ddl.length > 0) {
             setWriteGate({
               connId,
               tabId: tab.id,
@@ -757,9 +772,10 @@ function StudioInner() {
               base,
               firstWrite,
               irreversible: irreversible.map((c) => statementSnippet(sql, classes, c)),
+              irreversibleDdl: irreversible.some((c) => c.class === "ddl"),
               ddl: ddl.map((c) => statementSnippet(sql, classes, c)),
               unknown: [],
-              unfiltered: [],
+              unfiltered: unfiltered.map((c) => statementSnippet(sql, classes, c)),
             });
             return;
           }
@@ -841,14 +857,13 @@ function StudioInner() {
     };
   }, [avMenu]);
 
-  /// Closes the connection; `false` if one of its tabs is executing.
-  /// `false` = not closed (execution in progress, or Cancel on the unsaved
+  /// Closes the connection; `false` = not closed (Cancel on the unsaved
   /// changes question).
   const closeConn = async (connId: number): Promise<boolean> => {
     // With the connections to the server's other databases (§3.3).
     const family = connFamily(useStore.getState().connections, connId);
     if (!(await guardUnsaved(dirtyTabIds((tb) => tb.connId !== null && family.has(tb.connId))))) return false;
-    if (!disconnectConn(connId)) return false;
+    disconnectConn(connId);
     // Drop the introspection cache of THESE connections: the others stay
     // warm (keys ["...", connId, ...]).
     queryClient.removeQueries({ predicate: (q) => family.has(q.queryKey[1] as number) });
@@ -1580,15 +1595,14 @@ function StudioInner() {
                 <>
                 <button
                   className={"btn small" + (recArmed === page.connId ? " danger" : "")}
-                  disabled={anyRunning || forcing(page.connId)}
+                  disabled={forcing(page.connId)}
                   title={t("Reopens the SSH tunnel and server connections right away, without waiting for the drop to be noticed")}
-                  onClick={() => void reconnectConn(page.connId, !!page.txn?.hasWrites)}
+                  onClick={() => void reconnectConn(page.connId)}
                 >
-                  {recArmed === page.connId ? t("Uncommitted writes — confirm?") : t("Reconnect")}
+                  {(recArmed === page.connId && closeLoss(store, page.connId)) || t("Reconnect")}
                 </button>
                 <button
                   className={"btn small" + (discArmed ? " danger" : "")}
-                  disabled={anyRunning}
                   title={
                     pageWrites
                       ? t("The open transaction has uncommitted writes: disconnecting = ROLLBACK (§9.7.2)")
@@ -1598,9 +1612,10 @@ function StudioInner() {
                   }
                   onClick={() => {
                     const connId = pageRoot?.connId ?? page.connId;
-                    // §9.7.2: disconnecting with pending writes = lost work. It
-                    // must be said, not discovered: first click arms, second executes.
-                    if (pageWrites && !discArmed) {
+                    // §9.7.2: disconnecting with pending writes (or a running
+                    // query) = lost work. It must be said, not discovered:
+                    // first click arms, second executes.
+                    if (closeLoss(store, connId) !== null && !discArmed) {
                       setDiscArmed(true);
                       window.setTimeout(() => setDiscArmed(false), 4000);
                       return;
@@ -1609,7 +1624,7 @@ function StudioInner() {
                     void closeConn(connId);
                   }}
                 >
-                  {discArmed ? t("Uncommitted writes — confirm?") : t("Disconnect")}
+                  {(discArmed && closeLoss(store, pageRoot?.connId ?? page.connId)) || t("Disconnect")}
                 </button>
                 </>
               }
@@ -1632,11 +1647,11 @@ function StudioInner() {
                 />
               )}
               <div className="results-pane">
-                {escalate && anyRunning && (
+                {escalate && (
                   <div className="banner warn">
-                    {t("The server has not responded to the cancel request for 10 seconds.")}
-                    <button className="btn danger" onClick={() => void terminate()}>
-                      {t("Terminate connection")}
+                    {t("The query has not stopped on the server after 10 seconds.")}
+                    <button className="btn danger" disabled={terminating} onClick={() => void terminate()}>
+                      {terminating ? t("terminating…") : t("Terminate connection")}
                     </button>
                     <span className="banner-note">
                       {t(
@@ -1726,12 +1741,14 @@ function StudioInner() {
             ? t("connecting…")
             : !tab || tab.execState === "idle"
             ? t("ready")
+            : tabStopping
+            ? t("stopping on the server…")
             : tabPaused
               ? tabPaused.budgetByRows
                 ? t("paused — scroll for more rows")
                 : t("paused")
               : stateLabel(tab.execState, tab.running)}
-          {tabWorking && <Elapsed startedAt={tab.startedAt} prefix=" · " />}
+          {tabWorking && <Elapsed startedAt={tabStopping ? tab.stoppingSince ?? null : tab.startedAt} prefix=" · " />}
           {tabConnecting && !tabWorking && <Elapsed startedAt={reconnecting.startedAt} prefix=" · " />}
         </span>
         {sel && sel.resultId !== null && (
@@ -1755,8 +1772,7 @@ function StudioInner() {
         (() => {
           const c = store.connections.find((x) => x.connId === avMenu.connId);
           if (!c) return null;
-          const running = store.tabs.some((tb) => tb.running && rootConnId(store.connections, tb.connId) === c.connId);
-          const writes = familyWrites(store.connections, c.connId);
+          const loss = closeLoss(store, c.connId);
           return (
             <div
               className="tab-menu"
@@ -1766,32 +1782,27 @@ function StudioInner() {
               <div className="tab-menu-label">{c.profile.name}</div>
               <button
                 className="tab-menu-item"
-                disabled={running || forcing(c.connId)}
-                title={
-                  running
-                    ? t("Query running on this connection: cancel it first")
-                    : t("Reopens the SSH tunnel and server connections right away, without waiting for the drop to be noticed")
-                }
+                disabled={forcing(c.connId)}
+                title={t("Reopens the SSH tunnel and server connections right away, without waiting for the drop to be noticed")}
                 onClick={() => {
-                  if (reconnectConn(c.connId, !!c.txn?.hasWrites)) setAvMenu(null);
+                  if (reconnectConn(c.connId)) setAvMenu(null);
                 }}
               >
-                {recArmed === c.connId ? t("Uncommitted writes — confirm?") : t("Reconnect")}
+                {(recArmed === c.connId && loss) || t("Reconnect")}
               </button>
               <button
                 className="tab-menu-item"
-                disabled={running}
-                title={running ? t("Query running on this connection: cancel it first") : undefined}
                 onClick={() => {
-                  // §9.7.2: pending writes = lost work, the first click arms.
-                  if (writes && !avArmed) {
+                  // §9.7.2: pending writes or a running query = lost work,
+                  // the first click arms.
+                  if (loss !== null && !avArmed) {
                     setAvArmed(true);
                     return;
                   }
                   void closeConn(c.connId).then((done) => done && setAvMenu(null));
                 }}
               >
-                {avArmed ? t("Uncommitted writes — confirm?") : t("Disconnect")}
+                {(avArmed && loss) || t("Disconnect")}
               </button>
             </div>
           );
@@ -2238,6 +2249,10 @@ function badgeClass(st: StatementUi): string {
   return "";
 }
 
+/// Escalation of §7.2: how long Stop or Cancel may take before the
+/// termination of the connection is offered.
+const ESCALATE_AFTER_MS = 10_000;
+
 function stateLabel(state: string, running: boolean): string {
   if (running) return t("running…");
   switch (state) {
@@ -2261,8 +2276,12 @@ type WriteGate = {
   /// Offset of `sql` in the editor (see TabUi.execBase).
   base: number;
   firstWrite: boolean;
-  /// Snippets of the statements that cannot be undone, to list them plainly.
+  /// Snippets of the statements confirmed every time (§9.7 point 3): MySQL
+  /// DDL, TRUNCATE, DROP, SELECT … INTO OUTFILE.
   irreversible: string[];
+  /// Some of them are DDL: on a dialect without transactional DDL the dialog
+  /// says they also commit what was pending (§9.7.1).
+  irreversibleDdl: boolean;
   /// Prod with "Confirm schema changes" on (§16): the transactional DDL,
   /// listed apart from the irreversible ones because a Rollback undoes it.
   ddl: string[];
@@ -2270,8 +2289,8 @@ type WriteGate = {
   /// the server net should stop them if they write, but on prod the
   /// confirmation remains (§9.7.3).
   unknown: string[];
-  /// Non-prod profiles: UPDATE/DELETE without WHERE (on prod they are
-  /// listed among the irreversible ones).
+  /// UPDATE/DELETE without WHERE, on every profile: they change every row,
+  /// but a Rollback undoes them where a transaction is open.
   unfiltered: string[];
 };
 
@@ -2396,7 +2415,9 @@ function WriteGateDialog({
           )}
           {gate.irreversible.length > 0 && (
             <div className="banner warn gate-warn">
-              {t("Operations that can NOT be undone with Rollback:")}
+              {profile && transactionalDdl(profile.dialect)
+                ? t("Always confirmed, even with this transaction already open:")
+                : t("Operations that can NOT be undone with Rollback:")}
               <ul className="gate-list">
                 {gate.irreversible.map((s, i) => (
                   <li key={i} className="mono">
@@ -2404,7 +2425,7 @@ function WriteGateDialog({
                   </li>
                 ))}
               </ul>
-              {profile && !transactionalDdl(profile.dialect) && (
+              {gate.irreversibleDdl && profile && !transactionalDdl(profile.dialect) && (
                 <div className="banner-note">
                   {t("On {engine}, DDL implicitly commits anything still pending (§9.7.1).", {
                     engine: engineShortName(profile.dialect),

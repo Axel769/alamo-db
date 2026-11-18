@@ -4392,6 +4392,12 @@ select:focus-visible {
   gap: 10px;
 }
 
+/* The form scrolls as a whole: no child shrinks to fit (an error panel
+   would collapse to a strip, see .error-panel). */
+.form-scroll > * {
+  flex: none;
+}
+
 .connect-dialog .form-actions {
   flex: none;
   padding: 12px 18px;

@@ -640,6 +640,11 @@ Note: `sqlparser-rs` is a *strict* parser and fails on incomplete text → **it 
 suitable for autocomplete while typing**. Two different things are needed: a tolerant
 tokenizer on the frontend side for completion, and the robust splitter on the Rust side.
 
+The splitter and the classifier (§9.7.3) share one lexer, `alamo-core/src/lexer.rs`,
+with the lexical rules of each dialect (2026-11-18): `#`, `--`, nested comments,
+backslash, backtick, dollar-quoting and MySQL executable comments. A second scanner
+with its own rules would split one way and classify another.
+
 ---
 
 ## 7. Cancellation
@@ -686,7 +691,23 @@ Pending → Running → (Completed | Failed | Cancelling → Cancelled)
 - Two clicks = a single action (idempotence).
 - **Escalation**: first click → cancel/`KILL QUERY`; if after ~10s nothing happens,
   offer terminating the connection (`pg_terminate_backend`, `KILL CONNECTION`),
-  which is destructive and must be chosen deliberately.
+  which is destructive and must be chosen deliberately. The Stop of a paused
+  MySQL fetch (§11) escalates the same way: its `KILL QUERY` may not get through
+  either. Meanwhile the status bar says the query is stopping, not paused.
+  Terminating closes Alamo's side of the connection even when the `KILL`
+  fails: the stuck stream dies with it.
+- **Way out**: Reconnect and Disconnect are never disabled by a running query;
+  they say on the first click that it will be stopped, and the second confirms.
+  Both drop the execution's task (`Registry::abort_all`): on a server that
+  answers nothing, Cancel and Stop never reach the stream, and only dropping
+  it frees the lane and the connection. The task's guard still emits
+  `Finished` (`cancelled`), so the UI leaves "stopping", and the rows already
+  arrived stay, marked partial (§7.3). On a server that cannot be reached
+  Reconnect fails at the connect timeout and changes nothing; Disconnect always
+  works. mysql_async closes a dropped connection politely in a task of its own
+  (reads the rest of the result, then `COM_QUIT`): on a frozen server that
+  socket lingers until TCP gives up or the tunnel closes, and the query dies
+  with the `KILL` of `kill_abandoned` (Reconnect) or of the next connect.
 
 ### 7.3 Partial data
 
@@ -1377,6 +1398,13 @@ servers, where tables are dropped and recreated all day.
 **the estimate of affected rows derived from `EXPLAIN`**, which is free and does not require the
 `COUNT(*)` forbidden in §5.2.
 
+The dialog says why each statement is there, truthfully (2026-11-18): `UPDATE`/`DELETE`
+without `WHERE` are listed as such ("they change every row"), also on prod, because inside
+the prod transaction a Rollback undoes them; "can NOT be undone with Rollback" is kept for
+the dialects without transactional DDL, with the implicit-commit note only when one of the
+statements is DDL; on PG `DROP`/`TRUNCATE` read "always confirmed, even with this
+transaction already open", which is what point 3 does.
+
 #### 9.7.1 Trap 1 — in MySQL the manual commit is partly a fiction
 
 MySQL **has no transactional DDL**. `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`,
@@ -1436,6 +1464,39 @@ Mitigations, all necessary:
 **Conservative rule: if the statement cannot be classified with certainty, on a prod profile
 it counts as a write.**
 
+**`WITH` is followed, not guessed** (2026-11-18). A query written with CTEs is a read
+like any other, and treating every `WITH` as unknown asked to confirm a write before
+plain reports on prod and lit up Commit afterwards. The classifier reads the `WITH`
+list: name, optional columns, `AS [NOT] MATERIALIZED`, the body in parentheses, PG's
+`SEARCH`/`CYCLE`, then the final statement, and classifies each body and the final
+statement on their own.
+
+- All reads → read. The same `SELECT` without `WITH` was already a read, so nothing
+  that a plain `SELECT` could not already do gets through: functions with side
+  effects and `FOR UPDATE` are open gaps of `SELECT` itself.
+- A DML body (PG: `INSERT`/`UPDATE`/`DELETE`/`MERGE … RETURNING`) or DML final
+  statement (MySQL 8: `WITH … UPDATE`/`DELETE`) → write, with the `WHERE` checked
+  on each one: `WITH a AS (…) DELETE FROM t` is unfiltered and irreversible.
+  PG rejects data-modifying `WITH` below the top level, and neither dialect
+  accepts `(DELETE …)`, so a body or subquery that starts with a read cannot
+  hide a write.
+- Any other shape, any other kind of statement inside, nesting beyond 32 levels
+  and **any MySQL executable comment** (`WITH a AS (SELECT 1) /*! DELETE FROM t */`
+  deletes every row) → unknown.
+
+**A query with `INTO` at the top level is not a read** (2026-11-18), wherever the
+`INTO` sits (MySQL takes it after the select list, at the end, after a parenthesized
+query and after `TABLE t`). `INTO OUTFILE`/`DUMPFILE` is a write and irreversible:
+it leaves a file on the server that no Rollback removes, and a read-only session
+(`transaction_read_only`) does not stop it. `INTO @v` only assigns session variables
+and stays a read. Anything else is PG's `SELECT … INTO [TEMP|UNLOGGED] name`, a
+`CREATE TABLE AS`: DDL. Verified on the three servers, like the `WITH` cases.
+
+The text is read with the server's lexical rules (§6.5). Verified on PG 18, MySQL 8.0
+and MariaDB 11.8: `WITH a AS (SELECT 1 # 2), d AS (DELETE …` on PG and
+`WITH a AS (SELECT 1 --1) DELETE … /*` on MySQL delete every row, and with the other
+dialect's rules both would look like reads.
+
 ---
 
 ## 10. Introspection
@@ -1472,7 +1533,14 @@ and the UI must warn, not silently make an open transaction disappear.
 
 - TLS via `rustls`, with explicit handling of the `sslmode` modes
   (`alamo_core::tls`); what the user sees of it is §12.2.
-- SSH tunnel via `russh`.
+- SSH tunnel via `russh`. **One SSH session per forwarded connection**
+  (decided 2026-11-13), not one channel each on a shared session: russh
+  grants a channel's window on receipt, not on consumption, and delivers
+  every channel from one read loop, so a connection that stops reading — a
+  paused MySQL result, which the server keeps sending (§11) — stalled the
+  whole tunnel, the `KILL QUERY` that would stop it included. Cost: one
+  bastion login per database connection, paid once per lane. Key file,
+  known_hosts and saved fingerprint are read once when the tunnel opens.
 - **SSH profiles are a shared entity** (`ssh_profiles`, referenced by
   `profiles.ssh_profile_id`): a bastion is saved once and used by several
   connections, and so is its credential in the keychain. They are created,

@@ -422,7 +422,7 @@ impl Session {
             },
         )
         .await?;
-        let transactional_ddl = sticky.dialect().capabilities().transactional_ddl;
+        let rules = alamo_core::classify::Rules::from(&sticky.dialect().capabilities());
         Ok(Session {
             sticky: std::sync::RwLock::new(sticky),
             last_used: std::sync::Mutex::new(std::time::Instant::now()),
@@ -442,7 +442,7 @@ impl Session {
             manual_commit: std::sync::atomic::AtomicBool::new(production),
             read_only,
             txn: Arc::new(txn::TxnTracker::new(
-                transactional_ddl,
+                rules,
                 LimitsIn::default().idle_rollback,
             )),
             source_cache: std::sync::Mutex::new(HashMap::new()),
@@ -648,8 +648,8 @@ impl Session {
     /// is alive — with the network just back the check can wait minutes on
     /// a connection that died silently — and closes on the server the old
     /// one and the auxiliary ones, which reopen at first use (one being
-    /// reopened, slot busy, manages by itself). The caller rules out running
-    /// executions.
+    /// reopened, slot busy, manages by itself). Executions still running
+    /// end cancelled (`Registry::abort_all`).
     pub async fn force_reconnect(&self) -> Result<ReconnectOut, Box<DbError>> {
         let fresh = Self::open_lane(
             &*self.driver,
@@ -667,6 +667,9 @@ impl Session {
         .await?;
         let lost = self.txn.snapshot();
         let old = std::mem::replace(&mut *self.sticky.write().unwrap(), fresh.clone());
+        // A query still running (or stuck stopping) belonged to the old
+        // connections: it ends cancelled, the lanes are free again.
+        self.registry.abort_all();
         self.source_cache.lock().unwrap().clear();
         fresh.kill_abandoned(old.server_conn_id().as_slice()).await;
         for slot in [&self.introspect, &self.stats, &self.shared] {
@@ -1255,12 +1258,12 @@ impl Session {
 
     /// The app's own DDL may rename what the cache resolved.
     fn forget_sources_on_ddl(&self, sql: &str) {
-        use alamo_core::classify::{classify_statement, StatementClass};
+        use alamo_core::classify::{classify_statement, Rules, StatementClass};
         let caps = self.capabilities();
         let ddl = alamo_core::splitter::split_statements(sql, caps.backslash_escapes)
             .iter()
             .any(|stmt| {
-                classify_statement(&stmt.sql, caps.transactional_ddl).class == StatementClass::Ddl
+                classify_statement(&stmt.sql, Rules::from(&caps)).class == StatementClass::Ddl
             });
         if ddl {
             self.source_cache.lock().unwrap().clear();
@@ -1381,7 +1384,7 @@ impl Session {
             tracker: Arc::clone(&self.txn),
             begin_first: self.manual_commit() && !self.read_only && !self.txn.snapshot().open,
         };
-        tokio::spawn(exec::run_execution(
+        exec::spawn_execution(
             self.sticky(),
             Arc::clone(&self.registry),
             exec_id,
@@ -1393,7 +1396,7 @@ impl Session {
                 read_only_txn: self.read_only && self.capabilities().read_only_txn,
             },
             emit,
-        ));
+        );
         Ok(exec_id)
     }
 
@@ -1440,7 +1443,7 @@ impl Session {
                 ))
             })?;
         let emit: Emit = Arc::new(emit);
-        tokio::spawn(exec::run_execution(
+        exec::spawn_execution(
             shared,
             Arc::clone(&self.registry),
             exec_id,
@@ -1452,7 +1455,7 @@ impl Session {
                 read_only_txn,
             },
             emit,
-        ));
+        );
         Ok(exec_id)
     }
 
@@ -1695,7 +1698,7 @@ impl Session {
                 })?;
             (shared, exec_id, None)
         };
-        tokio::spawn(exec::run_execution(
+        exec::spawn_execution(
             conn,
             Arc::clone(&self.registry),
             exec_id,
@@ -1707,7 +1710,7 @@ impl Session {
                 read_only_txn: false,
             },
             emit,
-        ));
+        );
         Ok(exec_id)
     }
 
@@ -1761,15 +1764,16 @@ impl Session {
 
     fn check_read_only(&self, sql: &str) -> Result<(), Box<DbError>> {
         use alamo_core::classify::{
-            begins_or_ends_txn, classify_statement, disarms_read_only, is_dynamic_sql,
+            begins_or_ends_txn, classify_statement, disarms_read_only, is_dynamic_sql, Rules,
             StatementClass,
         };
         if !self.read_only {
             return Ok(());
         }
         let caps = self.capabilities();
+        let rules = Rules::from(&caps);
         for stmt in alamo_core::splitter::split_statements(sql, caps.backslash_escapes) {
-            let info = classify_statement(&stmt.sql, caps.transactional_ddl);
+            let info = classify_statement(&stmt.sql, rules);
             let snippet = || -> String { stmt.sql.trim().chars().take(60).collect() };
             if matches!(info.class, StatementClass::Write | StatementClass::Ddl) {
                 return Err(Box::new(DbError::internal(format!(
@@ -1777,20 +1781,20 @@ impl Session {
                     snippet()
                 ))));
             }
-            if info.class == StatementClass::Control && disarms_read_only(&stmt.sql) {
+            if info.class == StatementClass::Control && disarms_read_only(&stmt.sql, rules) {
                 return Err(Box::new(DbError::internal(format!(
                     "read-only profile: \"{}\" would disable the session's read-only mode",
                     snippet()
                 ))));
             }
-            if caps.read_only_txn && begins_or_ends_txn(&stmt.sql) {
+            if caps.read_only_txn && begins_or_ends_txn(&stmt.sql, rules) {
                 return Err(Box::new(DbError::internal(format!(
                     "read-only profile: every execution already runs in a read-only \
                      transaction opened and closed by Alamo, \"{}\" is not allowed",
                     snippet()
                 ))));
             }
-            if !caps.read_only_txn && is_dynamic_sql(&stmt.sql) {
+            if !caps.read_only_txn && is_dynamic_sql(&stmt.sql, rules) {
                 return Err(Box::new(DbError::internal(format!(
                     "read-only profile: \"{}\" is dynamic SQL, which could \
                      disable read-only mode without being recognised",

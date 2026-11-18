@@ -13,16 +13,25 @@ import { connById, stickyRunningTab, useStore } from "./store";
 export async function freeSticky(connId: number): Promise<string | null> {
   const busy = stickyRunningTab(useStore.getState(), connId);
   if (!busy) return null;
-  if (busy.execId === null || !busy.statements.some((x) => x.budgetPaused)) {
+  const paused = busy.statements.some((x) => x.budgetPaused);
+  if (busy.execId === null || (!paused && !busy.stoppingSince)) {
     return t("“{tab}” is still running a query on this connection: wait for it or press Cancel.", {
       tab: busy.title,
     });
   }
-  void ipc.budgetStop(connId, busy.execId);
+  if (paused) stopExecution(connId, busy.execId, "stop");
   if (await storeUntil((st) => !stickyRunningTab(st, connId), 5000)) return null;
-  return t("The paused query in “{tab}” is still stopping on the server: try again in a moment.", {
+  return t("The query in “{tab}” is still stopping on the server: try again in a moment.", {
     tab: busy.title,
   });
+}
+
+/// Stop (a paused fetch ends, its rows stay) or Cancel (§7) of an
+/// execution on the sticky: the store notes it at once, so the status bar
+/// says it is stopping until the server lets go.
+export function stopExecution(connId: number, execId: number, how: "stop" | "cancel"): void {
+  useStore.getState().markStopping(connId, execId);
+  void (how === "stop" ? ipc.budgetStop(connId, execId) : ipc.cancel(connId, execId));
 }
 
 /// Before a grid save: in manual commit (always on prod, §9.7) the batch

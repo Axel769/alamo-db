@@ -1,16 +1,39 @@
 //! Conservative statement classification — §9.7.3.
 //!
 //! Rule: **if the statement cannot be classified with certainty, on a prod
-//! profile it counts as a write**. The known traps (`WITH … DELETE … RETURNING`
-//! that starts with `WITH` and writes, opaque `CALL`, `EXPLAIN ANALYZE` that
-//! really executes) end up in `Unknown`, which the gates treat as a write. No
-//! attempt is made here to write an SQL parser: only leading keywords after
-//! comments, plus a scan of the literals for the `WHERE`.
+//! profile it counts as a write**. The known traps (opaque `CALL`, `EXPLAIN
+//! ANALYZE` that really executes) end up in `Unknown`, which the gates treat
+//! as a write. No attempt is made here to write an SQL parser: leading
+//! keywords, the `WITH` list (each CTE body and the statement after it) and a
+//! scan of the top-level words for the `WHERE`, all on the dialect's own
+//! tokens (`lexer`) — reading the text with the wrong rules can turn a write
+//! into a read.
 //!
 //! Transaction control (`BEGIN`/`COMMIT`/`ROLLBACK`) on the other hand IS
 //! classifiable from the keyword: no statement starts with `WITH` and turns
 //! into a `BEGIN`. It serves the client-side tracking of the transaction state
 //! on PG, where tokio-postgres does not expose the ReadyForQuery status.
+
+use crate::dialect::Capabilities;
+use crate::lexer::{tokens, Token, TokenKind};
+
+/// What classification needs from the dialect (§2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rules {
+    /// DDL can be rolled back (PG): otherwise every DDL is irreversible.
+    pub transactional_ddl: bool,
+    /// MySQL lexical rules (`lexer::tokens`).
+    pub backslash_escapes: bool,
+}
+
+impl From<&Capabilities> for Rules {
+    fn from(caps: &Capabilities) -> Self {
+        Rules {
+            transactional_ddl: caps.transactional_ddl,
+            backslash_escapes: caps.backslash_escapes,
+        }
+    }
+}
 
 /// Classification outcome, for the gates of §9.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,12 +86,34 @@ pub enum TxnControl {
     Savepoint,
 }
 
-pub fn classify_statement(sql: &str, transactional_ddl: bool) -> StatementInfo {
-    let words = leading_words(sql, 4);
+const UNKNOWN: StatementInfo = StatementInfo {
+    class: StatementClass::Unknown,
+    irreversible: false,
+    unfiltered: false,
+};
+
+/// Nesting (CTE bodies, parentheses) beyond which the statement is not
+/// followed further: `Unknown`, rather than a stack overflow on generated SQL.
+const MAX_DEPTH: u32 = 32;
+
+pub fn classify_statement(sql: &str, rules: Rules) -> StatementInfo {
+    let toks: Vec<Token> = tokens(sql, rules.backslash_escapes).collect();
+    classify_tokens(sql, &toks, rules, 0)
+}
+
+fn classify_tokens(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> StatementInfo {
+    if depth > MAX_DEPTH {
+        return UNKNOWN;
+    }
+    if toks.first().is_some_and(|t| t.is_symbol(sql, b'(')) {
+        return classify_parenthesized(sql, toks, rules, depth);
+    }
+    let words = leading_words(sql, toks, 2);
     let first = words.first().map(String::as_str).unwrap_or("");
     let second = words.get(1).map(String::as_str).unwrap_or("");
 
     let class = match first {
+        "with" => return classify_with(sql, toks, rules, depth).unwrap_or(UNKNOWN),
         "select" | "show" | "table" | "values" | "fetch" | "describe" | "desc" => {
             StatementClass::Read
         }
@@ -91,12 +136,18 @@ pub fn classify_statement(sql: &str, transactional_ddl: bool) -> StatementInfo {
         _ => StatementClass::Unknown,
     };
 
-    let unfiltered = matches!(first, "update" | "delete") && !has_top_level_keyword(sql, "where");
+    let unfiltered =
+        matches!(first, "update" | "delete") && !has_top_level_keyword(sql, toks, "where");
     let irreversible = match first {
         "truncate" | "drop" => true,
         "update" | "delete" => unfiltered,
-        _ => class == StatementClass::Ddl && !transactional_ddl,
+        _ => class == StatementClass::Ddl && !rules.transactional_ddl,
     };
+    if matches!(first, "select" | "table" | "values") {
+        if let Some(into) = select_into(sql, toks, rules) {
+            return into;
+        }
+    }
 
     StatementInfo {
         class,
@@ -105,10 +156,180 @@ pub fn classify_statement(sql: &str, transactional_ddl: bool) -> StatementInfo {
     }
 }
 
+/// A query with `INTO` at the top level is not a read (§9.7.3), wherever
+/// the `INTO` sits (MySQL accepts it after the select list, at the end and
+/// after a parenthesized query):
+/// - `INTO OUTFILE`/`DUMPFILE` writes a file on the server, which no
+///   Rollback removes;
+/// - `INTO @v` only assigns MySQL session variables: `None`, still a read;
+/// - anything else is PG's `SELECT … INTO [TEMP|UNLOGGED] [TABLE] name`, a
+///   `CREATE TABLE AS` (on MySQL that form is a syntax error).
+fn select_into(sql: &str, toks: &[Token], rules: Rules) -> Option<StatementInfo> {
+    let mut depth = 0usize;
+    let at = toks.iter().position(|t| {
+        if t.is_symbol(sql, b'(') {
+            depth += 1;
+        } else if t.is_symbol(sql, b')') {
+            depth = depth.saturating_sub(1);
+        }
+        depth == 0 && t.is_word(sql, "into")
+    })?;
+    let target = toks.get(at + 1)?;
+    if target.is_symbol(sql, b'@') {
+        None
+    } else if target.is_word(sql, "outfile") || target.is_word(sql, "dumpfile") {
+        Some(StatementInfo {
+            class: StatementClass::Write,
+            irreversible: true,
+            unfiltered: false,
+        })
+    } else {
+        Some(StatementInfo {
+            class: StatementClass::Ddl,
+            irreversible: !rules.transactional_ddl,
+            unfiltered: false,
+        })
+    }
+}
+
+/// `(SELECT …) UNION (SELECT …)`: a query expression, never DML — neither
+/// dialect accepts `(DELETE …)`, and on PG a data-modifying `WITH` must be
+/// at the top level. A read if the first group is one (and no `INTO`
+/// follows, `select_into`), otherwise unknown.
+fn classify_parenthesized(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> StatementInfo {
+    match closing_paren(sql, toks, 0) {
+        Some(close)
+            if classify_tokens(sql, &toks[1..close], rules, depth + 1).class
+                == StatementClass::Read =>
+        {
+            select_into(sql, toks, rules).unwrap_or(StatementInfo {
+                class: StatementClass::Read,
+                irreversible: false,
+                unfiltered: false,
+            })
+        }
+        _ => UNKNOWN,
+    }
+}
+
+/// `WITH [RECURSIVE] name [(cols)] AS [[NOT] MATERIALIZED] (body)
+/// [SEARCH … SET col] [CYCLE … USING col], … statement` (§9.7.3).
+///
+/// A read only if every CTE body and the final statement are reads: on PG a
+/// body can be `INSERT`/`UPDATE`/`DELETE`/`MERGE … RETURNING` and it writes;
+/// MySQL 8 accepts `WITH … UPDATE`/`DELETE`. A DML body or statement makes
+/// it a write, with the `WHERE` checked on each of them. Anything else, or a
+/// shape not recognised here, is `None` (unknown).
+fn classify_with(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> Option<StatementInfo> {
+    // A MySQL executable comment is read by the server only:
+    // `WITH a AS (SELECT 1) /*! DELETE FROM t */` deletes every row.
+    if toks.iter().any(|t| t.kind == TokenKind::Code) {
+        return None;
+    }
+    let is_word = |i: usize, kw: &str| toks.get(i).is_some_and(|t| t.is_word(sql, kw));
+    let is_symbol = |i: usize, s: u8| toks.get(i).is_some_and(|t| t.is_symbol(sql, s));
+    let is_name = |i: usize| {
+        toks.get(i)
+            .is_some_and(|t| matches!(t.kind, TokenKind::Word | TokenKind::Quoted))
+    };
+
+    let mut parts = Vec::new();
+    let mut i = 1;
+    if is_word(i, "recursive") {
+        i += 1;
+    }
+    loop {
+        if !is_name(i) {
+            return None;
+        }
+        i += 1;
+        if is_symbol(i, b'(') {
+            // Column list: names and commas only.
+            let close = closing_paren(sql, toks, i)?;
+            if !(i + 1..close).all(|j| is_name(j) || is_symbol(j, b',')) {
+                return None;
+            }
+            i = close + 1;
+        }
+        if !is_word(i, "as") {
+            return None;
+        }
+        i += 1;
+        if is_word(i, "not") {
+            i += 1;
+        }
+        if is_word(i, "materialized") {
+            i += 1;
+        }
+        if !is_symbol(i, b'(') {
+            return None;
+        }
+        let close = closing_paren(sql, toks, i)?;
+        parts.push(classify_tokens(sql, &toks[i + 1..close], rules, depth + 1));
+        i = close + 1;
+        // PG 14: `SEARCH … FIRST BY cols SET col`, `CYCLE cols SET col
+        // [TO v DEFAULT v] USING col`. Names, commas and literals only.
+        while let Some(last) = ["search", "cycle"]
+            .iter()
+            .position(|kw| is_word(i, kw))
+            .map(|p| ["set", "using"][p])
+        {
+            while !is_word(i, last) {
+                if toks.get(i)?.kind == TokenKind::Code || is_symbol(i, b'(') {
+                    return None;
+                }
+                i += 1;
+            }
+            if !is_name(i + 1) {
+                return None;
+            }
+            i += 2;
+        }
+        if !is_symbol(i, b',') {
+            break;
+        }
+        i += 1;
+    }
+    if i >= toks.len() {
+        return None;
+    }
+    parts.push(classify_tokens(sql, &toks[i..], rules, depth + 1));
+
+    let mut class = StatementClass::Read;
+    for part in &parts {
+        match part.class {
+            StatementClass::Read => {}
+            StatementClass::Write => class = StatementClass::Write,
+            _ => return None,
+        }
+    }
+    Some(StatementInfo {
+        class,
+        irreversible: parts.iter().any(|p| p.irreversible),
+        unfiltered: parts.iter().any(|p| p.unfiltered),
+    })
+}
+
+/// Index of the `)` closing the `(` at `open`.
+fn closing_paren(sql: &str, toks: &[Token], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (j, t) in toks.iter().enumerate().skip(open) {
+        if t.is_symbol(sql, b'(') {
+            depth += 1;
+        } else if t.is_symbol(sql, b')') {
+            depth -= 1;
+            if depth == 0 {
+                return Some(j);
+            }
+        }
+    }
+    None
+}
+
 /// Effect on the transaction state, if the statement is txn control.
 /// `None` = it is not transaction control (or it is `SET`/`USE`/…).
-pub fn txn_control(sql: &str) -> Option<TxnControl> {
-    let words = leading_words(sql, 4);
+pub fn txn_control(sql: &str, rules: Rules) -> Option<TxnControl> {
+    let words = first_words(sql, rules, 4);
     let mut it = words.iter().map(String::as_str);
     let first = it.next()?;
     // WORK/TRANSACTION are syntactic noise: `COMMIT WORK AND CHAIN`,
@@ -134,69 +355,25 @@ pub fn txn_control(sql: &str) -> Option<TxnControl> {
     }
 }
 
-/// First `n` words (lowercase) of the statement, skipping whitespace and
-/// comments (`--`, MySQL's `#`, nested `/* */`). A non-word token (e.g. `(`)
-/// is returned as a string of its own and stops the collection.
-fn leading_words(sql: &str, n: usize) -> Vec<String> {
-    let bytes = sql.as_bytes();
+fn first_words(sql: &str, rules: Rules, n: usize) -> Vec<String> {
+    let toks: Vec<Token> = tokens(sql, rules.backslash_escapes).take(n).collect();
+    leading_words(sql, &toks, n)
+}
+
+/// First `n` words (lowercase). A token that is not a word (e.g. `(`) is
+/// returned as its first character and stops the collection.
+fn leading_words(sql: &str, toks: &[Token], n: usize) -> Vec<String> {
     let mut out = Vec::new();
-    let mut i = 0usize;
-    while out.len() < n {
-        i = skip_ws_and_comments(bytes, i);
-        if i >= bytes.len() {
-            break;
-        }
-        let b = bytes[i];
-        if b.is_ascii_alphabetic() || b == b'_' {
-            let start = i;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
-            {
-                i += 1;
-            }
-            out.push(sql[start..i].to_ascii_lowercase());
+    for t in toks.iter().take(n) {
+        let text = t.text(sql);
+        if t.kind == TokenKind::Word {
+            out.push(text.to_ascii_lowercase());
         } else {
-            // `(SELECT …)`, numbers, etc.: opaque token, stop here.
-            out.push((b as char).to_string());
+            out.extend(text.chars().next().map(String::from));
             break;
         }
     }
     out
-}
-
-fn skip_ws_and_comments(bytes: &[u8], mut i: usize) -> usize {
-    loop {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-        } else if i < bytes.len() && bytes[i] == b'#' {
-            // MySQL line comment (§6.5: the splitter does not split on it, but
-            // here skipping it is enough to read the real keyword).
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-        } else if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let mut depth = 1u32;
-            i += 2;
-            while i < bytes.len() && depth > 0 {
-                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                    depth += 1;
-                    i += 2;
-                } else if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                    depth -= 1;
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-        } else {
-            return i;
-        }
-    }
 }
 
 /// Would the control statement disable the server-side read-only net (§9.7
@@ -209,8 +386,9 @@ fn skip_ws_and_comments(bytes: &[u8], mut i: usize) -> usize {
 /// comments, false positives acceptable (e.g. `SET search_path = read,
 /// write` — blocking a harmless SET on a read-only profile does no harm,
 /// letting the disarm through does).
-pub fn disarms_read_only(sql: &str) -> bool {
-    let first = leading_words(sql, 1);
+pub fn disarms_read_only(sql: &str, rules: Rules) -> bool {
+    let toks: Vec<Token> = tokens(sql, rules.backslash_escapes).collect();
+    let first = leading_words(sql, &toks, 1);
     let first = first.first().map(String::as_str).unwrap_or("");
     if !matches!(first, "set" | "reset" | "begin" | "start") {
         return false;
@@ -222,21 +400,21 @@ pub fn disarms_read_only(sql: &str) -> bool {
     if lower.contains("transaction_read_only") || lower.contains("tx_read_only") {
         return true;
     }
-    let mut prev = String::new();
-    let mut found = false;
-    scan_top_level_words(sql, |w| {
-        // The net's variables, per dialect: PG (default_…), MySQL
-        // (transaction_…), MariaDB (tx_…). `RESET` brings them back to the
-        // server's config default (off), so it disarms as much as SET does;
-        // `RESET ALL` wipes them all. `READ WRITE` covers `BEGIN`/`START
-        // TRANSACTION` and `SET [SESSION CHARACTERISTICS AS] TRANSACTION`.
-        if (first == "reset" && w == "all") || (prev == "read" && w == "write") {
-            found = true;
-        }
-        prev = w.to_owned();
-        found
-    });
-    found
+    // MySQL executable comment: `START TRANSACTION /*! READ WRITE */` is
+    // read by the server and not here.
+    if toks.iter().any(|t| t.kind == TokenKind::Code) {
+        return true;
+    }
+    // The net's variables, per dialect: PG (default_…), MySQL
+    // (transaction_…), MariaDB (tx_…). `RESET` brings them back to the
+    // server's config default (off), so it disarms as much as SET does;
+    // `RESET ALL` wipes them all. `READ WRITE` covers `BEGIN`/`START
+    // TRANSACTION` and `SET [SESSION CHARACTERISTICS AS] TRANSACTION`.
+    let words = top_level_words(sql, &toks);
+    words
+        .iter()
+        .zip(words.iter().skip(1))
+        .any(|(prev, w)| (first == "reset" && *w == "all") || (*prev == "read" && *w == "write"))
 }
 
 /// Would the statement open or close the current transaction? `BEGIN`,
@@ -244,22 +422,22 @@ pub fn disarms_read_only(sql: &str) -> bool {
 /// It serves read-only mode on PG, where every execution runs inside an
 /// app-owned READ ONLY transaction: leaving it would reopen the way to
 /// disarming with `set_config`.
-pub fn begins_or_ends_txn(sql: &str) -> bool {
+pub fn begins_or_ends_txn(sql: &str, rules: Rules) -> bool {
     if matches!(
-        txn_control(sql),
+        txn_control(sql, rules),
         Some(TxnControl::Begin | TxnControl::End { .. })
     ) {
         return true;
     }
-    let words = leading_words(sql, 2);
+    let words = first_words(sql, rules, 2);
     words.first().map(String::as_str) == Some("prepare")
         && words.get(1).map(String::as_str) == Some("transaction")
 }
 
 /// MySQL dynamic SQL (`PREPARE`/`EXECUTE`): the text the server executes
 /// never goes through the classifier.
-pub fn is_dynamic_sql(sql: &str) -> bool {
-    let words = leading_words(sql, 1);
+pub fn is_dynamic_sql(sql: &str, rules: Rules) -> bool {
+    let words = first_words(sql, rules, 1);
     matches!(
         words.first().map(String::as_str),
         Some("prepare" | "execute")
@@ -339,143 +517,51 @@ pub fn explainable(sql: &str) -> bool {
     )
 }
 
-/// Does the keyword appear outside strings, quoted identifiers (double quotes
-/// and backticks), dollar-quoting, comments **and parentheses**? Conservative
-/// scanner for detecting `UPDATE`/`DELETE` without `WHERE`.
+/// Does the keyword appear at parenthesis depth 0 of the tokens? Used for
+/// detecting `UPDATE`/`DELETE` without `WHERE`.
 ///
 /// Parenthesis depth matters: a `WHERE` inside a subquery
 /// (`DELETE FROM t RETURNING (SELECT 1 WHERE true)`) does not restrict the
 /// DELETE, and counting it would make a statement "reversible" when it is not
 /// — anti-conservative with respect to §9.7.
-fn has_top_level_keyword(sql: &str, keyword: &str) -> bool {
-    let mut found = false;
-    scan_top_level_words(sql, |w| {
-        if w.eq_ignore_ascii_case(keyword) {
-            found = true;
-        }
-        found
-    });
-    found
+fn has_top_level_keyword(sql: &str, toks: &[Token], keyword: &str) -> bool {
+    top_level_words(sql, toks).iter().any(|w| *w == keyword)
 }
 
-/// Scans the words at parenthesis depth 0, outside strings, quoted
-/// identifiers, dollar-quoting and comments, and hands them (already
-/// lowercase) to `f`; `f` returning `true` stops the scan. Common base of
-/// `has_top_level_keyword` and `disarms_read_only`.
-fn scan_top_level_words(sql: &str, mut f: impl FnMut(&str) -> bool) {
-    let bytes = sql.as_bytes();
-    let mut i = 0usize;
+/// The words at parenthesis depth 0, lowercase. Strings, quoted identifiers
+/// and comments are not words (`lexer`).
+fn top_level_words(sql: &str, toks: &[Token]) -> Vec<String> {
     let mut depth = 0usize;
-    while i < bytes.len() {
-        i = skip_ws_and_comments(bytes, i);
-        if i >= bytes.len() {
-            break;
-        }
-        match bytes[i] {
-            b'\'' => {
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == b'\'' {
-                        // '' = doubled quote inside the string.
-                        if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
-                            i += 2;
-                        } else {
-                            i += 1;
-                            break;
-                        }
-                    } else if bytes[i] == b'\\' {
-                        // Conservative: backslash escapes (MySQL default,
-                        // PG E'' strings). On standard PG it skips one extra
-                        // character inside the string: harmless.
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-            b'"' | b'`' => {
-                let q = bytes[i];
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == q {
-                        if i + 1 < bytes.len() && bytes[i + 1] == q {
-                            i += 2;
-                        } else {
-                            i += 1;
-                            break;
-                        }
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-            b'$' => {
-                // Dollar-quoting `$$` or `$tag$`; `$1` (placeholder) is not.
-                if let Some(tag_len) = dollar_tag(bytes, i) {
-                    let tag = &bytes[i..i + tag_len];
-                    i += tag_len;
-                    while i < bytes.len() {
-                        if bytes[i] == b'$' && bytes[i..].starts_with(tag) {
-                            i += tag_len;
-                            break;
-                        }
-                        i += 1;
-                    }
-                } else {
-                    i += 1;
-                }
-            }
-            b'(' => {
-                depth += 1;
-                i += 1;
-            }
-            b')' => {
-                // saturating: an unmatched `)` (malformed SQL) must neither
-                // underflow nor make the rest look top-level.
-                depth = depth.saturating_sub(1);
-                i += 1;
-            }
-            b if b.is_ascii_alphabetic() || b == b'_' => {
-                let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
-                {
-                    i += 1;
-                }
-                if depth == 0 && f(&sql[start..i].to_ascii_lowercase()) {
-                    return;
-                }
-            }
-            _ => i += 1,
+    let mut out = Vec::new();
+    for t in toks {
+        if t.is_symbol(sql, b'(') {
+            depth += 1;
+        } else if t.is_symbol(sql, b')') {
+            // saturating: an unmatched `)` (malformed SQL) must neither
+            // underflow nor make the rest look top-level.
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 && t.kind == TokenKind::Word {
+            out.push(t.text(sql).to_ascii_lowercase());
         }
     }
-}
-
-/// Opening `$…$` starting at `i` (which points to `$`): length of the tag
-/// including the two `$`, or `None` if it is not a tag (e.g. placeholder `$1`).
-fn dollar_tag(bytes: &[u8], i: usize) -> Option<usize> {
-    let mut j = i + 1;
-    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
-        // `$1` placeholders have digits only: if we meet a digit as the first
-        // character and then not a `$`, it is not a tag. The exact distinction
-        // is made by the final check on the closing `$`.
-        j += 1;
-    }
-    if j < bytes.len() && bytes[j] == b'$' {
-        // `$1$` would in any case be a valid tag in PG only if non-numeric;
-        // conservative: accepting it at most skips more text.
-        Some(j - i + 1)
-    } else {
-        None
-    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const PG: Rules = Rules {
+        transactional_ddl: true,
+        backslash_escapes: false,
+    };
+    const MY: Rules = Rules {
+        transactional_ddl: false,
+        backslash_escapes: true,
+    };
+
     fn class(sql: &str) -> StatementClass {
-        classify_statement(sql, true).class
+        classify_statement(sql, PG).class
     }
 
     #[test]
@@ -486,7 +572,10 @@ mod tests {
             StatementClass::Read
         );
         assert_eq!(class("/* x /* y */ */ SHOW TABLES"), StatementClass::Read);
-        assert_eq!(class("# mysql comment\nSELECT 1"), StatementClass::Read);
+        assert_eq!(
+            classify_statement("# mysql comment\nSELECT 1", MY).class,
+            StatementClass::Read
+        );
         assert_eq!(class("EXPLAIN SELECT * FROM t"), StatementClass::Read);
         assert_eq!(class("EXPLAIN UPDATE t SET a=1"), StatementClass::Read);
     }
@@ -496,7 +585,7 @@ mod tests {
         // §9.7.3: WITH that writes, opaque CALL, EXPLAIN ANALYZE that executes.
         assert_eq!(
             class("WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x"),
-            StatementClass::Unknown
+            StatementClass::Write
         );
         assert_eq!(class("CALL empty_table()"), StatementClass::Unknown);
         assert_eq!(
@@ -523,71 +612,91 @@ mod tests {
     #[test]
     fn irreversible_statements() {
         // TRUNCATE/DROP always, even with transactional DDL (spec §9.7).
-        assert!(classify_statement("TRUNCATE t", true).irreversible);
-        assert!(classify_statement("DROP TABLE t", true).irreversible);
+        assert!(classify_statement("TRUNCATE t", PG).irreversible);
+        assert!(classify_statement("DROP TABLE t", PG).irreversible);
         // Generic DDL: depends on the dialect.
-        assert!(!classify_statement("ALTER TABLE t ADD c int", true).irreversible);
-        assert!(classify_statement("ALTER TABLE t ADD c int", false).irreversible);
+        assert!(!classify_statement("ALTER TABLE t ADD c int", PG).irreversible);
+        assert!(classify_statement("ALTER TABLE t ADD c int", MY).irreversible);
         // UPDATE/DELETE without WHERE.
-        assert!(classify_statement("DELETE FROM t", true).irreversible);
-        assert!(classify_statement("DELETE FROM t", true).unfiltered);
-        assert!(!classify_statement("DELETE FROM t WHERE id = 1", true).unfiltered);
-        assert!(!classify_statement("DROP TABLE t", true).unfiltered);
-        assert!(!classify_statement("DELETE FROM t WHERE id = 1", true).irreversible);
+        assert!(classify_statement("DELETE FROM t", PG).irreversible);
+        assert!(classify_statement("DELETE FROM t", PG).unfiltered);
+        assert!(!classify_statement("DELETE FROM t WHERE id = 1", PG).unfiltered);
+        assert!(!classify_statement("DROP TABLE t", PG).unfiltered);
+        assert!(!classify_statement("DELETE FROM t WHERE id = 1", PG).irreversible);
         // A WHERE inside a string does not count.
-        assert!(classify_statement("UPDATE t SET note = 'no where'", true).irreversible);
+        assert!(classify_statement("UPDATE t SET note = 'no where'", PG).irreversible);
         // ...nor inside dollar-quoting.
-        assert!(classify_statement("UPDATE t SET f = $$ where $$", true).irreversible);
+        assert!(classify_statement("UPDATE t SET f = $$ where $$", PG).irreversible);
         // ...nor inside a quoted identifier.
-        assert!(classify_statement("UPDATE t SET \"where\" = 1", true).irreversible);
-        assert!(classify_statement("UPDATE t SET `where` = 1", false).irreversible);
+        assert!(classify_statement("UPDATE t SET \"where\" = 1", PG).irreversible);
+        assert!(classify_statement("UPDATE t SET `where` = 1", MY).irreversible);
         // ...nor inside a parenthesized subquery: the WHERE does not restrict
         // the outer DELETE (§9.7, the opposite would be anti-conservative).
         assert!(
-            classify_statement("DELETE FROM t RETURNING (SELECT 1 WHERE true)", true).irreversible
+            classify_statement("DELETE FROM t RETURNING (SELECT 1 WHERE true)", PG).irreversible
         );
         assert!(
-            classify_statement("UPDATE t SET a = (SELECT b FROM u WHERE u.id = 1)", true)
+            classify_statement("UPDATE t SET a = (SELECT b FROM u WHERE u.id = 1)", PG)
                 .irreversible
         );
         // A WHERE at depth 0 is still recognized even with subqueries.
         assert!(
-            !classify_statement("DELETE FROM t WHERE id IN (SELECT id FROM u)", true).irreversible
+            !classify_statement("DELETE FROM t WHERE id IN (SELECT id FROM u)", PG).irreversible
         );
     }
 
     #[test]
     fn read_only_disarming() {
         // SET/RESET on the net's variables, per dialect.
-        assert!(disarms_read_only("SET default_transaction_read_only = off"));
-        assert!(disarms_read_only("SET SESSION transaction_read_only = 0"));
-        assert!(disarms_read_only("set @@session.transaction_read_only = 0"));
-        assert!(disarms_read_only("SET tx_read_only = 0"));
-        assert!(disarms_read_only("RESET default_transaction_read_only"));
-        assert!(disarms_read_only("RESET ALL"));
-        // Transaction explicitly opened READ WRITE.
-        assert!(disarms_read_only("BEGIN READ WRITE"));
-        assert!(disarms_read_only("START TRANSACTION READ WRITE"));
-        assert!(disarms_read_only("SET TRANSACTION READ WRITE"));
         assert!(disarms_read_only(
-            "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE"
+            "SET default_transaction_read_only = off",
+            MY
+        ));
+        assert!(disarms_read_only(
+            "SET SESSION transaction_read_only = 0",
+            MY
+        ));
+        assert!(disarms_read_only(
+            "set @@session.transaction_read_only = 0",
+            MY
+        ));
+        assert!(disarms_read_only("SET tx_read_only = 0", MY));
+        assert!(disarms_read_only("RESET default_transaction_read_only", MY));
+        assert!(disarms_read_only("RESET ALL", MY));
+        // Transaction explicitly opened READ WRITE.
+        assert!(disarms_read_only("BEGIN READ WRITE", MY));
+        assert!(disarms_read_only("START TRANSACTION READ WRITE", MY));
+        assert!(disarms_read_only("SET TRANSACTION READ WRITE", MY));
+        assert!(disarms_read_only(
+            "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+            MY
         ));
         // Harmless control: passes.
-        assert!(!disarms_read_only("BEGIN"));
-        assert!(!disarms_read_only("START TRANSACTION READ ONLY"));
-        assert!(!disarms_read_only("SET search_path = public"));
-        assert!(!disarms_read_only("SET statement_timeout = '5s'"));
-        assert!(!disarms_read_only("COMMIT"));
+        assert!(!disarms_read_only("BEGIN", MY));
+        assert!(!disarms_read_only("START TRANSACTION READ ONLY", MY));
+        assert!(!disarms_read_only("SET search_path = public", MY));
+        assert!(!disarms_read_only("SET statement_timeout = '5s'", MY));
+        assert!(!disarms_read_only("COMMIT", MY));
         // Non-control: never, even if it contains the words.
-        assert!(!disarms_read_only("SELECT 'SET transaction_read_only = 0'"));
+        assert!(!disarms_read_only(
+            "SELECT 'SET transaction_read_only = 0'",
+            MY
+        ));
         // Keywords inside a string do not count.
-        assert!(!disarms_read_only("SET application_name = 'read write'"));
+        assert!(!disarms_read_only(
+            "SET application_name = 'read write'",
+            MY
+        ));
         // The variable name in double quotes or backticks is the same
         // variable.
         assert!(disarms_read_only(
-            "SET \"default_transaction_read_only\" = off"
+            "SET \"default_transaction_read_only\" = off",
+            PG
         ));
-        assert!(disarms_read_only("SET SESSION `transaction_read_only` = 0"));
+        assert!(disarms_read_only(
+            "SET SESSION `transaction_read_only` = 0",
+            MY
+        ));
     }
 
     #[test]
@@ -603,7 +712,7 @@ mod tests {
             "PREPARE TRANSACTION 'x'",
             "COMMIT PREPARED 'x'",
         ] {
-            assert!(begins_or_ends_txn(s), "{s}");
+            assert!(begins_or_ends_txn(s, PG), "{s}");
         }
         for s in [
             "SAVEPOINT a",
@@ -612,57 +721,63 @@ mod tests {
             "PREPARE q AS SELECT 1",
             "SELECT 1",
         ] {
-            assert!(!begins_or_ends_txn(s), "{s}");
+            assert!(!begins_or_ends_txn(s, PG), "{s}");
         }
     }
 
     #[test]
     fn dynamic_sql() {
-        assert!(is_dynamic_sql("PREPARE s FROM 'SET x = 1'"));
-        assert!(is_dynamic_sql("execute s"));
-        assert!(!is_dynamic_sql("DEALLOCATE PREPARE s"));
-        assert!(!is_dynamic_sql("SELECT 1"));
+        assert!(is_dynamic_sql("PREPARE s FROM 'SET x = 1'", MY));
+        assert!(is_dynamic_sql("execute s", MY));
+        assert!(!is_dynamic_sql("DEALLOCATE PREPARE s", MY));
+        assert!(!is_dynamic_sql("SELECT 1", MY));
     }
 
     #[test]
     fn transaction_control() {
-        assert_eq!(txn_control("BEGIN"), Some(TxnControl::Begin));
-        assert_eq!(txn_control("begin work"), Some(TxnControl::Begin));
+        assert_eq!(txn_control("BEGIN", PG), Some(TxnControl::Begin));
+        assert_eq!(txn_control("begin work", PG), Some(TxnControl::Begin));
         assert_eq!(
-            txn_control("START TRANSACTION READ ONLY"),
+            txn_control("START TRANSACTION READ ONLY", PG),
             Some(TxnControl::Begin)
         );
         assert_eq!(
-            txn_control("COMMIT"),
-            Some(TxnControl::End { chain: false })
-        );
-        assert_eq!(txn_control("END"), Some(TxnControl::End { chain: false }));
-        assert_eq!(
-            txn_control("COMMIT WORK AND CHAIN"),
-            Some(TxnControl::End { chain: true })
-        );
-        assert_eq!(
-            txn_control("ROLLBACK"),
+            txn_control("COMMIT", PG),
             Some(TxnControl::End { chain: false })
         );
         assert_eq!(
-            txn_control("ROLLBACK AND CHAIN"),
+            txn_control("END", PG),
+            Some(TxnControl::End { chain: false })
+        );
+        assert_eq!(
+            txn_control("COMMIT WORK AND CHAIN", PG),
             Some(TxnControl::End { chain: true })
         );
         assert_eq!(
-            txn_control("ROLLBACK TO SAVEPOINT x"),
+            txn_control("ROLLBACK", PG),
+            Some(TxnControl::End { chain: false })
+        );
+        assert_eq!(
+            txn_control("ROLLBACK AND CHAIN", PG),
+            Some(TxnControl::End { chain: true })
+        );
+        assert_eq!(
+            txn_control("ROLLBACK TO SAVEPOINT x", PG),
             Some(TxnControl::Savepoint)
         );
         assert_eq!(
-            txn_control("ROLLBACK WORK TO x"),
+            txn_control("ROLLBACK WORK TO x", PG),
             Some(TxnControl::Savepoint)
         );
-        assert_eq!(txn_control("SAVEPOINT x"), Some(TxnControl::Savepoint));
-        assert_eq!(txn_control("ABORT"), Some(TxnControl::End { chain: false }));
+        assert_eq!(txn_control("SAVEPOINT x", PG), Some(TxnControl::Savepoint));
+        assert_eq!(
+            txn_control("ABORT", PG),
+            Some(TxnControl::End { chain: false })
+        );
         // A BEGIN inside a DO block is not transaction control.
-        assert_eq!(txn_control("DO $$ BEGIN NULL; END $$"), None);
-        assert_eq!(txn_control("SELECT 1"), None);
-        assert_eq!(txn_control("SET autocommit = 0"), None);
+        assert_eq!(txn_control("DO $$ BEGIN NULL; END $$", PG), None);
+        assert_eq!(txn_control("SELECT 1", PG), None);
+        assert_eq!(txn_control("SET autocommit = 0", PG), None);
     }
 
     #[test]
@@ -706,5 +821,196 @@ mod tests {
         ] {
             assert!(!explainable(sql), "expected NOT explainable: {sql:?}");
         }
+    }
+
+    fn info(sql: &str, rules: Rules) -> StatementInfo {
+        classify_statement(sql, rules)
+    }
+
+    #[test]
+    fn with_reads_are_reads() {
+        // The shape reported on prod: several CTEs, window, LIKE with `\_`.
+        let report = r"WITH dev AS (
+  SELECT DISTINCT deviceid FROM sync_user_device
+  WHERE applicationversion LIKE '6.1.0\_3%' AND applicationversion LIKE '%Android%'
+),
+p AS (
+  SELECT g.millis, LAG(g.millis) OVER w AS prev_ms
+  FROM gpstracker g JOIN dev d ON d.deviceid = g.sync_deviceid
+  WINDOW w AS (PARTITION BY g.sync_deviceid ORDER BY g.millis)
+),
+q AS (SELECT * FROM p)
+SELECT * FROM q GROUP BY 1 ORDER BY 1";
+        for rules in [PG, MY] {
+            let i = info(report, rules);
+            assert_eq!(i.class, StatementClass::Read);
+            assert!(!i.irreversible && !i.unfiltered);
+        }
+        // Server-verified shapes (PG 18 / MySQL 8.0 / MariaDB 11.8).
+        for sql in [
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n<3) SELECT * FROM r",
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n<3) \
+             SEARCH DEPTH FIRST BY n SET ord SELECT * FROM r",
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n<3) \
+             CYCLE n SET is_cycle USING path SELECT n FROM r",
+            "WITH a AS MATERIALIZED (SELECT 1), b AS NOT MATERIALIZED (VALUES (1)), c AS (TABLE t) SELECT 1",
+            "WITH a AS ((SELECT 1) UNION (SELECT 2)) SELECT * FROM a",
+            "WITH a AS (SELECT 1) (SELECT * FROM a)",
+            "WITH a AS (SELECT 1) VALUES (1)",
+            "WITH a AS (SELECT 1) TABLE a",
+            "WITH a AS (WITH b AS (SELECT 1) SELECT * FROM b) SELECT * FROM a",
+            "WITH \"odd name\"(x, \"y\") AS (SELECT 1, 2) SELECT * FROM \"odd name\"",
+            // Keywords inside strings and comments are not statements.
+            "WITH a AS (SELECT 'DELETE FROM t') /* UPDATE t */ SELECT * FROM a",
+        ] {
+            assert_eq!(info(sql, PG).class, StatementClass::Read, "{sql}");
+        }
+        assert_eq!(
+            info("WITH `a` AS (SELECT 1) SELECT * FROM `a`", MY).class,
+            StatementClass::Read
+        );
+        assert_eq!(class("(SELECT 1) UNION (SELECT 2)"), StatementClass::Read);
+    }
+
+    #[test]
+    fn with_that_writes_is_a_write() {
+        // PG: data-modifying CTEs write, the WHERE is checked in each body.
+        for (sql, unfiltered) in [
+            ("WITH d AS (DELETE FROM t WHERE id=1 RETURNING *) SELECT * FROM d", false),
+            ("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", true),
+            ("WITH d AS (INSERT INTO t VALUES (9,9) RETURNING *) SELECT 1", false),
+            ("WITH d AS (UPDATE t SET v=0 RETURNING *) SELECT 1", true),
+            (
+                "WITH d AS (MERGE INTO t USING s ON t.id=s.id WHEN MATCHED THEN DELETE RETURNING t.*) SELECT 1",
+                false,
+            ),
+            ("WITH a AS (SELECT 1) INSERT INTO t SELECT 5,5", false),
+            ("WITH a AS (SELECT 1) DELETE FROM t", true),
+        ] {
+            let i = info(sql, PG);
+            assert_eq!(i.class, StatementClass::Write, "{sql}");
+            assert_eq!(i.unfiltered, unfiltered, "{sql}");
+            assert_eq!(i.irreversible, unfiltered, "{sql}");
+        }
+        // MySQL 8: `WITH … UPDATE`/`DELETE`, also multi-table.
+        for sql in [
+            "WITH a AS (SELECT 1) DELETE FROM t",
+            "WITH a AS (SELECT 1) UPDATE t SET v=0",
+        ] {
+            let i = info(sql, MY);
+            assert_eq!(i.class, StatementClass::Write, "{sql}");
+            assert!(i.unfiltered && i.irreversible, "{sql}");
+        }
+        let i = info(
+            "WITH a AS (SELECT 1 AS id) DELETE t FROM t JOIN a ON t.id=a.id WHERE t.v > 0",
+            MY,
+        );
+        assert_eq!(i.class, StatementClass::Write);
+        assert!(!i.unfiltered);
+    }
+
+    #[test]
+    fn with_not_recognised_is_unknown() {
+        for sql in [
+            "WITH",
+            "WITH a AS (SELECT 1)",
+            "WITH a AS (SELECT 1",
+            "WITH a (SELECT 1) SELECT 1",
+            "WITH a AS SELECT 1",
+            "WITH a(x + 1) AS (SELECT 1) SELECT 1",
+            "WITH a AS (CALL p()) SELECT 1",
+            "WITH a AS (SELECT 1) CALL p()",
+            "WITH a AS (SELECT 1) CREATE TABLE x (id int)",
+            "WITH a AS (SELECT 1) SET x = 1",
+            "WITH a AS (SELECT 1) ; DELETE FROM t",
+            "WITH RECURSIVE r AS (SELECT 1) SEARCH DEPTH FIRST BY n SET SELECT 1",
+            "WITH RECURSIVE r AS (SELECT 1) CYCLE n SET c TO (DELETE) USING p SELECT 1",
+            "(DELETE FROM t)",
+            "(SELECT 1",
+        ] {
+            assert_eq!(info(sql, PG).class, StatementClass::Unknown, "{sql}");
+        }
+        // Generated SQL nested beyond any real query: not followed.
+        let deep = format!("{}SELECT 1{}", "(".repeat(10_000), ")".repeat(10_000));
+        assert_eq!(class(&deep), StatementClass::Unknown);
+    }
+
+    #[test]
+    fn with_is_read_with_the_server_lexical_rules() {
+        // Each of these deleted every row on the real server (§9.7.3); a
+        // lexer with the other dialect's rules sees only reads.
+        // PG: `#` is an operator, not a comment.
+        let hash = "WITH a AS (SELECT 1 # 2), d AS (DELETE FROM t RETURNING 1\n), b AS (SELECT 1) SELECT 1";
+        assert_eq!(info(hash, PG).class, StatementClass::Write);
+        // PG: `'\'` is a closed string.
+        let backslash = r"WITH a AS (SELECT '\'), d AS (DELETE FROM t RETURNING 1) SELECT 1";
+        assert_eq!(info(backslash, PG).class, StatementClass::Write);
+        // MySQL: `--1` is not a comment, so the `/*` hides the rest.
+        let dashdash = "WITH a AS (SELECT 1 --1) DELETE FROM t WHERE 1 /*\n) SELECT 1 -- */";
+        assert_eq!(info(dashdash, MY).class, StatementClass::Write);
+        // MySQL: the executable comment is code.
+        for sql in [
+            "WITH a AS (SELECT 1) /*! DELETE FROM t */",
+            "WITH a AS (SELECT 1) /*!80000 DELETE FROM t */ SELECT 1",
+            "WITH a AS (SELECT 1 /*! ) DELETE FROM t -- */ ) SELECT 1",
+            "WITH a AS (SELECT /*+ MAX_EXECUTION_TIME(1000) */ 1) SELECT 1",
+        ] {
+            assert_eq!(info(sql, MY).class, StatementClass::Unknown, "{sql}");
+        }
+    }
+
+    #[test]
+    fn select_into_is_not_a_read() {
+        // Server-verified (PG 18 / MySQL 8.0 / MariaDB 11.8): every form
+        // below created a table or wrote a file.
+        for sql in [
+            "SELECT * FROM t INTO OUTFILE '/tmp/f'",
+            "SELECT * FROM t INTO DUMPFILE '/tmp/f'",
+            "SELECT * INTO OUTFILE '/tmp/f' FROM t",
+            "(SELECT * FROM t) INTO OUTFILE '/tmp/f'",
+            "TABLE t INTO OUTFILE '/tmp/f'",
+            "WITH w AS (SELECT 1) SELECT * FROM w INTO OUTFILE '/tmp/f'",
+        ] {
+            let i = info(sql, MY);
+            assert_eq!(i.class, StatementClass::Write, "{sql}");
+            assert!(i.irreversible && !i.unfiltered, "{sql}");
+        }
+        for sql in [
+            "SELECT 1 AS a INTO TEMP x",
+            "SELECT 1 AS a INTO UNLOGGED TABLE x",
+            "SELECT * INTO x FROM t",
+        ] {
+            let i = info(sql, PG);
+            assert_eq!(i.class, StatementClass::Ddl, "{sql}");
+            assert!(!i.irreversible, "{sql}: a PG Rollback drops the table");
+        }
+        assert_eq!(
+            info("WITH w AS (SELECT 1 AS a) SELECT * INTO x FROM w", PG).class,
+            StatementClass::Unknown
+        );
+        // Session variables only: still a read.
+        for sql in [
+            "SELECT v FROM t INTO @v",
+            "SELECT v INTO @v FROM t",
+            "(SELECT 1) INTO @v",
+        ] {
+            assert_eq!(info(sql, MY).class, StatementClass::Read, "{sql}");
+        }
+        // `INTO` that is not the query's own: subquery, string, other
+        // statement, EXPLAIN (it executes nothing).
+        for sql in [
+            "SELECT * FROM t WHERE id IN (SELECT id INTO x FROM u)",
+            "SELECT 'INTO OUTFILE' FROM t",
+            "EXPLAIN SELECT * INTO x FROM t",
+        ] {
+            assert_eq!(info(sql, PG).class, StatementClass::Read, "{sql}");
+        }
+        assert_eq!(class("INSERT INTO t VALUES (1)"), StatementClass::Write);
+    }
+
+    #[test]
+    fn executable_comment_in_control_may_disarm() {
+        assert!(disarms_read_only("START TRANSACTION /*! READ WRITE */", MY));
+        assert!(!disarms_read_only("START TRANSACTION /* READ WRITE */", MY));
     }
 }

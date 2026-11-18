@@ -200,6 +200,10 @@ export type TabUi = {
   /// When the current execution started (Date.now()): the "running for N s"
   /// counter survives the tab switch.
   startedAt: number | null;
+  /// When Stop or Cancel was asked (Date.now()) of the running execution:
+  /// until it finishes the status bar says it is stopping, and after a
+  /// while the termination of the connection is offered (§7.2).
+  stoppingSince?: number | null;
   statements: StatementUi[];
   /// Index of the statement selected in the results pane.
   selected: number;
@@ -382,6 +386,9 @@ type Store = {
     error: ErrorOut | null
   ) => void;
   startExecution: (tabId: string, execId: number, lane?: Lane, sql?: string, base?: number) => void;
+  /// Stop or Cancel sent for `execId`: see `TabUi.stoppingSince`. The
+  /// pause is over (no more pages are asked for).
+  markStopping: (connId: number, execId: number) => void;
   handleEvent: (connId: number, ev: ExecEvent) => void;
   select: (tabId: string, i: number) => void;
 };
@@ -615,6 +622,7 @@ export const useStore = create<Store>((set, get) => ({
                 execId: null,
                 execState: "idle",
                 running: false,
+                stoppingSince: null,
                 statements: [],
                 selected: 0,
               }
@@ -880,6 +888,7 @@ export const useStore = create<Store>((set, get) => ({
               execState: "running",
               running: true,
               startedAt: Date.now(),
+              stoppingSince: null,
               statements: [],
               selected: 0,
               execSql: sql,
@@ -896,6 +905,19 @@ export const useStore = create<Store>((set, get) => ({
     pendingEvents.delete(key);
     queued?.forEach((ev) => get().handleEvent(connId, ev));
   },
+
+  markStopping: (connId, execId) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.connId === connId && t.execId === execId && t.running
+          ? {
+              ...t,
+              stoppingSince: t.stoppingSince ?? Date.now(),
+              statements: t.statements.map((st) => (st.budgetPaused ? { ...st, budgetPaused: false } : st)),
+            }
+          : t
+      ),
+    })),
 
   select: (tabId, i) =>
     set((s) => ({
@@ -975,7 +997,8 @@ export const useStore = create<Store>((set, get) => ({
           if (st) {
             st.rows = ev.rows;
             st.layoutBytes = ev.layout_bytes;
-            st.budgetPaused = true;
+            // A pause that crossed the Stop: the execution is ending.
+            st.budgetPaused = !t.stoppingSince;
             st.budgetByRows = ev.by_rows;
           }
           break;
@@ -998,7 +1021,18 @@ export const useStore = create<Store>((set, get) => ({
         }
         case "finished": {
           t.running = false;
+          t.stoppingSince = null;
           t.execState = ev.state;
+          // Execution dropped by Reconnect or Disconnect (§7.2): its open
+          // statement got no `statement_finished`. Its rows stay, cancelled.
+          t.statements.forEach((st, i) => {
+            if (!st.running && !st.streaming && !st.budgetPaused) return;
+            const open = at(i);
+            open.running = false;
+            open.streaming = false;
+            open.budgetPaused = false;
+            open.outcome ??= { kind: "cancelled", result_id: open.resultId, rows: open.rows };
+          });
           break;
         }
       }

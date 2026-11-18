@@ -99,6 +99,7 @@ impl Driver for MyDriver {
                 id,
                 mariadb: sess.is_mariadb,
                 tls: sess.tls_options(),
+                net: *net,
                 server_conn,
                 server_version: sess.server_version.clone(),
                 sess: Mutex::new(sess),
@@ -124,6 +125,8 @@ struct MyConn {
     /// outside the mutex like url and id — the KILL is needed when the
     /// lock is busy (§7.1).
     tls: TlsOptions,
+    /// Network choices of the profile (§16): they bound the `KILL`.
+    net: NetOptions,
     /// Identity on the server, read at connect (see `kill_abandoned`).
     server_conn: Option<ServerConnId>,
     server_version: Option<String>,
@@ -146,13 +149,14 @@ struct MyCancel {
     /// Effective TLS regime of the target session (§12), for the connection
     /// that fires the `KILL`.
     tls: TlsOptions,
+    net: NetOptions,
 }
 
 impl Canceller for MyCancel {
     fn cancel(&self) -> BoxFuture<'static, bool> {
-        let (url, id, tls) = (Arc::clone(&self.url), self.id, self.tls.clone());
+        let (url, id, tls, net) = (Arc::clone(&self.url), self.id, self.tls.clone(), self.net);
         async move {
-            alamo_driver_mysql::kill(&url, id, false, &tls)
+            alamo_driver_mysql::kill(&url, id, false, &tls, &net)
                 .await
                 .unwrap_or(false)
         }
@@ -193,6 +197,7 @@ impl Connection for MyConn {
             url: Arc::clone(&self.url),
             id: self.id,
             tls: self.tls.clone(),
+            net: self.net,
         })
     }
 
@@ -242,7 +247,8 @@ impl Connection for MyConn {
             let dialect = self.my_dialect();
             let mut g = self.lock().await?;
             let kill_query = async {
-                let _ = alamo_driver_mysql::kill(&self.url, self.id, false, &self.tls).await;
+                let _ =
+                    alamo_driver_mysql::kill(&self.url, self.id, false, &self.tls, &self.net).await;
             };
             alamo_driver_mysql::execute_streaming(
                 &mut g.conn,
@@ -421,7 +427,7 @@ impl Connection for MyConn {
     /// certainly busy.
     fn terminate(&self) -> BoxFuture<'_, DbResult<bool>> {
         async move {
-            alamo_driver_mysql::kill(&self.url, self.id, true, &self.tls)
+            alamo_driver_mysql::kill(&self.url, self.id, true, &self.tls, &self.net)
                 .await
                 .map_err(boxed)
         }
