@@ -1466,7 +1466,7 @@ statement on their own.
 
 - All reads → read. The same `SELECT` without `WITH` was already a read, so nothing
   that a plain `SELECT` could not already do gets through: functions with side
-  effects, `FOR UPDATE` and `SELECT … INTO` are open gaps of `SELECT` itself.
+  effects and `FOR UPDATE` are open gaps of `SELECT` itself.
 - A DML body (PG: `INSERT`/`UPDATE`/`DELETE`/`MERGE … RETURNING`) or DML final
   statement (MySQL 8: `WITH … UPDATE`/`DELETE`) → write, with the `WHERE` checked
   on each one: `WITH a AS (…) DELETE FROM t` is unfiltered and irreversible.
@@ -1476,6 +1476,14 @@ statement on their own.
 - Any other shape, any other kind of statement inside, nesting beyond 32 levels
   and **any MySQL executable comment** (`WITH a AS (SELECT 1) /*! DELETE FROM t */`
   deletes every row) → unknown.
+
+**A query with `INTO` at the top level is not a read** (2026-11-18), wherever the
+`INTO` sits (MySQL takes it after the select list, at the end, after a parenthesized
+query and after `TABLE t`). `INTO OUTFILE`/`DUMPFILE` is a write and irreversible:
+it leaves a file on the server that no Rollback removes, and a read-only session
+(`transaction_read_only`) does not stop it. `INTO @v` only assigns session variables
+and stays a read. Anything else is PG's `SELECT … INTO [TEMP|UNLOGGED] name`, a
+`CREATE TABLE AS`: DDL. Verified on the three servers, like the `WITH` cases.
 
 The text is read with the server's lexical rules (§6.5). Verified on PG 18, MySQL 8.0
 and MariaDB 11.8: `WITH a AS (SELECT 1 # 2), d AS (DELETE …` on PG and

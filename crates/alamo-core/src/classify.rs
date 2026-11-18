@@ -143,6 +143,11 @@ fn classify_tokens(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> State
         "update" | "delete" => unfiltered,
         _ => class == StatementClass::Ddl && !rules.transactional_ddl,
     };
+    if matches!(first, "select" | "table" | "values") {
+        if let Some(into) = select_into(sql, toks, rules) {
+            return into;
+        }
+    }
 
     StatementInfo {
         class,
@@ -151,20 +156,57 @@ fn classify_tokens(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> State
     }
 }
 
+/// A query with `INTO` at the top level is not a read (§9.7.3), wherever
+/// the `INTO` sits (MySQL accepts it after the select list, at the end and
+/// after a parenthesized query):
+/// - `INTO OUTFILE`/`DUMPFILE` writes a file on the server, which no
+///   Rollback removes;
+/// - `INTO @v` only assigns MySQL session variables: `None`, still a read;
+/// - anything else is PG's `SELECT … INTO [TEMP|UNLOGGED] [TABLE] name`, a
+///   `CREATE TABLE AS` (on MySQL that form is a syntax error).
+fn select_into(sql: &str, toks: &[Token], rules: Rules) -> Option<StatementInfo> {
+    let mut depth = 0usize;
+    let at = toks.iter().position(|t| {
+        if t.is_symbol(sql, b'(') {
+            depth += 1;
+        } else if t.is_symbol(sql, b')') {
+            depth = depth.saturating_sub(1);
+        }
+        depth == 0 && t.is_word(sql, "into")
+    })?;
+    let target = toks.get(at + 1)?;
+    if target.is_symbol(sql, b'@') {
+        None
+    } else if target.is_word(sql, "outfile") || target.is_word(sql, "dumpfile") {
+        Some(StatementInfo {
+            class: StatementClass::Write,
+            irreversible: true,
+            unfiltered: false,
+        })
+    } else {
+        Some(StatementInfo {
+            class: StatementClass::Ddl,
+            irreversible: !rules.transactional_ddl,
+            unfiltered: false,
+        })
+    }
+}
+
 /// `(SELECT …) UNION (SELECT …)`: a query expression, never DML — neither
 /// dialect accepts `(DELETE …)`, and on PG a data-modifying `WITH` must be
-/// at the top level. A read if the first group is one, otherwise unknown.
+/// at the top level. A read if the first group is one (and no `INTO`
+/// follows, `select_into`), otherwise unknown.
 fn classify_parenthesized(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> StatementInfo {
     match closing_paren(sql, toks, 0) {
         Some(close)
             if classify_tokens(sql, &toks[1..close], rules, depth + 1).class
                 == StatementClass::Read =>
         {
-            StatementInfo {
+            select_into(sql, toks, rules).unwrap_or(StatementInfo {
                 class: StatementClass::Read,
                 irreversible: false,
                 unfiltered: false,
-            }
+            })
         }
         _ => UNKNOWN,
     }
@@ -261,11 +303,10 @@ fn classify_with(sql: &str, toks: &[Token], rules: Rules, depth: u32) -> Option<
             _ => return None,
         }
     }
-    let unfiltered = parts.iter().any(|p| p.unfiltered);
     Some(StatementInfo {
         class,
-        irreversible: unfiltered,
-        unfiltered,
+        irreversible: parts.iter().any(|p| p.irreversible),
+        unfiltered: parts.iter().any(|p| p.unfiltered),
     })
 }
 
@@ -916,6 +957,55 @@ SELECT * FROM q GROUP BY 1 ORDER BY 1";
         ] {
             assert_eq!(info(sql, MY).class, StatementClass::Unknown, "{sql}");
         }
+    }
+
+    #[test]
+    fn select_into_is_not_a_read() {
+        // Server-verified (PG 18 / MySQL 8.0 / MariaDB 11.8): every form
+        // below created a table or wrote a file.
+        for sql in [
+            "SELECT * FROM t INTO OUTFILE '/tmp/f'",
+            "SELECT * FROM t INTO DUMPFILE '/tmp/f'",
+            "SELECT * INTO OUTFILE '/tmp/f' FROM t",
+            "(SELECT * FROM t) INTO OUTFILE '/tmp/f'",
+            "TABLE t INTO OUTFILE '/tmp/f'",
+            "WITH w AS (SELECT 1) SELECT * FROM w INTO OUTFILE '/tmp/f'",
+        ] {
+            let i = info(sql, MY);
+            assert_eq!(i.class, StatementClass::Write, "{sql}");
+            assert!(i.irreversible && !i.unfiltered, "{sql}");
+        }
+        for sql in [
+            "SELECT 1 AS a INTO TEMP x",
+            "SELECT 1 AS a INTO UNLOGGED TABLE x",
+            "SELECT * INTO x FROM t",
+        ] {
+            let i = info(sql, PG);
+            assert_eq!(i.class, StatementClass::Ddl, "{sql}");
+            assert!(!i.irreversible, "{sql}: a PG Rollback drops the table");
+        }
+        assert_eq!(
+            info("WITH w AS (SELECT 1 AS a) SELECT * INTO x FROM w", PG).class,
+            StatementClass::Unknown
+        );
+        // Session variables only: still a read.
+        for sql in [
+            "SELECT v FROM t INTO @v",
+            "SELECT v INTO @v FROM t",
+            "(SELECT 1) INTO @v",
+        ] {
+            assert_eq!(info(sql, MY).class, StatementClass::Read, "{sql}");
+        }
+        // `INTO` that is not the query's own: subquery, string, other
+        // statement, EXPLAIN (it executes nothing).
+        for sql in [
+            "SELECT * FROM t WHERE id IN (SELECT id INTO x FROM u)",
+            "SELECT 'INTO OUTFILE' FROM t",
+            "EXPLAIN SELECT * INTO x FROM t",
+        ] {
+            assert_eq!(info(sql, PG).class, StatementClass::Read, "{sql}");
+        }
+        assert_eq!(class("INSERT INTO t VALUES (1)"), StatementClass::Write);
     }
 
     #[test]
