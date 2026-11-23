@@ -11,6 +11,10 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- SQL tabs: a result paused after its first rows ("scroll for more rows") opened the cell editor, but the value typed was thrown away and the cell went back to the old one. The change is now kept, and Save writes it.
+
 ## [0.1.0-alpha.17] - 2026-11-18
 
 - Connections through SSH: a large MySQL or MariaDB result paused after its first rows froze every other connection going through the same SSH server, so stopping it ("still stopping on the server: try again in a moment"), the tables panel and the other tabs waited forever. Each connection now goes through its own SSH session, and a paused result holds up only itself.

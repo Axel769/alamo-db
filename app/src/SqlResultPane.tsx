@@ -88,7 +88,7 @@ export default function SqlResultPane({
             </span>
           )}
           <div className="spacer" />
-          <PendingBar e={e} running={tab.running} />
+          <PendingBar e={e} />
         </div>
       )}
       <StatementPane
