@@ -13,6 +13,7 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Grid: clicking a cell tints the other cells of the same column with the same value, so repeated values stand out. It can be turned off in Settings → Appearance.
 - SQL tabs: a result paused after its first rows ("scroll for more rows") opened the cell editor, but the value typed was thrown away and the cell went back to the old one. The change is now kept, and Save writes it.
 - SQL tabs: deleting rows of a result paused after its first rows did nothing, without a word. The strip above the grid now says that rows are deleted only on a complete result, with Stop here: the query stops, the rows loaded stay, and Delete works.
 

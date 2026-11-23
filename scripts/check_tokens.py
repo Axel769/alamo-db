@@ -65,14 +65,14 @@ def contrast(a, b):
 
 
 TEXT = ["cell-fg", "cell-muted-fg", "cell-null-fg", "type-numeric", "type-temporal", "type-text", "type-boolean", "type-structured", "cell-prod", "ui-danger"]
-BG = ["state-normal", "state-alt", "state-selection", "state-modified", "state-new", "state-error", "cell-header-bg", "cell-panel-bg"]
+BG = ["state-normal", "state-alt", "state-selection", "state-modified", "state-new", "state-error", "state-match", "cell-header-bg", "cell-panel-bg"]
 SYN = ["syn-keyword", "syn-type", "syn-builtin", "syn-number", "syn-string", "syn-quoted", "syn-comment", "syn-operator"]
 
 GLIDE = {
     "typeNumeric": "type-numeric", "typeTemporal": "type-temporal", "typeText": "type-text",
     "typeBoolean": "type-boolean", "typeStructured": "type-structured", "stateNormal": "state-normal",
     "stateAlt": "state-alt", "stateSelection": "state-selection", "stateModified": "state-modified",
-    "stateNew": "state-new", "stateDeleted": "state-error", "cellFg": "cell-fg", "cellMutedFg": "cell-muted-fg",
+    "stateNew": "state-new", "stateDeleted": "state-error", "stateMatch": "state-match", "cellFg": "cell-fg", "cellMutedFg": "cell-muted-fg",
     "cellNullFg": "cell-null-fg", "cellBorder": "cell-border", "cellDivider": "cell-divider",
     "cellPanelBg": "cell-panel-bg", "cellHeaderBg": "cell-header-bg", "cellSelectionBorder": "cell-selection-border",
 }
@@ -131,6 +131,8 @@ for theme, sel in (("light", ":root"), ("dark", ':root[data-theme="dark"]')):
     ring_tokens = (col["cell-focus-ring-inner"], col["cell-focus-ring-outer"])
     ring = max(contrast(col["cell-focus-ring-inner"], col["state-normal"]), contrast(col["cell-focus-ring-outer"], col["state-normal"]))
     selalt = contrast(col["state-selection"], col["state-alt"])
+    match = min(contrast(col["state-match"], col[b]) for b in ("state-normal", "state-alt", "state-selection"))
+    print(f"[{theme}] state-match vs normal/alt/selection: {match:.3f}")
     print(f"[{theme}] worst text {worst_text:.2f} · syntax {worst_syn:.2f} · ui {worst_ui:.2f} · focus ring {ring:.2f} · selection/alt {selalt:.3f}")
     print(f"export const {theme.upper()}: Tokens = {{")
     for js, css in GLIDE.items():

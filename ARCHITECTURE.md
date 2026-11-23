@@ -995,6 +995,11 @@ it and does not fail. The ≥3:1 separator of the high-contrast grid option is t
   → Plan a **"high-contrast grid"** option in the settings.
 - `cell-divider` (≥3:1) is the token for separators **that carry meaning**: header
   underline, divider of pinned columns, panel borders.
+- `state-match` (240°, the free hue of the states layer) tints the cells equal to the
+  single selected cell, **in its column only** (an id `1` and a quantity `1` are not the
+  same thing). It compares the canonical value (pending if edited) of the cells Glide
+  draws, never the whole result; NULL, DEFAULT and truncated values never match, and an
+  edited cell keeps its `state-modified` fill. Off with `appearance.highlight_equal_values`.
 
 ##### Hue map
 

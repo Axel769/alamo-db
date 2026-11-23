@@ -960,22 +960,60 @@ export default function GridView({
     [cuts, selection, displayRows, onInspect, toModelRow]
   );
 
+  /// Value compared by the equal-values highlight (§9.6.1): the canonical
+  /// one, pending if edited. None for NULL, DEFAULT, truncated values (the
+  /// prefix would match wrongly), rows still loading and rows to delete.
+  const matchValue = useCallback(
+    (row: number, col: number): string | undefined => {
+      const p = pendingValue(row, col);
+      if (p !== undefined) return typeof p === "string" ? p : undefined;
+      if (!isExtra(row) && deletedAt?.(layout.baseAt(row))) return undefined;
+      const v = cellAt(row, col);
+      return v && !v.isNull && !v.truncated ? v.v : undefined;
+    },
+    [pendingValue, isExtra, deletedAt, layout, cellAt]
+  );
+  /// The single selected cell and its value: the other cells of its column
+  /// with the same value get a tint. Only the cells Glide draws are
+  /// compared, never the whole result (§9.6.1).
+  const match = useMemo(() => {
+    const cur = selection.current;
+    if (!appearance.highlight_equal_values || !cur) return null;
+    if (cur.range.width !== 1 || cur.range.height !== 1 || cur.rangeStack.length > 0) return null;
+    if (selection.rows.length > 0 || selection.columns.length > 0) return null;
+    const [col, row] = cur.cell;
+    const value = matchValue(row, col);
+    return value === undefined ? null : { col, row, value };
+  }, [appearance.highlight_equal_values, selection, matchValue]);
+
   /// Foreign keys: the text is laid out in the cell minus the link zone (a
   /// right-aligned id stays whole), then the zone is repainted with the
   /// cell's fill (a long text never runs under the arrow) and gets "↗".
   /// Rows to delete: after the text, a horizontal line at mid cell.
   /// A cell taken out of a selected column loses the selection's fill.
+  /// A cell equal to the selected one (`match`) gets the match tint, unless
+  /// edited: the "modified" fill says more.
   const drawCell = useMemo(() => {
-    if (!deletedAt && !linkCols && cuts.size === 0) return undefined;
+    if (!deletedAt && !linkCols && cuts.size === 0 && !match) return undefined;
     return (
       args: { ctx: CanvasRenderingContext2D; rect: Rectangle; row: number; col: number; theme: Theme },
       drawContent: () => void
     ) => {
       const { ctx, rect, theme } = args;
       const cut = cuts.get(args.col)?.has(args.row) === true;
-      if (cut) {
-        ctx.fillStyle = theme.bgCell ?? tok.stateNormal;
+      const hit =
+        match !== null &&
+        args.col === match.col &&
+        args.row !== match.row &&
+        pendingValue(args.row, args.col) === undefined &&
+        matchValue(args.row, args.col) === match.value;
+      // save/restore: Glide keeps the text fillStyle across cells and does
+      // not set it again — a fill left here would paint the text with it.
+      if (cut || hit) {
+        ctx.save();
+        ctx.fillStyle = hit ? tok.stateMatch : theme.bgCell ?? tok.stateNormal;
         ctx.fillRect(rect.x + 1, rect.y + 1, rect.width - 1, rect.height - 1);
+        ctx.restore();
       }
       // `rect` is the same object Glide's renderer draws with (6.0.3):
       // narrowing it here narrows the text.
@@ -988,9 +1026,9 @@ export default function GridView({
         // Glide passes the fill of the cell (selection included), absent from its types.
         const fill = (args as { cellFillColor?: string }).cellFillColor;
         ctx.save();
-        ctx.fillStyle = theme.bgCell ?? tok.stateNormal;
+        ctx.fillStyle = hit ? tok.stateMatch : theme.bgCell ?? tok.stateNormal;
         ctx.fillRect(x, rect.y + 1, LINK_ZONE - 1, rect.height - 1);
-        if (fill && !cut) {
+        if (fill && !cut && !hit) {
           ctx.fillStyle = fill;
           ctx.fillRect(x, rect.y + 1, LINK_ZONE - 1, rect.height - 1);
         }
@@ -1013,7 +1051,7 @@ export default function GridView({
       ctx.stroke();
       ctx.restore();
     };
-  }, [deletedAt, linkCols, linkAt, isExtra, layout, tok, cuts]);
+  }, [deletedAt, linkCols, linkAt, isExtra, layout, tok, cuts, match, pendingValue, matchValue]);
 
   // Click on the link arrow: opens the linked record instead of starting
   // the editing (the selection already moved there on mouse down).

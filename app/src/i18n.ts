@@ -884,6 +884,8 @@ const IT: Record<string, string> = {
   "Compact (26 px rows)": "Compatta (righe da 26 px)",
   "Comfortable (30 px rows)": "Comoda (righe da 30 px)",
   "High-contrast grid lines": "Linee della griglia ad alto contrasto",
+  "Highlight equal values in the column": "Evidenzia i valori uguali nella colonna",
+  "Clicking a cell tints the other cells of its column with the same value.": "Cliccando una cella, le altre celle della colonna con lo stesso valore si colorano.",
   "Editor": "Editor",
   "Autocomplete while typing": "Completamento automatico mentre scrivi",
   "Autocomplete delay (ms)": "Ritardo del completamento (ms)",
