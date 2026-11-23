@@ -232,6 +232,9 @@ export type GridEditing = {
   /// at a page of rows (§5) is not: its execution stays open, but the
   /// rows on screen are stable and the save frees the sticky first.
   busy: boolean;
+  /// Delete was asked on a result paused at a page of rows: rows are
+  /// deleted only on a complete result (§9.5.1), the strip says so.
+  deleteWaits: boolean;
   nUnsaved: number;
   nPending: number;
   nNew: number;
@@ -330,7 +333,11 @@ export function useGridEditing({
   const resultId = st?.resultId ?? null;
   const ready = source !== null && stc !== null && resultId !== null && resultId === source.resultId;
   const editable = ready && !blocked && !stale;
-  const busy = tab.running && !tab.statements.some((s) => s.budgetPaused);
+  const paused = tab.statements.some((s) => s.budgetPaused);
+  const busy = tab.running && !paused;
+  /// Result on which Delete was refused because paused: the strip explains
+  /// it until the pause ends (Stop, Load all, a new run).
+  const [deleteAskedOn, setDeleteAskedOn] = useState<number | null>(null);
 
   const cellEditable = (col: number) => source?.colSource[col] != null;
   const canSetNull = (col: number) => source?.nullable[col] ?? true;
@@ -749,6 +756,10 @@ export function useGridEditing({
   /// deletion (red and struck through, DELETE with Save); the unsaved new
   /// rows disappear right away. If they are all already marked, restores them.
   const deleteRows = async (rowsSel: number[]) => {
+    if (paused && !batch && !saving && ready && !blocked && rowsSel.length > 0) {
+      setDeleteAskedOn(resultId);
+      return;
+    }
     if (!canEditRows() || rowsSel.length === 0 || !st) return;
     const base = st.rows;
     const s0 = useStore.getState().tabs.find((x) => x.id === tab.id);
@@ -876,6 +887,7 @@ export function useGridEditing({
   return {
     editable,
     busy,
+    deleteWaits: paused && deleteAskedOn !== null && deleteAskedOn === resultId,
     nUnsaved,
     nPending,
     nNew,

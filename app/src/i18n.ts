@@ -163,6 +163,10 @@ const IT: Record<string, string> = {
   "Stops the paused query and runs": "Ferma la query in pausa ed esegue",
   "First {n} rows — scroll to the bottom to load more.": "Prime {n} righe — scorri in fondo per caricarne altre.",
   "Load all": "Carica tutte",
+  "To delete rows the result must be complete: stop the query here (the rows loaded stay), then delete again.":
+    "Per eliminare righe il risultato dev'essere completo: ferma qui la query (le righe caricate restano), poi elimina di nuovo.",
+  "Stops the query: no more rows are loaded, the ones on screen stay": "Ferma la query: non arrivano altre righe, quelle a schermo restano",
+  "Stop here": "Ferma qui",
   "Sets the cell to NULL": "Imposta la cella a NULL",
   "Sets the selected cells to NULL; NOT NULL columns are left as they are": "Imposta a NULL le celle selezionate; le colonne NOT NULL restano come sono",
   "Selected cells": "Celle selezionate",

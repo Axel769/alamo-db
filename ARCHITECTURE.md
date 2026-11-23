@@ -886,7 +886,9 @@ works for a disconnected tab too (the writes are by key).
 - v1 = cells and deleted rows (UPDATE / DELETE by PK). Inserts are deferred: the append
   re-reads the inserted row and compares it with the result's schema, which needs a
   projection. Deletes only on a complete result: a hidden row under a result that still
-  grows would desynchronise the count.
+  grows would desynchronise the count. On a result paused at a page of rows, Delete says
+  so in the strip and offers **Stop here** (the rows loaded stay, the result is then
+  complete); editing and saving cells work while paused, the save frees the sticky first.
 - **After a clean save the grid keeps what was typed** (the user's choice, 2026-11-09,
   unlike the table tab, which re-reads the saved rows): `result_patch_cells` writes the
   cells into the open result by key, no query, and the strip says that the server's

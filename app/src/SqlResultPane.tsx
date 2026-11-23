@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useStore, connById, StatementUi, TabUi } from "./store";
 import { t } from "./i18n";
 import { StatementPane } from "./ResultPane";
+import { stopExecution } from "./sticky";
 import { BatchDialog, PendingBar, ReadOnlyNote, readOnlyErrorText, reasonText, useGridEditing, useResultSource } from "./gridEditing";
 
 export default function SqlResultPane({
@@ -69,7 +70,9 @@ export default function SqlResultPane({
             ? t("Read-only while the rows are arriving")
             : null;
   const target = source ? `${source.schema}.${source.table}` : null;
-  const showBar = note !== null || (target !== null && (e.nUnsaved > 0 || saved !== null));
+  const showBar = note !== null || e.deleteWaits || (target !== null && (e.nUnsaved > 0 || saved !== null));
+  const connId = tab.connId;
+  const execId = tab.execId;
 
   return (
     <>
@@ -77,6 +80,20 @@ export default function SqlResultPane({
         <div className="result-bar">
           {note !== null ? (
             <ReadOnlyNote text={note} />
+          ) : e.deleteWaits ? (
+            <>
+              <ReadOnlyNote
+                text={t("To delete rows the result must be complete: stop the query here (the rows loaded stay), then delete again.")}
+              />
+              <button
+                className="btn small"
+                title={t("Stops the query: no more rows are loaded, the ones on screen stay")}
+                disabled={connId === null || execId === null}
+                onClick={() => connId !== null && execId !== null && stopExecution(connId, execId, "stop")}
+              >
+                {t("Stop here")}
+              </button>
+            </>
           ) : e.nUnsaved > 0 ? (
             <span className="writes-to">
               {t("Writes to {table}", { table: "" })}
