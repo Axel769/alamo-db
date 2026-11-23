@@ -281,6 +281,8 @@ settings! {
         grid_font_size: u32 [9..=24] = 13, "Grid text size (px)";
         grid_density: GridDensity = GridDensity::Compact, "Grid density";
         high_contrast_grid: bool = false, "High-contrast grid lines";
+        highlight_equal_values: bool = true, "Highlight equal values in the column",
+            "Clicking a cell tints the other cells of its column with the same value.";
     }
     editor: Editor ("Editor") {
         autocomplete: bool = true, "Autocomplete while typing";

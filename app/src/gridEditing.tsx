@@ -228,6 +228,13 @@ type Rect = { x: number; y: number; width: number; height: number };
 export type GridEditing = {
   /// Cells can be edited now.
   editable: boolean;
+  /// A query of the tab is running: no staging, no saving. A result paused
+  /// at a page of rows (§5) is not: its execution stays open, but the
+  /// rows on screen are stable and the save frees the sticky first.
+  busy: boolean;
+  /// Delete was asked on a result paused at a page of rows: rows are
+  /// deleted only on a complete result (§9.5.1), the strip says so.
+  deleteWaits: boolean;
   nUnsaved: number;
   nPending: number;
   nNew: number;
@@ -326,6 +333,11 @@ export function useGridEditing({
   const resultId = st?.resultId ?? null;
   const ready = source !== null && stc !== null && resultId !== null && resultId === source.resultId;
   const editable = ready && !blocked && !stale;
+  const paused = tab.statements.some((s) => s.budgetPaused);
+  const busy = tab.running && !paused;
+  /// Result on which Delete was refused because paused: the strip explains
+  /// it until the pause ends (Stop, Load all, a new run).
+  const [deleteAskedOn, setDeleteAskedOn] = useState<number | null>(null);
 
   const cellEditable = (col: number) => source?.colSource[col] != null;
   const canSetNull = (col: number) => source?.nullable[col] ?? true;
@@ -389,7 +401,7 @@ export function useGridEditing({
     return run;
   };
   const stageNow = async (cells: Cell[]) => {
-    if (batch || saving || tab.running || !editable || !stc || resultId === null || connId === null || !st) return;
+    if (batch || saving || busy || !editable || !stc || resultId === null || connId === null || !st) return;
     cells = cells.filter((c) => cellEditable(c.col));
     // Cells of the new rows: they change the pending row, no UPDATE.
     const onNew = cells.filter((c) => c.row >= st.rows);
@@ -591,7 +603,7 @@ export function useGridEditing({
   /// no dialog. The dialog appears only if there is something to say:
   /// error or affected rows ≠ 1.
   const save = async () => {
-    if (batch || saving || !source || connId === null || tab.running || blocked || nUnsaved === 0) return;
+    if (batch || saving || !source || connId === null || busy || blocked || nUnsaved === 0) return;
     const writes = pendingWrites();
     const cursor = gridRows.current?.cursorAfterSave() ?? null;
     setSaving(true);
@@ -744,6 +756,10 @@ export function useGridEditing({
   /// deletion (red and struck through, DELETE with Save); the unsaved new
   /// rows disappear right away. If they are all already marked, restores them.
   const deleteRows = async (rowsSel: number[]) => {
+    if (paused && !batch && !saving && ready && !blocked && rowsSel.length > 0) {
+      setDeleteAskedOn(resultId);
+      return;
+    }
     if (!canEditRows() || rowsSel.length === 0 || !st) return;
     const base = st.rows;
     const s0 = useStore.getState().tabs.find((x) => x.id === tab.id);
@@ -870,6 +886,8 @@ export function useGridEditing({
 
   return {
     editable,
+    busy,
+    deleteWaits: paused && deleteAskedOn !== null && deleteAskedOn === resultId,
     nUnsaved,
     nPending,
     nNew,
@@ -942,7 +960,7 @@ export function RowActionButtons({ e, disabled }: { e: GridEditing; disabled: bo
 
 /// Counts of the pending changes and View SQL / Discard / Save. Nothing
 /// without changes.
-export function PendingBar({ e, running }: { e: GridEditing; running: boolean }) {
+export function PendingBar({ e }: { e: GridEditing }) {
   if (e.nUnsaved === 0) return null;
   return (
     <span className="pending-bar">
@@ -979,7 +997,7 @@ export function PendingBar({ e, running }: { e: GridEditing; running: boolean })
       <button
         className="btn small primary"
         title={withKey(t("Writes the changes to the database"), "table.save")}
-        disabled={e.saving || running}
+        disabled={e.saving || e.busy}
         onClick={() => void e.save()}
       >
         {e.saving ? t("Saving…") : t("Save")}

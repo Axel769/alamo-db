@@ -11,6 +11,12 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## [0.1.0-alpha.18] - 2026-11-23
+
+- Grid: clicking a cell tints the other cells of the same column with the same value, so repeated values stand out. It can be turned off in Settings → Appearance.
+- SQL tabs: a result paused after its first rows ("scroll for more rows") opened the cell editor, but the value typed was thrown away and the cell went back to the old one. The change is now kept, and Save writes it.
+- SQL tabs: deleting rows of a result paused after its first rows did nothing, without a word. The strip above the grid now says that rows are deleted only on a complete result, with Stop here: the query stops, the rows loaded stay, and Delete works.
+
 ## [0.1.0-alpha.17] - 2026-11-18
 
 - Connections through SSH: a large MySQL or MariaDB result paused after its first rows froze every other connection going through the same SSH server, so stopping it ("still stopping on the server: try again in a moment"), the tables panel and the other tabs waited forever. Each connection now goes through its own SSH session, and a paused result holds up only itself.

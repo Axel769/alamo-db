@@ -886,7 +886,9 @@ works for a disconnected tab too (the writes are by key).
 - v1 = cells and deleted rows (UPDATE / DELETE by PK). Inserts are deferred: the append
   re-reads the inserted row and compares it with the result's schema, which needs a
   projection. Deletes only on a complete result: a hidden row under a result that still
-  grows would desynchronise the count.
+  grows would desynchronise the count. On a result paused at a page of rows, Delete says
+  so in the strip and offers **Stop here** (the rows loaded stay, the result is then
+  complete); editing and saving cells work while paused, the save frees the sticky first.
 - **After a clean save the grid keeps what was typed** (the user's choice, 2026-11-09,
   unlike the table tab, which re-reads the saved rows): `result_patch_cells` writes the
   cells into the open result by key, no query, and the strip says that the server's
@@ -993,6 +995,11 @@ it and does not fail. The ≥3:1 separator of the high-contrast grid option is t
   → Plan a **"high-contrast grid"** option in the settings.
 - `cell-divider` (≥3:1) is the token for separators **that carry meaning**: header
   underline, divider of pinned columns, panel borders.
+- `state-match` (240°, the free hue of the states layer) tints the cells equal to the
+  single selected cell, **in its column only** (an id `1` and a quantity `1` are not the
+  same thing). It compares the canonical value (pending if edited) of the cells Glide
+  draws, never the whole result; NULL, DEFAULT and truncated values never match, and an
+  edited cell keeps its `state-modified` fill. Off with `appearance.highlight_equal_values`.
 
 ##### Hue map
 

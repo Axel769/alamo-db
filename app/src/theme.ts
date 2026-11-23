@@ -20,6 +20,8 @@ export type Tokens = {
   stateNew: string;
   /// Row to delete on save (--state-error): red, struck through.
   stateDeleted: string;
+  /// Cell equal to the selected one, in its column (--state-match).
+  stateMatch: string;
   cellFg: string;
   cellMutedFg: string;
   cellNullFg: string;
@@ -43,6 +45,7 @@ export const LIGHT: Tokens = {
   stateModified: "#F5DBA5",
   stateNew: "#C3EAC9",
   stateDeleted: "#FFD1CD",
+  stateMatch: "#DAEEFE",
   cellFg: "#15201B",
   cellMutedFg: "#4D5C55",
   cellNullFg: "#4D5C55",
@@ -65,6 +68,7 @@ export const DARK: Tokens = {
   stateModified: "#483400",
   stateNew: "#1F4127",
   stateDeleted: "#5C1717",
+  stateMatch: "#0F293A",
   cellFg: "#E4E9E5",
   cellMutedFg: "#9DA8A0",
   cellNullFg: "#9DA8A0",

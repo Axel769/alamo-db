@@ -12,6 +12,7 @@ export type Settings = {
     grid_font_size: number;
     grid_density: "compact" | "comfortable";
     high_contrast_grid: boolean;
+    highlight_equal_values: boolean;
   };
   editor: {
     autocomplete: boolean;
@@ -79,6 +80,7 @@ export type SettingValues = {
   "appearance.grid_font_size": number;
   "appearance.grid_density": "compact" | "comfortable";
   "appearance.high_contrast_grid": boolean;
+  "appearance.highlight_equal_values": boolean;
   "editor.autocomplete": boolean;
   "editor.autocomplete_delay_ms": number;
   "editor.uppercase_keywords": boolean;
@@ -154,6 +156,7 @@ export const SETTING_DEFS: readonly SettingDef[] = [
   { key: "appearance.grid_font_size", category: "appearance", kind: { kind: "int", min: 9, max: 24 }, label: "Grid text size (px)", help: "" },
   { key: "appearance.grid_density", category: "appearance", kind: { kind: "enum", values: ["compact", "comfortable"], labels: ["Compact (26 px rows)", "Comfortable (30 px rows)"] }, label: "Grid density", help: "" },
   { key: "appearance.high_contrast_grid", category: "appearance", kind: { kind: "bool" }, label: "High-contrast grid lines", help: "" },
+  { key: "appearance.highlight_equal_values", category: "appearance", kind: { kind: "bool" }, label: "Highlight equal values in the column", help: "Clicking a cell tints the other cells of its column with the same value." },
   { key: "editor.autocomplete", category: "editor", kind: { kind: "bool" }, label: "Autocomplete while typing", help: "" },
   { key: "editor.autocomplete_delay_ms", category: "editor", kind: { kind: "int", min: 0, max: 2000 }, label: "Autocomplete delay (ms)", help: "" },
   { key: "editor.uppercase_keywords", category: "editor", kind: { kind: "bool" }, label: "Uppercase keywords as you type", help: "When a space or a bracket closes a keyword; never inside strings, comments or quoted names." },
@@ -203,6 +206,7 @@ export const DEFAULTS: Settings = {
     "grid_font": "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace",
     "grid_font_size": 13,
     "high_contrast_grid": false,
+    "highlight_equal_values": true,
     "language": "it",
     "theme": "system"
   },

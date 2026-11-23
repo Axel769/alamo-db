@@ -628,7 +628,7 @@ export default function TableTab({
         {tab.sub === "data" && source !== null && !readOnly && (
           <RowActionButtons e={e} disabled={connId === null || tab.running || !st?.columns} />
         )}
-        {tab.sub === "data" && <PendingBar e={e} running={tab.running} />}
+        {tab.sub === "data" && <PendingBar e={e} />}
         {tab.sub === "data" && more?.loading && (
           <span className="more-status muted" role="status">
             {t("loading more rows…")}
