@@ -11,7 +11,7 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
-## Unreleased
+## [0.1.0-alpha.18] - 2026-11-23
 
 - Grid: clicking a cell tints the other cells of the same column with the same value, so repeated values stand out. It can be turned off in Settings → Appearance.
 - SQL tabs: a result paused after its first rows ("scroll for more rows") opened the cell editor, but the value typed was thrown away and the cell went back to the old one. The change is now kept, and Save writes it.
