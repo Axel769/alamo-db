@@ -10,7 +10,7 @@ import { IconChevronDown } from "./icons";
 export default function SqlPreview({ sql, dialect }: { sql: string; dialect: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
-  const [copied, copy] = useCopy(open);
+  const copied = useCopy(open);
   const pieces = useMemo(() => (open ? sqlPieces(sql, dialect) : []), [open, sql, dialect]);
 
   useEffect(() => {
@@ -57,9 +57,10 @@ export default function SqlPreview({ sql, dialect }: { sql: string; dialect: str
             <button
               className="btn small"
               autoFocus
-              onClick={() => copy(sql)}
+              title={copied.error ?? undefined}
+              onClick={() => copied.copy(sql)}
             >
-              {copied ? t("Copied") : t("Copy")}
+              {copied.label(t("Copy"))}
             </button>
           </div>
         </div>

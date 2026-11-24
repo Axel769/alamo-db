@@ -78,7 +78,7 @@ export default function RowPanel({
   const cache = cacheFor(connId, resultId, columns.length);
   const current = fresh ? undefined : cache.cell(row, col);
   const nul = nullText(useSettings((s) => s.settings.data));
-  const [copied, copy] = useCopy(`${connId}:${resultId}:${row}:${col}`);
+  const copied = useCopy(`${connId}:${resultId}:${row}:${col}`);
   const activeRef = useRef<HTMLDivElement | null>(null);
   // Field being edited in place: `initial` tells an untouched field (blur
   // without typing) from a real edit, so a NULL never becomes "".
@@ -156,7 +156,7 @@ export default function RowPanel({
       const v = fresh ? undefined : cache.cell(row, i);
       obj[c.name] = isDefaultCell(s) ? (v === undefined || v.isNull ? null : v.v) : (s ?? null);
     });
-    copy(JSON.stringify(obj, null, 2));
+    copied.copy(JSON.stringify(obj, null, 2));
   };
 
   return (
@@ -172,8 +172,8 @@ export default function RowPanel({
           {fresh ? t("new row") : t("row {n}", { n: (row + 1).toLocaleString(locale()) })}
         </span>
         <div className="spacer" />
-        <button className="btn small" onClick={copyJson} title={t("Copy the row as JSON")}>
-          {copied ? t("Copied") : "JSON"}
+        <button className="btn small" onClick={copyJson} title={copied.error ?? t("Copy the row as JSON")}>
+          {copied.label("JSON")}
         </button>
         <button
           className="btn small"

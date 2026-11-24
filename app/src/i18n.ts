@@ -250,6 +250,7 @@ const IT: Record<string, string> = {
   "Copy selection as": "Copia selezione come",
   "Rows or columns not contiguous: select a single block": "Righe o colonne non contigue: seleziona un blocco unico",
   "Copied": "Copiato",
+  "Copy failed": "Copia non riuscita",
   "History": "Cronologia",
   "Query history": "Cronologia query",
   "Connection closed: its tabs remain, disconnected": "Connessione chiusa: le tab restano, scollegate",

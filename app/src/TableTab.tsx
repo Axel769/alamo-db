@@ -21,7 +21,7 @@ import {
 } from "./ipc";
 import { useStore, connById, sharedBusyTab, tableMayHaveMore, TableRef, TableSub, TabUi, StatementUi } from "./store";
 import { t, tMsg } from "./i18n";
-import { isSelectAll, isTextField, useAction, withKey } from "./keymap";
+import { isTextField, useAction, withKey } from "./keymap";
 import { useCopy } from "./copy";
 import { sqlPieces } from "./editor";
 import { ErrorPanel, StatementPane } from "./ResultPane";
@@ -523,7 +523,7 @@ export default function TableTab({
     enabled: tab.sub === "ddl" && connId !== null,
     staleTime: Infinity,
   });
-  const [ddlCopied, copyDdl] = useCopy(`${connId}:${table.schema}.${table.name}`);
+  const ddlCopy = useCopy(`${connId}:${table.schema}.${table.name}`);
 
   // Reload (F5 / ⌘R): in Data reloads the data with the same query (filters
   // and server sort stay), like the button. The pending changes stay: they
@@ -669,9 +669,16 @@ export default function TableTab({
             </button>
           ))}
         {tab.sub === "ddl" && (
-          <button className="btn small" disabled={!ddl.data} onClick={() => ddl.data && copyDdl(ddl.data)}>
+          <button
+            className="btn small"
+            // A failed reload keeps the old text: the pane says "not
+            // available", Copy must not hand out the stale one.
+            disabled={!ddl.data || ddl.isError}
+            title={ddlCopy.error ?? undefined}
+            onClick={() => ddl.data && ddlCopy.copy(ddl.data)}
+          >
             <IconCopy />
-            {ddlCopied ? t("Copied") : t("Copy")}
+            {ddlCopy.label(t("Copy"))}
           </button>
         )}
         {tab.sub !== "data" && (
@@ -1096,27 +1103,28 @@ function StructurePane({ connId, table }: { connId: number; table: TableRef }) {
   );
 }
 
-/// Highlighted like the editor. Focusable: ⌘A selects the DDL only (not
-/// the page), then ⌘C copies it as usual.
+/// Over this size (partitions by the thousand) the DDL is shown plain:
+/// highlighting means one element per token, built all at once.
+const DDL_HIGHLIGHT_MAX = 100_000;
+
+/// Highlighted like the editor. ⌘A after a click selects it (a `pre`,
+/// selectAllScope), then ⌘C copies it as usual.
 function DdlPane({ ddl, dialect }: { ddl: UseQueryResult<string>; dialect: string }) {
-  const pieces = useMemo(() => (ddl.data ? sqlPieces(ddl.data, dialect) : []), [ddl.data, dialect]);
+  const pieces = useMemo(
+    () => (ddl.data && ddl.data.length <= DDL_HIGHLIGHT_MAX ? sqlPieces(ddl.data, dialect) : null),
+    [ddl.data, dialect]
+  );
   if (ddl.isLoading) return <div className="hint">{t("loading…")}</div>;
   if (ddl.isError) return <div className="hint">{t("DDL not available")}</div>;
   return (
-    <pre
-      className="ddl-pane"
-      tabIndex={-1}
-      onKeyDown={(e) => {
-        if (!isSelectAll(e.nativeEvent)) return;
-        e.preventDefault();
-        getSelection()?.selectAllChildren(e.currentTarget);
-      }}
-    >
-      {pieces.map((p, i) => (
-        <span key={i} className={p.cls || undefined}>
-          {p.text}
-        </span>
-      ))}
+    <pre className="ddl-pane">
+      {pieces
+        ? pieces.map((p, i) => (
+            <span key={i} className={p.cls || undefined}>
+              {p.text}
+            </span>
+          ))
+        : ddl.data}
     </pre>
   );
 }

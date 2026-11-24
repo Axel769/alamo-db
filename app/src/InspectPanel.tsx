@@ -2,7 +2,7 @@
 // in the grid — the grid truncates to 4KB on the wire and clamps the draw.
 // In an editable grid it is also where the long values are edited (like
 // DBeaver's value panel): every keystroke goes to pending, as the overlay.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { locale, t } from "./i18n";
 import { ColumnOut, DEFAULT_CELL, PendingValue } from "./ipc";
 import { cacheFor, useFullValue } from "./rowCache";
@@ -61,7 +61,7 @@ export default function InspectPanel({
   const cached = fresh ? undefined : cache.cell(row, col);
   const isNull = cached?.isNull ?? false;
   const needsFull = !fresh && (cached === undefined || cached.truncated);
-  const [copied, copy] = useCopy(`${connId}:${resultId}:${row}:${col}`);
+  const copied = useCopy(`${connId}:${resultId}:${row}:${col}`);
   // Height chosen by dragging the top edge: preference (localStorage),
   // null = CSS default. To read a long JSON the panel is raised.
   const panel = useRef<HTMLDivElement | null>(null);
@@ -190,12 +190,13 @@ export default function InspectPanel({
         <button
           className="btn small"
           disabled={value === null}
+          title={copied.error ?? undefined}
           onClick={() => {
             if (value === null) return;
-            copy(value);
+            copied.copy(value);
           }}
         >
-          {copied ? t("Copied") : t("Copy")}
+          {copied.label(t("Copy"))}
         </button>
         {onRowMode && (
           <button

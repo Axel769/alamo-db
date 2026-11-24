@@ -31,7 +31,7 @@ import {
 } from "./store";
 import { openConnFor, openDatabasePageOn } from "./databases";
 import { makePermanent, newSqlTab, openTablePreview } from "./tabs";
-import { IconCheck, IconChevronLeft, IconCopy, IconKey, IconRefresh, IconStar, RelIcon } from "./icons";
+import { IconAlert, IconCheck, IconChevronLeft, IconCopy, IconKey, IconRefresh, IconStar, RelIcon } from "./icons";
 import { useCopy } from "./copy";
 import { connColor } from "./connColor";
 import DbPicker from "./DbPicker";
@@ -972,15 +972,15 @@ function DatabasesView({
 /// Copies the name of the database (or schema) on screen, to paste it in a
 /// query or a message. The check says it is done.
 function CopyName({ name }: { name: string }) {
-  const [copied, copy] = useCopy(name);
+  const copied = useCopy(name);
   return (
     <button
       className="btn small"
-      title={copied ? t("Copied") : t("Copy the name")}
+      title={copied.error ?? copied.label(t("Copy the name"))}
       aria-label={t("Copy the name")}
-      onClick={() => copy(name)}
+      onClick={() => copied.copy(name)}
     >
-      {copied ? <IconCheck /> : <IconCopy />}
+      {copied.state === "copied" ? <IconCheck /> : copied.state === "failed" ? <IconAlert /> : <IconCopy />}
     </button>
   );
 }

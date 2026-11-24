@@ -539,7 +539,9 @@ export function groupSideIds(gid: number, side: "others" | "left" | "right"): st
 /// positional cycle.
 export function cycleMru(): void {
   const s = useStore.getState();
-  const next = s.mru.find((id) => id !== s.activeTabId && s.tabs.some((t) => t.id === id));
+  // From the connection page the tab under it is the last one used: it is
+  // the first to go back to, not skipped.
+  const next = s.mru.find((id) => (s.connPage !== null || id !== s.activeTabId) && s.tabs.some((t) => t.id === id));
   if (next) activateTab(next);
 }
 

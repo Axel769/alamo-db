@@ -350,7 +350,7 @@ function BudgetBanner({ tab, st }: { tab: TabUi; st: StatementUi }) {
 /// Hierarchical, never concatenated into one line (§6): message, detail,
 /// hint, context kept distinct. Click → position in the editor (§6.1).
 export function ErrorPanel({ error }: { error: ErrorOut }) {
-  const [copied, copy] = useCopy();
+  const copied = useCopy();
   // Full text for the Copy button: one line per part, so it can be pasted
   // in a ticket or a chat and read.
   const text = [
@@ -385,13 +385,13 @@ export function ErrorPanel({ error }: { error: ErrorOut }) {
         <div className="spacer" />
         <button
           className="btn small error-copy"
-          title={t("Copy the error message")}
+          title={copied.error ?? t("Copy the error message")}
           onClick={(e) => {
             e.stopPropagation();
-            copy(text);
+            copied.copy(text);
           }}
         >
-          {copied ? t("Copied") : t("Copy")}
+          {copied.label(t("Copy"))}
         </button>
       </div>
       {error.detail && <div className="error-detail">{tMsg(error.detail)}</div>}
