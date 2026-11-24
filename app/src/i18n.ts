@@ -737,6 +737,8 @@ const IT: Record<string, string> = {
   "Show favorites only": "Mostra solo i preferiti",
   "Show everything": "Mostra tutto",
   "no favorites": "nessun preferito",
+  "No favorites: mark them with the ☆ at the start of the row.": "Nessun preferito: segnali con la ☆ all'inizio della riga.",
+  "Copy the name": "Copia il nome",
   "Favorite": "Preferito",
   "Clear the history (open tabs are untouched)": "Svuota la cronologia (le tab aperte non si toccano)",
   "tab disconnected — reconnect the profile": "tab scollegata — riconnetti il profilo",
