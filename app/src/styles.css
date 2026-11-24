@@ -2160,6 +2160,11 @@ body,
   user-select: text;
 }
 
+/* Focusable only so that ⌘A selects the DDL: no focus ring on a text. */
+.ddl-pane:focus {
+  outline: none;
+}
+
 /* Statement tabs + "Export all" at the right, outside the scrolling strip. */
 .stmt-bar {
   display: flex;
