@@ -10,6 +10,7 @@ import { IconX } from "./icons";
 import { useDragSize } from "./dragSize";
 import { ValueEditor, ValueEditorOptions } from "./valueEditor";
 import { nullText } from "./display";
+import { useCopy } from "./copy";
 import { useSettings } from "./settings";
 
 type Props = {
@@ -60,7 +61,7 @@ export default function InspectPanel({
   const cached = fresh ? undefined : cache.cell(row, col);
   const isNull = cached?.isNull ?? false;
   const needsFull = !fresh && (cached === undefined || cached.truncated);
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopy(`${connId}:${resultId}:${row}:${col}`);
   // Height chosen by dragging the top edge: preference (localStorage),
   // null = CSS default. To read a long JSON the panel is raised.
   const panel = useRef<HTMLDivElement | null>(null);
@@ -70,7 +71,6 @@ export default function InspectPanel({
   // `get_cell_full` resolves the LOBs from the arena (§4.7); for values
   // already whole in the cache the call is avoided.
   const full = useFullValue(cache, row, col, !isNull && needsFull);
-  useEffect(() => setCopied(false), [connId, resultId, row, col]);
 
   const original = isNull ? null : needsFull ? full : (cached?.v ?? null);
   const loading = !isNull && needsFull && full === null;
@@ -192,10 +192,7 @@ export default function InspectPanel({
           disabled={value === null}
           onClick={() => {
             if (value === null) return;
-            void navigator.clipboard.writeText(value).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
+            copy(value);
           }}
         >
           {copied ? t("Copied") : t("Copy")}

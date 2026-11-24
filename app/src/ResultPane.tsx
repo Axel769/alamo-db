@@ -9,6 +9,7 @@ import GridView, { RowActions, ServerSortProps } from "./GridView";
 import InspectPanel from "./InspectPanel";
 import RowPanel, { RowLinks } from "./RowPanel";
 import { locale, t, tMsg } from "./i18n";
+import { useCopy } from "./copy";
 
 export function StatementPane({
   tab,
@@ -349,7 +350,7 @@ function BudgetBanner({ tab, st }: { tab: TabUi; st: StatementUi }) {
 /// Hierarchical, never concatenated into one line (§6): message, detail,
 /// hint, context kept distinct. Click → position in the editor (§6.1).
 export function ErrorPanel({ error }: { error: ErrorOut }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, copy] = useCopy();
   // Full text for the Copy button: one line per part, so it can be pasted
   // in a ticket or a chat and read.
   const text = [
@@ -387,10 +388,7 @@ export function ErrorPanel({ error }: { error: ErrorOut }) {
           title={t("Copy the error message")}
           onClick={(e) => {
             e.stopPropagation();
-            void navigator.clipboard.writeText(text).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
+            copy(text);
           }}
         >
           {copied ? t("Copied") : t("Copy")}

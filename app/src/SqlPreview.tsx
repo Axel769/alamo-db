@@ -3,18 +3,18 @@
 // space from the chips). Inside: the whole query, highlighted, to copy.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sqlPieces } from "./editor";
+import { useCopy } from "./copy";
 import { t } from "./i18n";
 import { IconChevronDown } from "./icons";
 
 export default function SqlPreview({ sql, dialect }: { sql: string; dialect: string }) {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
+  const [copied, copy] = useCopy(open);
   const pieces = useMemo(() => (open ? sqlPieces(sql, dialect) : []), [open, sql, dialect]);
 
   useEffect(() => {
     if (!open) return;
-    setCopied(false);
     const close = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
@@ -57,12 +57,7 @@ export default function SqlPreview({ sql, dialect }: { sql: string; dialect: str
             <button
               className="btn small"
               autoFocus
-              onClick={() =>
-                void navigator.clipboard.writeText(sql).then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                })
-              }
+              onClick={() => copy(sql)}
             >
               {copied ? t("Copied") : t("Copy")}
             </button>
