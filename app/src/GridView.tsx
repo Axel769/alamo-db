@@ -26,7 +26,7 @@ import { tokens } from "./theme";
 import { useSettings } from "./settings";
 import { clampText, DataSettings, displayText, isLong, nullText } from "./display";
 import { gridFont, gridRowHeight } from "./appearance";
-import { isMac, keyHint, useAction } from "./keymap";
+import { isMac, isSelectAll, isTextField, keyHint, selectAllScope, useAction } from "./keymap";
 import { ExportDialog } from "./ExportDialog";
 
 const HEADER_HEIGHT = 28;
@@ -184,6 +184,9 @@ const NO_CUTS: ColumnCuts = new Map();
 
 /// The key that adds to a selection, the same one Glide reads.
 const isMultiKey = (e: { metaKey: boolean; ctrlKey: boolean }) => (isMac ? e.metaKey : e.ctrlKey);
+
+/// Open dialogs, palettes and popovers: ⌘A there is not for the grid behind.
+const MODAL = '.dialog-overlay, .confirm-overlay, .cmdk-overlay, .db-picker-pop, [role="dialog"]';
 
 const EMPTY_SELECTION: GridSelection = {
   columns: CompactSelection.empty(),
@@ -571,6 +574,49 @@ export default function GridView({
     focusAfterSelect.current = false;
     gridRef.current?.focus();
   }, [selection]);
+  // ⌘A with the focus outside the grid (a tab just clicked leaves it on the
+  // page): selects all the cells and gives the grid the focus, instead of
+  // selecting the text of the page. Capture phase, before the page fallback
+  // (installKeymap). Text fields, an open dialog and a grid with the focus
+  // (Glide's own ⌘A) keep theirs.
+  // A new current cell and range, from the user or from ⌘A: the panels
+  // follow (the new rows too: the cell panel shows and edits their
+  // pending value) and the range is prefetched, so the synchronous Cmd+C
+  // finds everything.
+  const selectionChanged = (cell: Item, r: Rectangle) => {
+    onInspect?.(toModelRow(cell[1]), cell[0]);
+    for (let row = r.y; row < r.y + r.height; row += BLOCK) requestRow(row);
+    requestRow(r.y + r.height - 1);
+  };
+  // Read by the listener, registered once: always this render's values.
+  const selectAllRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  selectAllRef.current = (e) => {
+    const wrap = wrapRef.current;
+    const active = document.activeElement;
+    if (e.defaultPrevented || !isSelectAll(e) || !wrap || isTextField(active)) return;
+    if (active?.closest("[data-grid]") || document.querySelector(MODAL) || selectAllScope()) return;
+    // Mounted but not on screen (a tab behind): the wrapper is
+    // `display: contents`, the canvas has the boxes.
+    if (!wrap.querySelector("canvas")?.getClientRects().length) return;
+    e.preventDefault();
+    if (displayRows === 0 || columns.length === 0) return;
+    focusAfterSelect.current = true;
+    setCuts(NO_CUTS);
+    // The same selection Glide makes for ⌘A.
+    const cell = selection.current?.cell ?? [0, 0];
+    const range = { x: 0, y: 0, width: columns.length, height: displayRows };
+    setSelection({
+      columns: CompactSelection.empty(),
+      rows: CompactSelection.empty(),
+      current: { cell, range, rangeStack: [] },
+    });
+    selectionChanged(cell, range);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => selectAllRef.current(e);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   // First block arrived (or already cached on remount): the columns that do
   // not yet have a fitted width are measured.
   useEffect(() => {
@@ -1309,6 +1355,7 @@ export default function GridView({
       )}
       <div
         ref={wrapRef}
+        data-grid
         style={{ display: "contents" }}
         onMouseDownCapture={(e) => (multiPress.current = e.button === 0 && isMultiKey(e))}
       >
@@ -1394,15 +1441,7 @@ export default function GridView({
             s = { ...s, current: { cell: [col, row], range: { x: col, y: row, width: 1, height: 1 }, rangeStack: [] } };
           }
           setSelection(s);
-          if (s.current) {
-            // The new rows too: the cell panel shows (and edits) their
-            // pending value.
-            onInspect?.(toModelRow(s.current.cell[1]), s.current.cell[0]);
-            // Prefetch of the selection: so the synchronous Cmd+C finds everything.
-            const r = s.current.range;
-            for (let row = r.y; row < r.y + r.height; row += BLOCK) requestRow(row);
-            requestRow(r.y + r.height - 1);
-          }
+          if (s.current) selectionChanged(s.current.cell, s.current.range);
           // Whole rows: same prefetch, for Cmd+C.
           for (const row of s.rows) requestRow(row);
         }}

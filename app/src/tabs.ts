@@ -258,7 +258,7 @@ export function openDatabasePage(connId: number, db: string): void {
   }
   openedDbByConn.set(connId, db);
   if (conn.profile.id !== null) rememberOpenedDb(conn.profile.id, db);
-  useStore.setState((s) => ({ connPage: connId, activeConnId: connId, connPageNav: s.connPageNav + 1 }));
+  useStore.getState().openConnPage(connId, true);
 }
 
 /// "New query on this database" from the marker's menu: a SQL tab on that
@@ -303,7 +303,7 @@ export function activateTab(id: string): void {
   if (id === s.activeTabId) {
     // Already the active tab, but covered by the connection page: the
     // click must bring it back to the foreground, not be ignored.
-    if (s.connPage !== null) useStore.setState({ connPage: null });
+    if (s.connPage !== null) s.activateTab(id);
     return;
   }
   // The pending save of the current tab starts NOW, before the view
@@ -539,7 +539,9 @@ export function groupSideIds(gid: number, side: "others" | "left" | "right"): st
 /// positional cycle.
 export function cycleMru(): void {
   const s = useStore.getState();
-  const next = s.mru.find((id) => id !== s.activeTabId && s.tabs.some((t) => t.id === id));
+  // From the connection page the tab under it is the last one used: it is
+  // the first to go back to, not skipped.
+  const next = s.mru.find((id) => (s.connPage !== null || id !== s.activeTabId) && s.tabs.some((t) => t.id === id));
   if (next) activateTab(next);
 }
 

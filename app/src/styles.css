@@ -3679,12 +3679,11 @@ ul.transfer-hint {
   padding-right: 0;
 }
 
+/* Always visible here (not on hover): the page is where one learns how
+   to mark a favorite, and "favorites only" depends on it. */
 .conn-page-table td.fav .fav-star {
   margin-left: 0;
   cursor: pointer;
-}
-
-.conn-page-table tbody tr:hover .fav-star {
   visibility: visible;
 }
 

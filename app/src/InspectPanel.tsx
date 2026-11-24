@@ -2,7 +2,7 @@
 // in the grid — the grid truncates to 4KB on the wire and clamps the draw.
 // In an editable grid it is also where the long values are edited (like
 // DBeaver's value panel): every keystroke goes to pending, as the overlay.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { locale, t } from "./i18n";
 import { ColumnOut, DEFAULT_CELL, PendingValue } from "./ipc";
 import { cacheFor, useFullValue } from "./rowCache";
@@ -10,6 +10,7 @@ import { IconX } from "./icons";
 import { useDragSize } from "./dragSize";
 import { ValueEditor, ValueEditorOptions } from "./valueEditor";
 import { nullText } from "./display";
+import { useCopy } from "./copy";
 import { useSettings } from "./settings";
 
 type Props = {
@@ -60,7 +61,7 @@ export default function InspectPanel({
   const cached = fresh ? undefined : cache.cell(row, col);
   const isNull = cached?.isNull ?? false;
   const needsFull = !fresh && (cached === undefined || cached.truncated);
-  const [copied, setCopied] = useState(false);
+  const copied = useCopy(`${connId}:${resultId}:${row}:${col}`);
   // Height chosen by dragging the top edge: preference (localStorage),
   // null = CSS default. To read a long JSON the panel is raised.
   const panel = useRef<HTMLDivElement | null>(null);
@@ -70,7 +71,6 @@ export default function InspectPanel({
   // `get_cell_full` resolves the LOBs from the arena (§4.7); for values
   // already whole in the cache the call is avoided.
   const full = useFullValue(cache, row, col, !isNull && needsFull);
-  useEffect(() => setCopied(false), [connId, resultId, row, col]);
 
   const original = isNull ? null : needsFull ? full : (cached?.v ?? null);
   const loading = !isNull && needsFull && full === null;
@@ -190,15 +190,13 @@ export default function InspectPanel({
         <button
           className="btn small"
           disabled={value === null}
+          title={copied.error ?? undefined}
           onClick={() => {
             if (value === null) return;
-            void navigator.clipboard.writeText(value).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
+            copied.copy(value);
           }}
         >
-          {copied ? t("Copied") : t("Copy")}
+          {copied.label(t("Copy"))}
         </button>
         {onRowMode && (
           <button

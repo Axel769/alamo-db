@@ -31,7 +31,8 @@ import {
 } from "./store";
 import { openConnFor, openDatabasePageOn } from "./databases";
 import { makePermanent, newSqlTab, openTablePreview } from "./tabs";
-import { IconChevronLeft, IconKey, IconRefresh, IconStar, RelIcon } from "./icons";
+import { IconAlert, IconCheck, IconChevronLeft, IconCopy, IconKey, IconRefresh, IconStar, RelIcon } from "./icons";
+import { useCopy } from "./copy";
 import { connColor } from "./connColor";
 import DbPicker from "./DbPicker";
 import { FavStar, useFavorites } from "./favorites";
@@ -213,7 +214,7 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
   /// PG: back to the server's databases, on the profile's connection's page.
   const backToDbs = () => {
     pgDbEntered.delete(rootId);
-    useStore.setState((s) => ({ connPage: rootId, activeConnId: rootId, connPageNav: s.connPageNav + 1 }));
+    useStore.getState().openConnPage(rootId, true);
   };
   // Server's databases (PG): same query key as the tree.
   const dbs = useQuery({
@@ -332,6 +333,7 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
               title={t("Switch to another database")}
               onPick={enterDb}
             />
+            <CopyName name={profileDatabase(conn)} />
           </span>
         )}
         {opened !== null && (
@@ -351,6 +353,7 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
               title={switchDb ? t("Switch to another database") : t("Switch to another schema")}
               onPick={(name) => enter(name)}
             />
+            <CopyName name={opened} />
           </span>
         )}
         {favs && (
@@ -514,7 +517,7 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
           </table>
           {schemas.isLoading && <div className="tree-note">{t("loading…")}</div>}
           {!schemas.isLoading && rows.visible.length === 0 && (
-            <div className="tree-note">{favOnly && filter.trim() === "" ? t("no favorites") : t("no results")}</div>
+            <div className="tree-note">{favOnly && filter.trim() === "" ? t("No favorites: mark them with the ☆ at the start of the row.") : t("no results")}</div>
           )}
         </div>
         <aside className="conn-page-side">
@@ -660,7 +663,7 @@ function TablesView({
           />
         )}
         {!rels.isLoading && !rels.isError && list.length === 0 && (
-          <div className="tree-note">{favOnly && !f ? t("no favorites") : t("no results")}</div>
+          <div className="tree-note">{favOnly && !f ? t("No favorites: mark them with the ☆ at the start of the row.") : t("no results")}</div>
         )}
       </div>
       <aside className="conn-page-side">
@@ -963,5 +966,21 @@ function DatabasesView({
         </aside>
       </div>
     </>
+  );
+}
+
+/// Copies the name of the database (or schema) on screen, to paste it in a
+/// query or a message. The check says it is done.
+function CopyName({ name }: { name: string }) {
+  const copied = useCopy(name);
+  return (
+    <button
+      className="btn small"
+      title={copied.error ?? copied.label(t("Copy the name"))}
+      aria-label={t("Copy the name")}
+      onClick={() => copied.copy(name)}
+    >
+      {copied.state === "copied" ? <IconCheck /> : copied.state === "failed" ? <IconAlert /> : <IconCopy />}
+    </button>
   );
 }

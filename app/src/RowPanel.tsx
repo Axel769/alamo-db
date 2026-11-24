@@ -10,6 +10,7 @@ import { IconX } from "./icons";
 import { useDragSize } from "./dragSize";
 import { isLong, nullText } from "./display";
 import { useSettings } from "./settings";
+import { useCopy } from "./copy";
 
 /// A jump to another table: `go(true)` opens it in a new tab.
 export type RowLink = { label: string; title: string; go: (newTab: boolean) => void };
@@ -77,7 +78,7 @@ export default function RowPanel({
   const cache = cacheFor(connId, resultId, columns.length);
   const current = fresh ? undefined : cache.cell(row, col);
   const nul = nullText(useSettings((s) => s.settings.data));
-  const [copied, setCopied] = useState(false);
+  const copied = useCopy(`${connId}:${resultId}:${row}:${col}`);
   const activeRef = useRef<HTMLDivElement | null>(null);
   // Field being edited in place: `initial` tells an untouched field (blur
   // without typing) from a real edit, so a NULL never becomes "".
@@ -107,7 +108,6 @@ export default function RowPanel({
   // other truncated ones stay truncated and say so.
   const needsFull = current !== undefined && !current.isNull && current.truncated;
   const full = useFullValue(cache, row, col, needsFull);
-  useEffect(() => setCopied(false), [connId, resultId, row, col]);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "nearest" });
@@ -156,10 +156,7 @@ export default function RowPanel({
       const v = fresh ? undefined : cache.cell(row, i);
       obj[c.name] = isDefaultCell(s) ? (v === undefined || v.isNull ? null : v.v) : (s ?? null);
     });
-    void navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    copied.copy(JSON.stringify(obj, null, 2));
   };
 
   return (
@@ -175,8 +172,8 @@ export default function RowPanel({
           {fresh ? t("new row") : t("row {n}", { n: (row + 1).toLocaleString(locale()) })}
         </span>
         <div className="spacer" />
-        <button className="btn small" onClick={copyJson} title={t("Copy the row as JSON")}>
-          {copied ? t("Copied") : "JSON"}
+        <button className="btn small" onClick={copyJson} title={copied.error ?? t("Copy the row as JSON")}>
+          {copied.label("JSON")}
         </button>
         <button
           className="btn small"

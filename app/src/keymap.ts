@@ -188,6 +188,19 @@ export function comboOf(e: KeyboardEvent): Combo | null {
 
 const comboKey = (c: Combo) => `${+c.ctrl}${+c.alt}${+c.shift}${+c.meta}:${c.key}`;
 
+/// A field where the keys write text (CodeMirror is contenteditable): its
+/// own shortcuts (⌘A, ⌥←) win over the app's.
+export function isTextField(el: EventTarget | null): boolean {
+  return el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+}
+
+/// ⌘A / Ctrl+A. Fixed, not in ACTIONS: Glide reads the same combo itself.
+const SELECT_ALL = comboKey(parseCombo("Mod-a")!);
+export function isSelectAll(e: KeyboardEvent): boolean {
+  const c = comboOf(e);
+  return c !== null && comboKey(c) === SELECT_ALL;
+}
+
 /// The combo back in the registry's notation, `Mod` for this platform's
 /// primary modifier (⌘ on macOS, Ctrl elsewhere): what a recorded shortcut
 /// is saved as, so the settings file reads the same on every OS.
@@ -381,4 +394,29 @@ export function installKeymap(): void {
   installed = true;
   window.addEventListener("keydown", (e) => dispatch(e, true), true);
   window.addEventListener("keydown", (e) => dispatch(e, false));
+  // ⌘A outside text fields and grids (a grid takes it, GridView) would
+  // select the text of the whole page: it selects the text block clicked
+  // last (selectAllScope), else nothing.
+  window.addEventListener("pointerdown", (e) => (lastPointer = e.target), true);
+  window.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || !isSelectAll(e) || isTextField(e.target)) return;
+    e.preventDefault();
+    const scope = selectAllScope();
+    if (scope) getSelection()?.selectAllChildren(scope);
+  });
+}
+
+let lastPointer: EventTarget | null = null;
+
+/// Read-only text the user can select and copy: a dialog's body (release
+/// notes, transaction log), a `pre` (DDL, error context), an error.
+const TEXT_SCOPE = "pre, .error-panel, .catalog-error";
+
+/// The text block ⌘A should select: the one clicked last, if the focus
+/// is still there (on the page, or on a control inside it). `null` = none.
+export function selectAllScope(): Element | null {
+  const el = lastPointer instanceof Element ? lastPointer : null;
+  const active = document.activeElement;
+  if (!el?.isConnected || (active && active !== document.body && !active.contains(el) && !el.contains(active))) return null;
+  return el.closest(".dialog-body") ?? el.closest(TEXT_SCOPE);
 }

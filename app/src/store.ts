@@ -321,7 +321,9 @@ type Store = {
   /// Bumped when something outside the page (the tab bar's database
   /// marker) sets the database it shows: the mounted page re-reads it.
   connPageNav: number;
-  /// MRU order (ids, most recent first) for Ctrl+Tab (§9.5).
+  /// MRU order, most recent first (§9.5): tab ids, and the connection
+  /// pages (`pageMru`) that were in front, so closing a tab goes back to
+  /// the page it was opened from. Ctrl+Tab skips the pages.
   mru: string[];
   nextTabId: number;
 
@@ -343,7 +345,9 @@ type Store = {
   setTxnState: (connId: number, st: TxnState) => void;
   setConnectError: (err: ErrorOut | null) => void;
   /// Shows the page of an open connection (which becomes the current one).
-  openConnPage: (connId: number) => void;
+  /// `nav`: the caller has just set the database it shows (bumps
+  /// `connPageNav`, the mounted page re-reads it).
+  openConnPage: (connId: number, nav?: boolean) => void;
   hydrate: (tabs: TabUi[], activeTabId: string, nextTabId: number) => void;
   addTab: (tab: TabUi) => void;
   activateTab: (id: string) => void;
@@ -538,6 +542,9 @@ function touchMru(mru: string[], id: string): string[] {
   return [id, ...mru.filter((x) => x !== id)];
 }
 
+/// MRU entry of a connection page: tab ids are numbers, no clash.
+const pageMru = (connId: number) => `page:${connId}`;
+
 // invoke/channel race: events travel on a channel separate from the
 // `invoke` response, so for instantaneous queries (e.g. immediate error)
 // they can arrive BEFORE startExecution registers the execId on the tab.
@@ -686,8 +693,17 @@ export const useStore = create<Store>((set, get) => ({
 
   setConnectError: (err) => set({ connectError: err }),
 
-  openConnPage: (connId) =>
-    set((s) => (s.connections.some((c) => c.connId === connId) ? { connPage: connId, activeConnId: connId } : {})),
+  openConnPage: (connId, nav = false) =>
+    set((s) =>
+      s.connections.some((c) => c.connId === connId)
+        ? {
+            connPage: connId,
+            activeConnId: connId,
+            mru: touchMru(s.mru, pageMru(connId)),
+            ...(nav ? { connPageNav: s.connPageNav + 1 } : {}),
+          }
+        : {}
+    ),
 
   hydrate: (tabs, activeTabId, nextTabId) =>
     set({
@@ -734,12 +750,15 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const mru = s.mru.filter((x) => x !== id);
-      let activeTabId = s.activeTabId;
-      if (activeTabId === id) {
-        // MRU, not positional: back to where one was working (§9.5).
-        activeTabId = mru.find((x) => tabs.some((t) => t.id === x)) ?? tabs[0]?.id ?? "";
-      }
-      return { tabs, mru, activeTabId };
+      if (s.activeTabId !== id) return { tabs, mru };
+      // MRU, not positional: back to where one was working (§9.5), the
+      // connection page too when the tab was opened from there.
+      const activeTabId = mru.find((x) => tabs.some((t) => t.id === x)) ?? tabs[0]?.id ?? "";
+      const back = mru.find((x) => x === activeTabId || s.connections.some((c) => x === pageMru(c.connId)));
+      const page = s.connPage === null ? s.connections.find((c) => back === pageMru(c.connId)) : undefined;
+      return page
+        ? { tabs, mru, activeTabId, connPage: page.connId, activeConnId: page.connId }
+        : { tabs, mru, activeTabId };
     }),
 
   makePermanent: (id) =>
