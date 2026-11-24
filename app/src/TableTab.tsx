@@ -21,7 +21,7 @@ import {
 } from "./ipc";
 import { useStore, connById, sharedBusyTab, tableMayHaveMore, TableRef, TableSub, TabUi, StatementUi } from "./store";
 import { t, tMsg } from "./i18n";
-import { useAction, withKey } from "./keymap";
+import { isTextField, useAction, withKey } from "./keymap";
 import { ErrorPanel, StatementPane } from "./ResultPane";
 import { RunningNotice } from "./RunningNotice";
 import { cacheFor, dropCache } from "./rowCache";
@@ -488,8 +488,7 @@ export default function TableTab({
   // Back/forward in the tab, like in the browser. Not inside text fields,
   // where ⌥+arrow moves the cursor by one word.
   const navKey = (dir: -1 | 1) => (e: KeyboardEvent) => {
-    const el = e.target as HTMLElement | null;
-    if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return false;
+    if (isTextField(e.target)) return false;
     navStep(dir);
     return true;
   };

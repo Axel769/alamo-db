@@ -188,6 +188,19 @@ export function comboOf(e: KeyboardEvent): Combo | null {
 
 const comboKey = (c: Combo) => `${+c.ctrl}${+c.alt}${+c.shift}${+c.meta}:${c.key}`;
 
+/// A field where the keys write text (CodeMirror is contenteditable): its
+/// own shortcuts (⌘A, ⌥←) win over the app's.
+export function isTextField(el: EventTarget | null): boolean {
+  return el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+}
+
+/// ⌘A / Ctrl+A. Fixed, not in ACTIONS: Glide reads the same combo itself.
+const SELECT_ALL = comboKey(parseCombo("Mod-a")!);
+export function isSelectAll(e: KeyboardEvent): boolean {
+  const c = comboOf(e);
+  return c !== null && comboKey(c) === SELECT_ALL;
+}
+
 /// The combo back in the registry's notation, `Mod` for this platform's
 /// primary modifier (⌘ on macOS, Ctrl elsewhere): what a recorded shortcut
 /// is saved as, so the settings file reads the same on every OS.
@@ -381,4 +394,9 @@ export function installKeymap(): void {
   installed = true;
   window.addEventListener("keydown", (e) => dispatch(e, true), true);
   window.addEventListener("keydown", (e) => dispatch(e, false));
+  // ⌘A outside text fields and grids (a grid takes it, GridView) would
+  // select the text of the whole page: in a desktop app it selects nothing.
+  window.addEventListener("keydown", (e) => {
+    if (!e.defaultPrevented && isSelectAll(e) && !isTextField(e.target)) e.preventDefault();
+  });
 }
