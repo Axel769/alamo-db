@@ -822,6 +822,9 @@ editor) in the same strip, differentiated by icon.
   minutes of exploration there are 40 open tabs.
 - **Overflow dropdown**, pin, "close the others".
 - Keyboard navigation: `Ctrl+Tab` in MRU order, `Ctrl+PgUp/PgDn` positional.
+- Closing the active tab goes back along the same MRU, which also records the
+  connection page (not a tab): a table opened from the page closes back to the
+  page, not to the leftmost tab. `Ctrl+Tab` skips the page entries.
 - **Every tab shows the connection colour** (border or dot). With heterogeneous tabs
   mixed together, without this the user loses track of which connection each one points to —
   and it is the point where the "prod" colour (§9.7) really starts to work.

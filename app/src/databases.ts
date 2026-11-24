@@ -44,5 +44,5 @@ export async function connForDatabase(rootId: number, db: string): Promise<numbe
 export async function openDatabasePageOn(rootId: number, db: string): Promise<void> {
   const id = await connForDatabase(rootId, db);
   if (id === rootId) pgDbEntered.add(rootId);
-  useStore.setState((s) => ({ connPage: id, activeConnId: id, connPageNav: s.connPageNav + 1 }));
+  useStore.getState().openConnPage(id, true);
 }

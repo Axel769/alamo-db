@@ -214,7 +214,7 @@ export default function ConnectionPage({ conn, onEditProfile, actions }: Props) 
   /// PG: back to the server's databases, on the profile's connection's page.
   const backToDbs = () => {
     pgDbEntered.delete(rootId);
-    useStore.setState((s) => ({ connPage: rootId, activeConnId: rootId, connPageNav: s.connPageNav + 1 }));
+    useStore.getState().openConnPage(rootId, true);
   };
   // Server's databases (PG): same query key as the tree.
   const dbs = useQuery({

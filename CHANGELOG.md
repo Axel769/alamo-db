@@ -16,6 +16,7 @@ Before launching "Release (alpha)": bump `version` in
 - Grid: ⌘A (Ctrl+A on Windows and Linux) after clicking a tab or a result selected the text of the whole window. It now selects all the cells of the grid in front and puts the focus there, ready for ⌘C. In the SQL editor and in text fields it still selects their text.
 - Table tabs, DDL: the CREATE TABLE is colored like the SQL editor and has a Copy button next to Reload. ⌘A after a click in the DDL selects only the DDL.
 - Connection page: next to the database (or schema) name there is a button to copy it. The favorite stars of databases and tables are always visible, not only on hover, and "favorites only" with nothing starred says how to mark them.
+- Closing a tab goes back to where you were before it: also the connection or database page, when the tab was opened from there (before, it went to another tab).
 
 ## [0.1.0-alpha.18] - 2026-11-23
 
