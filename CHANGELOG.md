@@ -13,6 +13,8 @@ Before launching "Release (alpha)": bump `version` in
 
 ## Unreleased
 
+- Grid: ⌘+click (Ctrl+click on Windows and Linux) on a cell adds it to the selection instead of replacing it, like in DBeaver; ⌘+drag adds a block. ⌘C copies the selected cells in their rows and columns (the cells in between stay empty), and Set NULL (also ⇧Delete), Set DEFAULT, Generate UUID and a typed value apply to all of them.
+
 - Production connections (and manual commit): a SELECT always shows the current data. Before, the first query opened a transaction and the next SELECTs kept showing the data as it was then, missing what other programs had saved. The transaction now starts at the first change (UPDATE, INSERT, DELETE, DDL) or at a SELECT … FOR UPDATE, and Commit/Rollback work as before.
 
 ## [0.1.0-alpha.19] - 2026-11-24

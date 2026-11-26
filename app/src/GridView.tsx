@@ -193,6 +193,34 @@ const EMPTY_SELECTION: GridSelection = {
   rows: CompactSelection.empty(),
 };
 
+/// Rectangles of a cell selection: the current one and those added with
+/// ⌘/Ctrl+click (rangeSelect "multi-rect").
+const selectedRects = (cur: NonNullable<GridSelection["current"]>): readonly Rectangle[] => [
+  cur.range,
+  ...cur.rangeStack,
+];
+const inRect = (r: Rectangle, col: number, row: number) =>
+  col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height;
+
+/// Text of a sparse selection (like DBeaver): one line per row from `from`
+/// to `to` with at least one selected cell, the columns side by side; a
+/// cell outside the selection copies empty.
+function sparseLines(
+  from: number,
+  to: number,
+  cols: readonly number[],
+  has: (row: number, col: number) => boolean,
+  text: (row: number, col: number) => string
+): string[][] {
+  const lines: string[][] = [];
+  for (let r = from; r < to; r++) {
+    const kept = cols.map((c) => has(r, c));
+    if (!kept.includes(true)) continue;
+    lines.push(cols.map((c, i) => (kept[i] ? text(r, c) : "")));
+  }
+  return lines;
+}
+
 export default function GridView({
   connId,
   resultId,
@@ -825,25 +853,18 @@ export default function GridView({
       // next frame so as not to capture normal navigation.
       keepSelection.current = { cell, columns: selection.columns };
       requestAnimationFrame(() => (keepSelection.current = null));
-      // Multi-cell (decision 12): overlay commit with a rectangle larger
-      // than the cell selected → same value on the whole rectangle. The
-      // edited cell must be inside the
-      // rectangle: an overlay opened elsewhere has nothing to do with the selection.
+      // Multi-cell (decision 12): overlay commit with more than the cell
+      // selected (a larger rectangle, or several with ⌘/Ctrl+click) → same
+      // value on all of them. The edited cell must be inside the
+      // selection: an overlay opened elsewhere has nothing to do with it.
       if (onEditCells && selection.columns.hasIndex(col)) {
         editColumns(selection.columns, newValue.data);
         return;
       }
-      const r = selection.current?.range;
-      if (
-        onEditCells &&
-        r &&
-        (r.width > 1 || r.height > 1) &&
-        col >= r.x &&
-        col < r.x + r.width &&
-        row >= r.y &&
-        row < r.y + r.height
-      ) {
-        editRect(r, newValue.data);
+      const rects = selection.current ? selectedRects(selection.current) : [];
+      const multi = rects.length > 1 || rects.some((r) => r.width > 1 || r.height > 1);
+      if (onEditCells && multi && rects.some((r) => inRect(r, col, row))) {
+        for (const r of rects) editRect(r, newValue.data);
         return;
       }
       if (cur === undefined) return;
@@ -894,9 +915,9 @@ export default function GridView({
         editColumns(sel.columns, null);
         return false;
       }
-      const r = sel.current?.range;
-      if (onEditCells && editable && r && (r.width > 1 || r.height > 1)) {
-        editRect(r, null);
+      const cur = sel.current;
+      if (onEditCells && editable && cur && (cur.rangeStack.length > 0 || cur.range.width > 1 || cur.range.height > 1)) {
+        for (const r of selectedRects(cur)) editRect(r, null);
         return false;
       }
       proposeNull();
@@ -914,7 +935,7 @@ export default function GridView({
       // Whole columns: their current cell (see onGridSelectionChange) does
       // not make its row a target — Delete would delete it.
       if (sel.current && sel.columns.length === 0) {
-        for (const rect of [sel.current.range, ...sel.current.rangeStack])
+        for (const rect of selectedRects(sel.current))
           for (let r = rect.y; r < rect.y + rect.height; r++) set.add(r);
       }
       return [...set]
@@ -931,7 +952,7 @@ export default function GridView({
         let last = -1;
         for (const r of selection.rows) last = Math.max(last, r);
         const cur = selection.current;
-        if (cur) for (const rect of [cur.range, ...cur.rangeStack]) last = Math.max(last, rect.y + rect.height - 1);
+        if (cur) for (const rect of selectedRects(cur)) last = Math.max(last, rect.y + rect.height - 1);
         return layout.below(last >= 0 ? Math.min(last, displayRows - 1) : regionRef.current.y - 1);
       },
       cursorAfterSave: () => {
@@ -1137,11 +1158,7 @@ export default function GridView({
       // Inside the selection also whole rows or columns (row number, "select
       // all" box): the right click must not lose them.
       const inSel =
-        (cur &&
-          col >= cur.range.x &&
-          col < cur.range.x + cur.range.width &&
-          row >= cur.range.y &&
-          row < cur.range.y + cur.range.height) ||
+        (cur && selectedRects(cur).some((r) => inRect(r, col, row))) ||
         selection.rows.hasIndex(row) ||
         (selection.columns.hasIndex(col) && !cuts.get(col)?.has(row));
       // Right click outside the selection: the selection becomes the clicked
@@ -1170,7 +1187,7 @@ export default function GridView({
   /// rows/columns (or columns with cells taken out), not copyable this way.
   const copyRect = useCallback((): Rectangle | null => {
     const cur = selection.current;
-    if (cur && selection.columns.length === 0) return cur.range;
+    if (cur && selection.columns.length === 0) return cur.rangeStack.length > 0 ? null : cur.range;
     const span = (sel: CompactSelection): [number, number] | null => {
       const first = sel.first();
       const last = sel.last();
@@ -1273,6 +1290,7 @@ export default function GridView({
       if (copy.headers) lines.unshift(cols.map((c) => columns[c].name));
       return toDelimited(lines, separatorOf(copy), copy.quote === "always");
     };
+    const cellText = (row: number, col: number) => cellStrings({ x: col, y: row, width: 1, height: 1 })[0][0];
     const onCopy = (e: ClipboardEvent) => {
       const cur = selection.current;
       if (!focused() || e.clipboardData === null) return;
@@ -1293,18 +1311,27 @@ export default function GridView({
       // out copies empty; a row with nothing left is skipped.
       if (selection.columns.length > 0) {
         const cols = [...selection.columns];
-        const lines: string[][] = [];
-        for (let r = 0; r < displayRows; r++) {
-          const kept = cols.map((c) => !cuts.get(c)?.has(r));
-          if (!kept.includes(true)) continue;
-          lines.push(cols.map((c, i) => (kept[i] ? cellStrings({ x: c, y: r, width: 1, height: 1 })[0][0] : "")));
-        }
+        const lines = sparseLines(0, displayRows, cols, (r, c) => !cuts.get(c)?.has(r), cellText);
         lastSingleCopy = null;
         e.clipboardData.setData("text/plain", delimited(lines, cols));
         e.preventDefault();
         return;
       }
       if (!cur) return;
+      // Cells added with ⌘/Ctrl+click: the rows and columns they touch.
+      if (cur.rangeStack.length > 0) {
+        const rects = selectedRects(cur);
+        const cols = [...new Set(rects.flatMap((r) => Array.from({ length: r.width }, (_, i) => r.x + i)))].sort(
+          (a, b) => a - b
+        );
+        const from = Math.min(...rects.map((r) => r.y));
+        const to = Math.max(...rects.map((r) => r.y + r.height));
+        const lines = sparseLines(from, to, cols, (r, c) => rects.some((rect) => inRect(rect, c, r)), cellText);
+        lastSingleCopy = null;
+        e.clipboardData.setData("text/plain", delimited(lines, cols));
+        e.preventDefault();
+        return;
+      }
       const cells = cellStrings(cur.range);
       // A single cell: the value as it is, without quotes (a multi-line
       // JSON must be pasted elsewhere identical). The delimited text is
@@ -1391,6 +1418,9 @@ export default function GridView({
         // whole row (with "number" Glide ignores the click). Cmd+click adds,
         // Shift+click extends, like in DBeaver.
         rowMarkers="clickable-number"
+        // ⌘/Ctrl+click (and drag) on cells adds them to the selection, like
+        // DBeaver: the previous rectangles go into `rangeStack`.
+        rangeSelect="multi-rect"
         width={width}
         height={height}
         theme={glideTheme}
@@ -1462,12 +1492,13 @@ export default function GridView({
         >
           {(() => {
             // Changes from the menu (they go pending like the others): single
-            // cell or rectangle, only in an editable grid.
+            // cell, rectangle or cells added with ⌘/Ctrl+click, only in an
+            // editable grid.
             const cur = selection.current;
-            if (!editable || !onEditCell || !cur || cur.rangeStack.length > 0) return null;
+            if (!editable || !onEditCell || !cur) return null;
             if (selection.rows.length > 0 || selection.columns.length > 0) return null;
-            const r = cur.range;
-            const single = r.width === 1 && r.height === 1;
+            const rects = selectedRects(cur);
+            const single = rects.length === 1 && cur.range.width === 1 && cur.range.height === 1;
             if (!single && (!onEditCells || !onPasteCells)) return null;
             let nullDisabled = false;
             const nullKey = keyHint("grid.set_null");
@@ -1499,7 +1530,7 @@ export default function GridView({
                   onClick={() => {
                     setCellMenu(null);
                     if (single) proposeNull();
-                    else editRect(r, null);
+                    else for (const r of rects) editRect(r, null);
                   }}
                 >
                   {t("Set NULL")}
@@ -1507,8 +1538,8 @@ export default function GridView({
                 {(() => {
                   // Default known only on a single column: on a rectangle
                   // each column has its own, the server decides for each.
-                  const def =
-                    r.width === 1 ? columnDefault?.(r.x) : undefined;
+                  const col = rects[0].x;
+                  const def = rects.every((r) => r.width === 1 && r.x === col) ? columnDefault?.(col) : undefined;
                   return (
                     <button
                       className="tab-menu-item"
@@ -1522,7 +1553,7 @@ export default function GridView({
                       onClick={() => {
                         setCellMenu(null);
                         if (single) onEditCell(toModelRow(cur.cell[1]), cur.cell[0], DEFAULT_CELL);
-                        else editRect(r, DEFAULT_CELL);
+                        else for (const r of rects) editRect(r, DEFAULT_CELL);
                       }}
                     >
                       {t("Set DEFAULT")}
@@ -1536,13 +1567,14 @@ export default function GridView({
                     setCellMenu(null);
                     if (single) onEditCell(toModelRow(cur.cell[1]), cur.cell[0], crypto.randomUUID());
                     else
-                      pasteAt(
-                        r.y,
-                        r.x,
-                        Array.from({ length: r.height }, () =>
-                          Array.from({ length: r.width }, () => crypto.randomUUID())
-                        )
-                      );
+                      for (const r of rects)
+                        pasteAt(
+                          r.y,
+                          r.x,
+                          Array.from({ length: r.height }, () =>
+                            Array.from({ length: r.width }, () => crypto.randomUUID())
+                          )
+                        );
                   }}
                 >
                   {t("Generate UUID v4")}
