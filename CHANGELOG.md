@@ -11,6 +11,10 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
+## Unreleased
+
+- Production connections (and manual commit): a SELECT always shows the current data. Before, the first query opened a transaction and the next SELECTs kept showing the data as it was then, missing what other programs had saved. The transaction now starts at the first change (UPDATE, INSERT, DELETE, DDL) or at a SELECT … FOR UPDATE, and Commit/Rollback work as before.
+
 ## [0.1.0-alpha.19] - 2026-11-24
 
 - Grid: ⌘A (Ctrl+A on Windows and Linux) after clicking a tab or a result selected the text of the whole window. It now selects all the cells of the grid in front and puts the focus there, ready for ⌘C. In the SQL editor and in text fields it still selects their text; after a click in an error message, a dialog or the DDL it selects that text.

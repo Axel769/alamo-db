@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use alamo_core::classify::{classify_statement, txn_control, Rules, TxnControl};
+use alamo_core::classify::{classify_statement, needs_transaction, txn_control, Rules, TxnControl};
 
 /// Snapshot of the state, serialized towards the UI.
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -132,6 +132,14 @@ impl TxnTracker {
             writes: g.writes.clone(),
             total: g.total,
         }
+    }
+
+    /// Manual commit (§9.7 smart commit): does `sql` need the implicit
+    /// `BEGIN` first? Only with no transaction open, and only for a write or
+    /// a locking read (`classify::needs_transaction`): a plain SELECT stays
+    /// in auto-commit and sees the data committed by others.
+    pub fn needs_begin(&self, sql: &str) -> bool {
+        !self.inner.lock().unwrap().open && needs_transaction(sql, self.rules)
     }
 
     /// Open transaction with no statement for `limit`.

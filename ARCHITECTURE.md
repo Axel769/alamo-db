@@ -1380,7 +1380,8 @@ strip, the editor border and the grid header.
 
 **On a prod profile:**
 
-1. **Auto-commit OFF.** Commit and rollback are explicit buttons.
+1. **Auto-commit OFF.** Commit and rollback are explicit buttons. The implicit
+   `BEGIN` goes right before the first statement that needs it (smart commit, below).
 2. **Confirmation at the first write of every transaction** `[to confirm: transaction
    scope, not session]`. Per session it would be a single confirmation and then hours of
    unsupervised writes; per transaction it coincides with the logical unit of change and
@@ -1398,7 +1399,19 @@ as in DBeaver, turns on the same regime (implicit BEGIN, grid edits in the
 transaction, Commit/Rollback, log, idle rollback) without the gates. It
 cannot change with a transaction open — switching would leave it neither
 committed nor rolled back — nor on prod (always manual) or read-only.
-Isolation level and DBeaver's "smart commit" are left out until asked for.
+Isolation level is left out until asked for.
+
+**Smart commit** (2026-11-26, as DBeaver's): in manual commit the implicit `BEGIN`
+is sent right before the first statement of the batch that writes, is DDL or
+unknown (§9.7.3), or locks rows (`FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`, or
+a MySQL executable comment), never before a plain read or a control statement
+(`classify::needs_transaction`). Reason: a `BEGIN` before every SELECT froze the
+data under REPEATABLE READ (MySQL's default) — a second SELECT showed the snapshot
+of the first and missed what another program had committed in between, which on a
+production server is wrong data on screen. Once the transaction is open the reads
+stay inside it, as they must to see its uncommitted writes. Accepted risk, the same
+as DBeaver's: a SELECT calling a function with side effects (§9.7.3, an open gap of
+`SELECT` itself) now runs in auto-commit, and Rollback does not undo it.
 
 **On every other profile** (2026-10-28): only `UPDATE`/`DELETE` without `WHERE`
 are confirmed, as DataGrip and DBeaver do — DDL stays free on development
@@ -1433,8 +1446,9 @@ cannot run inside a transaction (`CREATE INDEX CONCURRENTLY`, `VACUUM`,
 
 #### 9.7.2 Trap 2 — auto-commit off is itself a risk on production
 
-With auto-commit disabled **even a simple `SELECT` opens a transaction**. Query
-launched, result read, user off to lunch → *idle in transaction* connection on a
+With auto-commit disabled a naive client opens a transaction **even for a simple
+`SELECT`** (Alamo did until the smart commit above). Query launched, result read,
+user off to lunch → *idle in transaction* connection on a
 production database: in PG it holds a snapshot and **blocks vacuum**, in MySQL it grows
 the history list and holds locks. The safety measure becomes the problem.
 

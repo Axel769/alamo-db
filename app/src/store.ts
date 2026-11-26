@@ -93,7 +93,8 @@ export type ConnUi = {
   /// connection it belongs to, which shows it in the tree and closes it.
   /// `null` = the profile's connection.
   parent: number | null;
-  /// Manual commit (§9.7): implicit BEGIN, explicit Commit/Rollback. Always
+  /// Manual commit (§9.7): implicit BEGIN before the first write (smart
+  /// commit: SELECTs stay in auto-commit), explicit Commit/Rollback. Always
   /// on prod; on the other profiles the toolbar switch turns it on.
   manualCommit: boolean;
   /// Bumped when writes of the transaction are undone (Rollback, idle

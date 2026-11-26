@@ -761,8 +761,8 @@ impl Session {
     async fn txn_exec(&self, sql: &str) -> Result<TxnStateOut, Box<DbError>> {
         // COMMIT/ROLLBACK also occupy the sticky like an execution: without
         // registration, a concurrent `execute` would see the lane free and
-        // would start interleaved on the COMMIT (with `begin_first` computed
-        // on a snapshot that is by then stale).
+        // would start interleaved on the COMMIT (deciding its implicit BEGIN
+        // on a transaction state that is by then stale).
         let exec_id = self
             .registry
             .try_new_execution(self.sticky().canceller())
@@ -1382,7 +1382,7 @@ impl Session {
         // (`read_only_txn`, see `check_read_only`).
         let txn = exec::TxnCtx {
             tracker: Arc::clone(&self.txn),
-            begin_first: self.manual_commit() && !self.read_only && !self.txn.snapshot().open,
+            manual: self.manual_commit() && !self.read_only,
         };
         exec::spawn_execution(
             self.sticky(),
@@ -1674,7 +1674,7 @@ impl Session {
                 })?;
             let txn = exec::TxnCtx {
                 tracker: Arc::clone(&self.txn),
-                begin_first: !self.txn.snapshot().open,
+                manual: true,
             };
             (self.sticky(), exec_id, Some(txn))
         } else {
