@@ -2308,9 +2308,9 @@ function statementSnippet(sql: string, classes: StatementClassOut[], c: Statemen
   return text.length > 90 ? text.slice(0, 90) + "…" : text;
 }
 
-/// Open transaction badge with timer (§9.7.2): progressive warning — on
-/// prod even a SELECT opens the transaction and keeping it open blocks the
-/// vacuum / holds locks.
+/// Open transaction badge with timer (§9.7.2): progressive warning — a
+/// transaction kept open blocks the vacuum / holds locks. On prod it opens
+/// at the first write or locking read, never at a plain SELECT (smart commit).
 function TxnBadge({ txn, onOpen }: { txn: TxnUi; onOpen: () => void }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

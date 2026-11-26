@@ -3115,7 +3115,7 @@ async fn mysql_table_update_by_pk_and_null() {
 #[tokio::test]
 async fn pg_prod_implicit_begin_real_rollback_and_commit() {
     let url = require_url!();
-    // Prod profile: auto-commit off — every execution opens a transaction.
+    // Prod profile: auto-commit off — the first write opens a transaction.
     let session = Session::connect_opts(
         builtin_for_url(&url),
         &url,
@@ -3128,19 +3128,11 @@ async fn pg_prod_implicit_begin_real_rollback_and_commit() {
     assert!(session.production());
     assert!(!session.txn_state().open);
 
-    // A read opens the transaction (implicit BEGIN) but does not enable
-    // Commit (§9.7.2: tell read-only transactions apart).
-    let (c, emit) = collector();
-    session
-        .execute("SELECT 1".into(), FetchOptions::default(), emit)
-        .expect("execute");
-    wait_done(&c).await;
-    let st = session.txn_state();
-    assert!(st.open, "implicit BEGIN on prod");
-    assert!(!st.has_writes, "the SELECT does not enable Commit");
-    assert!(st.open_for_ms.is_some());
+    // §9.7 smart commit: a read stays in auto-commit, no transaction.
+    run_ok(&session, "SELECT 1").await;
+    assert!(!session.txn_state().open, "a SELECT opens no transaction");
 
-    // DDL inside the transaction (on PG it is transactional): a write.
+    // DDL opens it (implicit BEGIN; on PG DDL is transactional): a write.
     let (c, emit) = collector();
     session
         .execute(
@@ -3150,7 +3142,9 @@ async fn pg_prod_implicit_begin_real_rollback_and_commit() {
         )
         .expect("execute");
     wait_done(&c).await;
-    assert!(session.txn_state().has_writes, "DDL = write");
+    let st = session.txn_state();
+    assert!(st.open && st.has_writes, "implicit BEGIN, DDL = write");
+    assert!(st.open_for_ms.is_some());
 
     // Explicit rollback: the table must not exist.
     let st = session.rollback().await.expect("rollback");
@@ -3173,14 +3167,12 @@ async fn pg_prod_implicit_begin_real_rollback_and_commit() {
             "the rollback must have discarded the CREATE"
         );
     }
-
-    // The failed transaction is still open (aborted): a rollback is needed
-    // before redoing. Then a real commit and the table survives.
     assert!(
-        session.txn_state().open,
-        "open even after the error (aborted)"
+        !session.txn_state().open,
+        "the failed SELECT opened nothing"
     );
-    session.rollback().await.expect("post-error rollback");
+
+    // A real commit and the table survives.
     let (c, emit) = collector();
     session
         .execute(
@@ -3335,11 +3327,7 @@ async fn pg_prod_terminate_resets_transaction_state() {
     )
     .await
     .expect("connection");
-    let (c, emit) = collector();
-    session
-        .execute("SELECT 1".into(), FetchOptions::default(), emit)
-        .expect("execute");
-    wait_done(&c).await;
+    run_ok(&session, "CREATE TEMP TABLE term_txn (id INT)").await;
     assert!(session.txn_state().open, "implicit BEGIN on prod");
 
     // §7.2: after the terminate the server-side session no longer exists — the
@@ -3365,35 +3353,26 @@ async fn mysql_prod_server_flag_and_ddl_implicit_commit() {
     .await
     .expect("connection");
 
-    let (c, emit) = collector();
-    session
-        .execute("SELECT 1".into(), FetchOptions::default(), emit)
-        .expect("execute");
-    wait_done(&c).await;
+    // §9.7.1: DDL on MySQL commits implicitly — the server flag says
+    // "outside transaction" after the implicit BEGIN, with no COMMIT sent.
+    run_ok(
+        &session,
+        "DROP TABLE IF EXISTS m4_txn_my; CREATE TABLE m4_txn_my (id INT PRIMARY KEY)",
+    )
+    .await;
+    assert!(
+        !session.txn_state().open,
+        "implicit commit of the DDL, seen by the server"
+    );
+
+    run_ok(&session, "INSERT INTO m4_txn_my VALUES (1)").await;
     let st = session.txn_state();
     assert!(st.open, "implicit BEGIN, confirmed by the server flag");
-    assert!(!st.has_writes);
+    assert!(st.has_writes);
 
-    // §9.7.1: DDL on MySQL commits implicitly — the server flag
-    // says "outside transaction" without any COMMIT having been sent.
-    let (c, emit) = collector();
-    session
-        .execute(
-            "DROP TABLE IF EXISTS m4_txn_my; CREATE TABLE m4_txn_my (id INT PRIMARY KEY)".into(),
-            FetchOptions::default(),
-            emit,
-        )
-        .expect("execute");
-    wait_done(&c).await;
-    let st = session.txn_state();
-    assert!(!st.open, "implicit commit of the DDL, seen by the server");
-
-    // Cleanup (the DROP opens and closes by itself: DDL).
-    let (c, emit) = collector();
-    session
-        .execute("DROP TABLE m4_txn_my".into(), FetchOptions::default(), emit)
-        .expect("execute");
-    wait_done(&c).await;
+    // The DROP commits the INSERT too, and closes the transaction.
+    run_ok(&session, "DROP TABLE m4_txn_my").await;
+    assert!(!session.txn_state().open, "implicit commit of the DROP");
 }
 
 #[tokio::test]
@@ -3527,6 +3506,71 @@ async fn mysql_manual_commit_switch_on_non_prod() {
     .expect("prod connection");
     assert!(prod.manual_commit());
     assert!(prod.set_manual_commit(false).is_err(), "prod stays manual");
+}
+
+/// §9.7 smart commit: in manual commit a SELECT opens no transaction, so it
+/// sees what another connection committed in the meantime (under REPEATABLE
+/// READ the first snapshot would stay frozen); the first write opens it,
+/// and so does a locking read.
+async fn prod_selects_see_other_commits(url: &str, table: &str) {
+    let prod = Session::connect_opts(
+        builtin_for_url(url),
+        url,
+        true,
+        false,
+        alamo_core::tls::TlsOptions::plain(),
+    )
+    .await
+    .expect("prod connection");
+    let other = Session::connect(url).await.expect("second connection");
+    run_ok(&other, &format!("DROP TABLE IF EXISTS {table}")).await;
+    run_ok(
+        &other,
+        &format!("CREATE TABLE {table} (id INT PRIMARY KEY, v INT)"),
+    )
+    .await;
+    run_ok(&other, &format!("INSERT INTO {table} VALUES (1, 1)")).await;
+
+    let read = format!("SELECT v FROM {table} WHERE id = 1");
+    assert_eq!(scalar(&prod, &read).await, "1");
+    assert!(!prod.txn_state().open, "a SELECT opens no transaction");
+    run_ok(&other, &format!("UPDATE {table} SET v = 2 WHERE id = 1")).await;
+    assert_eq!(scalar(&prod, &read).await, "2", "sees the other commit");
+
+    // Read then write in one batch: the transaction starts at the UPDATE.
+    let batch = format!("{read}; UPDATE {table} SET v = 3 WHERE id = 1");
+    assert_eq!(scalar(&prod, &batch).await, "2");
+    let st = prod.txn_state();
+    assert!(
+        st.open && st.has_writes,
+        "the UPDATE opened the transaction"
+    );
+    assert_eq!(scalar(&prod, &read).await, "3", "own uncommitted write");
+    assert_eq!(scalar(&other, &read).await, "2", "not committed yet");
+    prod.rollback().await.expect("rollback");
+    assert_eq!(scalar(&prod, &read).await, "2", "Rollback undid the UPDATE");
+
+    // In auto-commit the lock would be released at once.
+    assert_eq!(scalar(&prod, &format!("{read} FOR UPDATE")).await, "2");
+    let st = prod.txn_state();
+    assert!(
+        st.open && !st.has_writes,
+        "FOR UPDATE opened the transaction"
+    );
+    prod.rollback().await.expect("rollback");
+    run_ok(&other, &format!("DROP TABLE {table}")).await;
+}
+
+#[tokio::test]
+async fn pg_prod_selects_see_other_commits() {
+    let url = require_url!();
+    prod_selects_see_other_commits(&url, "smart_commit_pg").await;
+}
+
+#[tokio::test]
+async fn mysql_prod_selects_see_other_commits() {
+    let url = require_mysql!();
+    prod_selects_see_other_commits(&url, "smart_commit_my").await;
 }
 
 // -------------------------------------------- M4 §9.7: read-only, EXPLAIN

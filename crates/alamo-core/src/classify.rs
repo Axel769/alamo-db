@@ -434,6 +434,42 @@ pub fn begins_or_ends_txn(sql: &str, rules: Rules) -> bool {
         && words.get(1).map(String::as_str) == Some("transaction")
 }
 
+/// Does the statement need the transaction of the manual-commit regime
+/// (§9.7 smart commit)? Writes, DDL and unknowns do (§9.7.3), and so do
+/// the reads that lock rows (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE
+/// MODE`, at any depth): in auto-commit the lock would be released at
+/// once. A read with a MySQL executable comment counts as locking, since
+/// the server reads the comment and the classifier does not. Plain reads
+/// and control statements stay in auto-commit, so they see what others
+/// have committed up to now.
+pub fn needs_transaction(sql: &str, rules: Rules) -> bool {
+    let toks: Vec<Token> = tokens(sql, rules.backslash_escapes).collect();
+    match classify_tokens(sql, &toks, rules, 0).class {
+        StatementClass::Control => false,
+        StatementClass::Read => {
+            toks.iter().any(|t| t.kind == TokenKind::Code) || locks_rows(sql, &toks)
+        }
+        StatementClass::Write | StatementClass::Ddl | StatementClass::Unknown => true,
+    }
+}
+
+/// `FOR UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR KEY SHARE` (PG,
+/// MySQL 8) and `LOCK IN SHARE MODE` (MySQL). Any depth: PG locks from a
+/// subquery too. A false positive only opens the transaction earlier.
+fn locks_rows(sql: &str, toks: &[Token]) -> bool {
+    let words: Vec<String> = toks
+        .iter()
+        .filter(|t| t.kind == TokenKind::Word)
+        .map(|t| t.text(sql).to_ascii_lowercase())
+        .collect();
+    words.windows(2).any(|w| {
+        matches!(
+            (w[0].as_str(), w[1].as_str()),
+            ("for", "update" | "share" | "no" | "key") | ("lock", "in")
+        )
+    })
+}
+
 /// MySQL dynamic SQL (`PREPARE`/`EXECUTE`): the text the server executes
 /// never goes through the classifier.
 pub fn is_dynamic_sql(sql: &str, rules: Rules) -> bool {
@@ -723,6 +759,47 @@ mod tests {
         ] {
             assert!(!begins_or_ends_txn(s, PG), "{s}");
         }
+    }
+
+    #[test]
+    fn transaction_needed_by_writes_and_locking_reads() {
+        for s in [
+            "UPDATE t SET a = 1 WHERE id = 2",
+            "DELETE FROM t",
+            "CALL p()",
+            "CREATE TABLE t (id int)",
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+            "SELECT * FROM t WHERE id = 1 FOR UPDATE",
+            "select * from t for no key update",
+            "SELECT * FROM t FOR SHARE SKIP LOCKED",
+            "SELECT * FROM t FOR KEY SHARE",
+            "SELECT * FROM t LOCK IN SHARE MODE",
+            "SELECT * FROM (SELECT * FROM t FOR UPDATE) s",
+        ] {
+            assert!(needs_transaction(s, PG), "{s}");
+        }
+        // The server reads the executable comment, the classifier does not.
+        assert!(needs_transaction("SELECT * FROM t /*! FOR UPDATE */", MY));
+    }
+
+    #[test]
+    fn plain_reads_and_control_stay_in_autocommit() {
+        for s in [
+            "SELECT * FROM t",
+            "SELECT 'for update' FROM t",
+            "SELECT * FROM t -- for update",
+            "SELECT \"for\", \"update\" FROM t",
+            "WITH a AS (SELECT 1) SELECT * FROM a",
+            "SHOW TABLES",
+            "EXPLAIN SELECT * FROM t",
+            "BEGIN",
+            "COMMIT",
+            "SET search_path = x",
+            "USE db",
+        ] {
+            assert!(!needs_transaction(s, PG), "{s}");
+        }
+        assert!(!needs_transaction("SELECT `for`, `update` FROM t", MY));
     }
 
     #[test]

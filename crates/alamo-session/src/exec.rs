@@ -22,10 +22,11 @@ pub type Emit = Arc<dyn Fn(ExecEvent) + Send + Sync>;
 /// connection — the auxiliary lanes stay in auto-commit.
 pub struct TxnCtx {
     pub tracker: Arc<TxnTracker>,
-    /// Prod profile without an open transaction: implicit `BEGIN` before the
-    /// batch. A separate statement of the app — user SQL is never rewritten
-    /// (§5.2).
-    pub begin_first: bool,
+    /// Manual commit (prod, or the toolbar switch): with no transaction
+    /// open, implicit `BEGIN` before the first statement that writes or
+    /// locks rows (§9.7 smart commit, `TxnTracker::needs_begin`). A separate
+    /// statement of the app — user SQL is never rewritten (§5.2).
+    pub manual: bool,
 }
 
 /// Settings of an execution: fetch options, pause watchdog and the optional
@@ -92,6 +93,38 @@ pub fn spawn_execution(
     registry.set_task(exec_id, task.abort_handle());
 }
 
+/// The implicit `BEGIN` of the manual-commit regime (§9.7). `false` = it
+/// failed, and the error has reached the UI as a notice of statement `index`.
+async fn implicit_begin(
+    conn: &DbConn,
+    opts: &FetchOptions,
+    tracker: &TxnTracker,
+    emit: &Emit,
+    exec_id: u64,
+    index: u32,
+) -> bool {
+    let (_ctl, mut ctl_rx) = mpsc::channel(1);
+    let error = match conn
+        .execute_streaming("BEGIN", opts, &mut ctl_rx, &mut |_| {})
+        .await
+    {
+        Ok(out) => match out.error {
+            None => {
+                tracker.apply_statement("BEGIN", true, out.in_transaction, None);
+                return true;
+            }
+            Some(e) => e,
+        },
+        Err(e) => *e,
+    };
+    emit(ExecEvent::Notice {
+        exec_id,
+        index,
+        notice: ErrorOut::from(&error),
+    });
+    false
+}
+
 /// Runs the whole batch. To be launched in a dedicated task; the exec_id has
 /// already been handed to the caller (§8: `execute` returns immediately).
 async fn run_execution(
@@ -127,44 +160,6 @@ async fn run_execution(
     let mut batch_cancelled = false;
     let mut skip_from: Option<usize> = None;
 
-    // §9.7: auto-commit off on prod profiles = implicit BEGIN when there is
-    // no transaction yet. If it fails (dead connection), the whole batch is
-    // Skipped: never run outside a transaction what the user expects to be
-    // protected.
-    if let Some(ctx) = &txn {
-        if ctx.begin_first {
-            let (_ctl, mut ctl_rx) = mpsc::channel(1);
-            let begin = conn
-                .execute_streaming("BEGIN", &opts, &mut ctl_rx, &mut |_| {})
-                .await
-                .map_err(|e| *e);
-            match begin {
-                Ok(out) if out.error.is_none() => {
-                    ctx.tracker
-                        .apply_statement("BEGIN", true, out.in_transaction, None);
-                }
-                Ok(out) => {
-                    if let Some(e) = out.error {
-                        emit(ExecEvent::Notice {
-                            exec_id,
-                            index: 0,
-                            notice: ErrorOut::from(&e),
-                        });
-                    }
-                    batch_failed = true;
-                }
-                Err(e) => {
-                    emit(ExecEvent::Notice {
-                        exec_id,
-                        index: 0,
-                        notice: ErrorOut::from(&e),
-                    });
-                    batch_failed = true;
-                }
-            }
-        }
-    }
-
     // If the read-only transaction does not start, nothing starts: never
     // execute outside a safety net the user believes is in place.
     let mut read_only_open = false;
@@ -193,6 +188,20 @@ async fn run_execution(
         if batch_failed || batch_cancelled || cancelling {
             skip_from = Some(i);
             break;
+        }
+        // §9.7 smart commit: the implicit BEGIN goes right before the first
+        // statement that needs it, so the SELECTs before it see current data.
+        // If it fails (dead connection), this statement and the rest are
+        // Skipped: never run outside a transaction what the user expects to
+        // be protected.
+        if let Some(ctx) = txn.as_ref().filter(|c| c.manual) {
+            if ctx.tracker.needs_begin(&stmt.sql)
+                && !implicit_begin(&conn, &opts, &ctx.tracker, &emit, exec_id, index).await
+            {
+                batch_failed = true;
+                skip_from = Some(i);
+                break;
+            }
         }
 
         emit(ExecEvent::StatementStarted {
