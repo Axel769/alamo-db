@@ -11,7 +11,7 @@ Before launching "Release (alpha)": bump `version` in
 `app/src-tauri/tauri.conf.json` and rename "Unreleased" to
 `[<version>] - <date>`. Without the version's section the workflow stops.
 
-## Unreleased
+## [0.1.0-alpha.20] - 2026-11-26
 
 - Grid: ⌘+click (Ctrl+click on Windows and Linux) on a cell adds it to the selection instead of replacing it, like in DBeaver; ⌘+drag adds a block. ⌘C copies the selected cells in their rows and columns (the cells in between stay empty), and Set NULL (also ⇧Delete), Set DEFAULT, Generate UUID and a typed value apply to all of them.
 
